@@ -98,7 +98,8 @@ Notation:
 - `classicQuorum = floor(N / 2) + 1`
 - `fastQuorum = ceil(3N / 4)`
 - `quorumFor(ballot) = fastQuorum` for fast ballots and `classicQuorum` for classic ballots
-- every `prepare` response, including rejections, reports the acceptor's current `(acceptedBallot, acceptedValue)`
+- every `prepare` response returns `(acceptedBallot, acceptedValue, maxBallot)`
+- `prepare(b)` succeeds at an acceptor exactly when the response reports `maxBallot = b`
 - acceptors start with `promised = (1, 0)`, so the first fast round is implicitly prepared
 
 ### Proposer
@@ -110,8 +111,8 @@ function propose(update):
     loop:
         if b is not already prepared:
             responses := collect Prepare(b) responses
-            if promises in responses do not reach quorumFor(b):
-                b := next classic ballot above the highest conflicting ballot in responses
+            if responses with maxBallot == b do not reach quorumFor(b):
+                b := next classic ballot above the highest maxBallot returned
                 continue
 
             base := recoverValue(responses)
@@ -165,26 +166,26 @@ Notes:
 
 ```text
 state:
-    promised := (1, 0)       // initial fast ballot is implicitly prepared
+    promisedBallot := (1, 0)       // initial fast ballot is implicitly prepared
     acceptedBallot := ⊥
     acceptedValue := ⊥
 
 function onPrepare(b):
-    if b < promised:
-        reply reject(acceptedBallot, acceptedValue, promised)
-        return
-
-    promised := b
-    reply promise(acceptedBallot, acceptedValue)
+    if b >= promisedBallot:
+        promisedBallot := b
+    reply prepareResponse(acceptedBallot, acceptedValue, promisedBallot)
 
 function onAccept(b, v, next):
-    maxBallot := max(promised, acceptedBallot)
+    maxBallot := max(promisedBallot, acceptedBallot)
     if b < maxBallot:
         reply reject(maxBallot)
         return
 
-    // Idempotency for fast rounds & retries: if we receive the same ballot + value,
-    // we 
+    // Optimization: idempotency from possibly multiple proposers
+    if b == acceptedBallot and v == acceptedValue:
+        reply accept(promisedBallot)
+        return
+
     if b == acceptedBallot and v != acceptedValue:
         reply reject(maxBallot)
         return
@@ -193,9 +194,9 @@ function onAccept(b, v, next):
     acceptedValue := v
 
     if next != none:
-        promised := max(promised, next)
+        promisedBallot := max(promisedBallot, next)
 
-    reply accept(promised)
+    reply accept(promisedBallot)
 ```
 
 In short: fast rounds try to commit directly in the shared ballot `(r, 0)` with a `3/4` quorum; if that round splits between competing values, a proposer falls back to a proposer-owned classic ballot `(r', proposerId)`, runs `prepare`, recovers the fast-round winner by counting votes, and then commits with a majority quorum. Successful accepts can piggyback the next fast ballot or the next same-proposer classic ballot so the following operation can skip a standalone `prepare`.
