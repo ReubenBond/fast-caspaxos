@@ -130,4 +130,4 @@ if ($manifest.Count -gt 0 -and -not $DryRun) {
 
 Write-Host ""
 Write-Host "To generate charts, run:"
-Write-Host "  python scripts\plot_benchmarks.py --input $Output"
+Write-Host "  uv run scripts\plot_benchmarks.py --input $Output"

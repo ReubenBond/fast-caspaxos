@@ -294,8 +294,7 @@ Run a single benchmark:
 After running the benchmark suite, generate charts with the Python script:
 
 ```bash
-pip install matplotlib numpy plotly
-python scripts/plot_benchmarks.py --input artifacts/benchmark
+uv run scripts/plot_benchmarks.py --input artifacts/benchmark
 ```
 
 This produces:

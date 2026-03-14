@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "matplotlib",
+#     "numpy",
+#     "plotly",
+# ]
+# ///
 """
 Plot benchmark results from Fast CASPaxos simulation runs.
 
@@ -8,8 +16,8 @@ Reads benchmark-latency.csv files from the benchmark output directory and produc
   - Latency CDF comparison
 
 Usage:
-    python scripts/plot_benchmarks.py --input artifacts/benchmark
-    python scripts/plot_benchmarks.py --input artifacts/benchmark --format html
+    uv run scripts/plot_benchmarks.py --input artifacts/benchmark
+    uv run scripts/plot_benchmarks.py --input artifacts/benchmark --format html
 """
 
 import argparse
