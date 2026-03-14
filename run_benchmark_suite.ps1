@@ -124,7 +124,7 @@ Write-Host "Benchmark sweep complete: $($completed - $failed) passed, $failed fa
 Write-Host "Output: $(Resolve-Path $Output -ErrorAction SilentlyContinue)"
 
 if ($manifest.Count -gt 0 -and -not $DryRun) {
-    $manifest | ConvertTo-Json -Depth 3 | Set-Content (Join-Path $Output "manifest.json")
+    $manifest | ConvertTo-Json -Depth 10 | Set-Content (Join-Path $Output "manifest.json")
     Write-Host "Manifest: $(Join-Path $Output 'manifest.json')"
 }
 
