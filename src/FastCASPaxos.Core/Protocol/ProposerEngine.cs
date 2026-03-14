@@ -170,6 +170,60 @@ public abstract class ProposerEngine<TValue, TRoute>
 
     public void HandleAcceptRejected(AcceptRejected<TRoute> message) => HandleAcceptResponse(message.Round, message.Acceptor, new AcceptResponse(IsAccepted: false, message.ConflictingBallot));
 
+    /// <summary>
+    /// Called by the host when a response timeout fires. If the engine is still waiting for
+    /// responses in the current round (prepare or accept), forces a retry with a higher ballot.
+    /// Returns true if a retry was triggered; false if the timeout was stale (wrong round or
+    /// no pending operation).
+    /// </summary>
+    public bool HandleResponseTimeout(int round)
+    {
+        if (round != Ballot.Round || CurrentOperation is null)
+        {
+            return false;
+        }
+
+        // Determine whether we're waiting in prepare or accept phase
+        if (CurrentValueStatus == ProposerValueStatus.PendingAccept)
+        {
+            // In accept phase — check if we already have quorum or are already retrying
+            var successResponses = 0;
+            var failureResponses = 0;
+            var maxConflict = Ballot.Zero;
+            foreach (var current in _acceptResponses.Values)
+            {
+                if (current.IsAccepted) ++successResponses;
+                else
+                {
+                    ++failureResponses;
+                    if (current.Ballot > maxConflict) maxConflict = current.Ballot;
+                }
+            }
+
+            if (HasQuorum(Ballot, successResponses))
+            {
+                return false; // Already reached quorum, timeout is stale
+            }
+
+            _runtime.Diagnostics.OnAcceptFailed(this, ProposerId, Ballot, maxConflict);
+            RetryPrepare(maxConflict);
+            return true;
+        }
+        else
+        {
+            // In prepare phase
+            var (successResponses, failureResponses, _, maxConflictBallot) = AggregatePrepareResponses();
+            if (HasQuorum(Ballot, successResponses))
+            {
+                return false; // Already reached quorum
+            }
+
+            _runtime.Diagnostics.OnPrepareFailed(this, ProposerId, Ballot, maxConflictBallot);
+            RetryPrepare(maxConflictBallot);
+            return true;
+        }
+    }
+
     private void HandleAcceptResponse(int round, TRoute acceptor, AcceptResponse response)
     {
         if (round != Ballot.Round || CurrentOperation is null)

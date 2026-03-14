@@ -21,6 +21,15 @@ public sealed class FastCasSimulationOptions
 
     public FastCasSimulationProposerRetryBackoffOptions ProposerRetryBackoff { get; init; } = new();
 
+    /// <summary>
+    /// Maximum simulated time the proposer waits for prepare/accept responses before
+    /// forcing a retry with a higher ballot. Prevents indefinite stalls when acceptors
+    /// are unreachable. Should be a multiple of the maximum expected link latency.
+    /// Set to <see cref="TimeSpan.Zero"/> to disable.
+    /// Default is 1 second of simulated time.
+    /// </summary>
+    public TimeSpan ProposerResponseTimeout { get; init; } = TimeSpan.FromSeconds(1);
+
     public FastCasCrashRestartStateModel CrashRestartStateModel { get; init; } =
         FastCasCrashRestartStateModel.PreserveDurableAcceptorState;
 }

@@ -198,6 +198,8 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
         {
             _transport.Send(new FastCasAcceptRequestMessage<TValue>(proposer, acceptor, request));
         }
+
+        ScheduleResponseTimeout();
     }
 
     private void SendPrepareNow(
@@ -208,6 +210,34 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
         {
             _transport.Send(new FastCasPrepareRequestMessage<TValue>(proposer, acceptor, request));
         }
+
+        ScheduleResponseTimeout();
+    }
+
+    private void ScheduleResponseTimeout()
+    {
+        var timeout = _options.ProposerResponseTimeout;
+        if (timeout <= TimeSpan.Zero || _simulationContext is null)
+        {
+            return;
+        }
+
+        var proposalGeneration = _proposalGeneration;
+        var engine = _engine;
+        var round = engine.Ballot.Round;
+        _simulationContext.TaskQueue.EnqueueAfter(
+            () =>
+            {
+                if (!IsRunning
+                    || proposalGeneration != _proposalGeneration
+                    || !ReferenceEquals(_engine, engine))
+                {
+                    return;
+                }
+
+                engine.HandleResponseTimeout(round);
+            },
+            timeout);
     }
 
     private TimeSpan GetRetryDelay()
