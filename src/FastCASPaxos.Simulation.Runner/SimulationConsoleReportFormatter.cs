@@ -84,11 +84,14 @@ public static class SimulationConsoleReportFormatter
             .Append(run.Seed.ToString(CultureInfo.InvariantCulture))
             .Append(" -Rounds 1");
 
-        foreach (var scenarioParameter in scenarioParameters.OrderBy(entry => entry.Key, StringComparer.Ordinal))
+        var orderedParams = scenarioParameters
+            .OrderBy(entry => entry.Key, StringComparer.Ordinal)
+            .ToList();
+        if (orderedParams.Count > 0)
         {
-            builder
-                .Append(" -ScenarioParam ")
-                .Append(FormatPowerShellLiteral($"{scenarioParameter.Key}={scenarioParameter.Value}"));
+            builder.Append(" -ScenarioParam ");
+            builder.Append(string.Join(",",
+                orderedParams.Select(p => FormatPowerShellLiteral($"{p.Key}={p.Value}"))));
         }
 
         if (waitForDebugger)

@@ -77,11 +77,11 @@ public sealed class SimulationConsoleReportFormatterTests
             StringComparison.Ordinal);
         Assert.Contains("  rerun this failure in isolation:", report, StringComparison.Ordinal);
         Assert.Contains(
-            @".\run_simulation_suite.ps1 -Scenario 'jittered-high-contention' -Seed 7002 -Rounds 1 -ScenarioParam 'leader=true' -ScenarioParam 'proposer-count=5'",
+            @".\run_simulation_suite.ps1 -Scenario 'jittered-high-contention' -Seed 7002 -Rounds 1 -ScenarioParam 'leader=true','proposer-count=5'",
             report,
             StringComparison.Ordinal);
         Assert.Contains(
-            @".\run_simulation_suite.ps1 -Scenario 'jittered-high-contention' -Seed 7002 -Rounds 1 -ScenarioParam 'leader=true' -ScenarioParam 'proposer-count=5' -WaitForDebugger",
+            @".\run_simulation_suite.ps1 -Scenario 'jittered-high-contention' -Seed 7002 -Rounds 1 -ScenarioParam 'leader=true','proposer-count=5' -WaitForDebugger",
             report,
             StringComparison.Ordinal);
         Assert.Contains(
