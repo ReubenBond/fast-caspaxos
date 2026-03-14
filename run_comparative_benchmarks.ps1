@@ -58,6 +58,17 @@ function New-Combination {
     }
 }
 
+function Resolve-PathString {
+    param([string]$Path)
+
+    $resolvedPath = Resolve-Path -Path $Path -ErrorAction SilentlyContinue
+    if ($null -ne $resolvedPath) {
+        return $resolvedPath.Path
+    }
+
+    return $Path
+}
+
 # ---------------------------------------------------------------------------
 # Define scenario configurations
 # ---------------------------------------------------------------------------
@@ -238,17 +249,20 @@ foreach ($mode in @("fast", "leader")) {
 
 # --- S8: leader-crash-failover ---
 # Symmetric40; crash + client failover. Client timeout at 3x baseline RTT for realistic detection.
-$crashFault = "crash:proposer:1:at:200:until:400"
-$crashFaultSlug = "crash-proposer-1-at-200-until-400"
+# Keep this scenario smaller than the others so the crash/retry window stays representative
+# without dominating the full comparative suite runtime.
+$crashFault = "crash:proposer:1:at:30:until:60"
+$crashFaultSlug = "crash-proposer-1-at-30-until-60"
 foreach ($mode in @("fast", "leader")) {
     $modeParams = Get-ModeParams $mode
     $topoParams = Get-TopologyParams "symmetric40"
     $params = $modeParams + $topoParams + @(
         "proposer-count=3",
         "acceptor-count=5",
-        "proposal-count=600",
+        "proposal-count=90",
         "fault-schedule=$crashFault",
-        "client-timeout-ms=300"
+        "client-timeout-ms=300",
+        "agreement-mode=true"
     )
     $scenarios["S8-leader-crash-failover"].Combinations += New-Combination `
         -Params $params `
@@ -368,7 +382,7 @@ foreach ($scenarioName in $selectedScenarios) {
         $manifest += [PSCustomObject]@{
             Scenario      = $scenarioName
             Label         = $label
-            OutputDir     = (Resolve-Path $outputDir -ErrorAction SilentlyContinue) ?? $outputDir
+            OutputDir     = Resolve-PathString $outputDir
             Params        = ($combo.Params -join "; ")
             Rounds        = $Rounds
             BaseSeed      = $BaseSeed
@@ -383,7 +397,7 @@ foreach ($scenarioName in $selectedScenarios) {
 $elapsed = (Get-Date) - $startTime
 Write-Host ""
 Write-Host "Comparative benchmark complete: $($completed - $failed) passed, $failed failed ($($elapsed.TotalSeconds.ToString('F1'))s)"
-Write-Host "Output: $(Resolve-Path $Output -ErrorAction SilentlyContinue)"
+Write-Host "Output: $(Resolve-PathString $Output)"
 
 if ($manifest.Count -gt 0 -and -not $DryRun) {
     $manifestPath = Join-Path $Output "comparative-manifest.json"

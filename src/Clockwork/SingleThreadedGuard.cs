@@ -37,7 +37,7 @@ public sealed class SingleThreadedGuard
 
         if (_entryCount == 0)
         {
-            _ownerStackTrace = new StackTrace(fNeedFileInfo: true).ToString();
+            _ownerStackTrace = CaptureOwnerStackTrace();
         }
 
         Interlocked.Increment(ref _entryCount);
@@ -48,8 +48,18 @@ public sealed class SingleThreadedGuard
     {
         if (Interlocked.Decrement(ref _entryCount) == 0)
         {
+            _ownerStackTrace = null;
             Interlocked.Exchange(ref _ownerThreadId, 0);
         }
+    }
+
+    private static string? CaptureOwnerStackTrace()
+    {
+#if DEBUG
+        return new StackTrace(fNeedFileInfo: true).ToString();
+#else
+        return null;
+#endif
     }
 
     /// <summary>

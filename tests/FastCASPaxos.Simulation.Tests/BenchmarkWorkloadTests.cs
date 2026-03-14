@@ -189,4 +189,45 @@ public sealed class BenchmarkWorkloadTests
                 Directory.Delete(outputDir, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task RunAsync_BenchmarkWorkload_WithCrashFailover_Completes()
+    {
+        var outputDir = Path.Combine(Path.GetTempPath(), $"benchmark-crash-failover-{Guid.NewGuid():N}");
+        try
+        {
+            var result = await SimulationBatchRunner.RunAsync(
+                new SimulationBatchOptions
+                {
+                    ScenarioNames = ["benchmark-workload"],
+                    ScenarioParameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["proposer-count"] = "3",
+                        ["acceptor-count"] = "5",
+                        ["proposal-count"] = "24",
+                        ["fast"] = "true",
+                        ["leader"] = "false",
+                        ["link-latency-profile"] = "lan",
+                        ["base-delay-ms"] = "40",
+                        ["max-jitter-ms"] = "5",
+                        ["fault-schedule"] = "crash:proposer:1:at:8:until:16",
+                        ["client-timeout-ms"] = "300",
+                        ["agreement-mode"] = "true",
+                    },
+                    Seed = 7001,
+                    Rounds = 1,
+                    OutputDirectory = outputDir,
+                    StopOnFailure = true,
+                });
+
+            Assert.Equal(1, result.SucceededCount);
+            Assert.Equal(0, result.FailedCount);
+            Assert.Equal("crash-proposer1", result.Runs[0].Details["parameter.fault-label"]);
+        }
+        finally
+        {
+            if (Directory.Exists(outputDir))
+                Directory.Delete(outputDir, recursive: true);
+        }
+    }
 }

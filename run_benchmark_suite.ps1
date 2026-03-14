@@ -34,6 +34,17 @@ function Get-TopologyParams {
     }
 }
 
+function Resolve-PathString {
+    param([string]$Path)
+
+    $resolvedPath = Resolve-Path -Path $Path -ErrorAction SilentlyContinue
+    if ($null -ne $resolvedPath) {
+        return $resolvedPath.Path
+    }
+
+    return $Path
+}
+
 $totalCombinations = $Mode.Count * $Topology.Count * $Fault.Count * $ProposerCount.Count
 $completed = 0
 $failed = 0
@@ -108,7 +119,7 @@ foreach ($mode in $Mode) {
                     Topology = $topo
                     ProposerCount = $pCount
                     Fault = $fault
-                    OutputDir = (Resolve-Path $outputDir -ErrorAction SilentlyContinue) ?? $outputDir
+                    OutputDir = Resolve-PathString $outputDir
                     Seed = $Seed
                     Rounds = $Rounds
                     ProposalCount = $ProposalCount
@@ -121,7 +132,7 @@ foreach ($mode in $Mode) {
 $elapsed = (Get-Date) - $startTime
 Write-Host ""
 Write-Host "Benchmark sweep complete: $($completed - $failed) passed, $failed failed ($($elapsed.TotalSeconds.ToString('F1'))s)"
-Write-Host "Output: $(Resolve-Path $Output -ErrorAction SilentlyContinue)"
+Write-Host "Output: $(Resolve-PathString $Output)"
 
 if ($manifest.Count -gt 0 -and -not $DryRun) {
     $manifest | ConvertTo-Json -Depth 100 | Set-Content (Join-Path $Output "manifest.json")

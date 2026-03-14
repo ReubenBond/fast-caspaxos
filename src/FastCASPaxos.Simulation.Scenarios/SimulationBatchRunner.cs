@@ -7,6 +7,7 @@ using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
 using FastCASPaxos.Simulation.Invariants;
 using FastCASPaxos.Simulation.Hosts;
+using FastCASPaxos.Simulation.Nodes;
 using Microsoft.Extensions.Logging;
 
 namespace FastCASPaxos.Simulation.Scenarios;
@@ -1500,6 +1501,8 @@ public static class SimulationScenarioCatalog
         recorder.RecordFault(cluster, $"topology {benchmarkOptions.Topology}");
 
         var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
+        var proposerNodesByAddress = cluster.ProposerNodes.ToDictionary(node => node.Host.Address);
+        var clientRoutes = proposers.ToArray();
         var proposalCount = benchmarkOptions.ProposalCount;
         var requestId = 100_000;
         var clientTimeoutEnabled = benchmarkOptions.ClientTimeoutMs > 0;
@@ -1515,14 +1518,15 @@ public static class SimulationScenarioCatalog
             benchmarkOptions.ApplyFaultAtProposal(cluster, completedProposals, recorder);
 
             // Send one proposal from each proposer concurrently
-            List<(FastCasAddress Proposer, IOperation<StringValue> Operation, int RequestId, int FailoverCount)> submissions = [];
-            foreach (var proposer in proposers)
+            List<(int ClientSlot, FastCasAddress Proposer, IOperation<StringValue> Operation, int RequestId, int FailoverCount)> submissions = [];
+            for (var clientSlot = 0; clientSlot < clientRoutes.Length; clientSlot++)
             {
                 if (completedProposals + submissions.Count >= proposalCount)
                 {
                     break;
                 }
 
+                var proposer = clientRoutes[clientSlot];
                 version++;
 
                 IOperation<StringValue> operation;
@@ -1547,7 +1551,7 @@ public static class SimulationScenarioCatalog
                 var submissionRequestId = requestId++;
                 _ = cluster.SendProposal(proposer, operation, submissionRequestId);
                 recorder.RecordSend(cluster, proposer, operation, submissionRequestId);
-                submissions.Add((proposer, operation, submissionRequestId, 0));
+                submissions.Add((clientSlot, proposer, operation, submissionRequestId, 0));
             }
 
             if (submissions.Count == 0)
@@ -1561,51 +1565,114 @@ public static class SimulationScenarioCatalog
 
             if (clientTimeoutEnabled)
             {
-                // Client failover: run until all complete OR timeout, then retry failed ones
-                var batchStartTime = cluster.TimeProvider.GetUtcNow();
-                var timeoutDeadline = batchStartTime + clientTimeout;
+                // The simulation only supports one in-flight client request per proposer.
+                // Keep each proposer occupied until its current batch attempt either responds
+                // or the batch ends, and only fail over onto proposers which are actually free.
+                var occupiedProposers = submissions
+                    .Select(submission => submission.Proposer)
+                    .ToHashSet();
+                var consecutiveTimeoutsWithoutProgress = 0;
 
-                cluster.RunUntil(
-                    () => submissions.All(s => cluster.TryGetResponse(s.RequestId, out _))
-                          || cluster.TimeProvider.GetUtcNow() >= timeoutDeadline,
-                    maxIterations: maxIterationsPerBatch);
-
-                // Check for timed-out proposals and retry with different proposer
-                var updatedSubmissions = new List<(FastCasAddress Proposer, IOperation<StringValue> Operation, int RequestId, int FailoverCount)>();
-                foreach (var submission in submissions)
+                while (submissions.Any(submission => !cluster.TryGetResponse(submission.RequestId, out _)))
                 {
-                    if (cluster.TryGetResponse(submission.RequestId, out _))
-                    {
-                        updatedSubmissions.Add(submission);
-                    }
-                    else if (submission.FailoverCount < benchmarkOptions.ClientMaxRetries)
-                    {
-                        // Failover: pick a different proposer
-                        var currentIndex = Array.IndexOf(proposers, submission.Proposer);
-                        var nextProposer = proposers[(currentIndex + 1) % proposers.Length];
-                        var retryRequestId = requestId++;
-                        _ = cluster.SendProposal(nextProposer, submission.Operation, retryRequestId);
-                        recorder.RecordSend(cluster, nextProposer, submission.Operation, retryRequestId);
-                        updatedSubmissions.Add((nextProposer, submission.Operation, retryRequestId, submission.FailoverCount + 1));
-                    }
-                    else
-                    {
-                        // Exhausted retries — treat as completed (failed)
-                        updatedSubmissions.Add(submission);
-                    }
-                }
-
-                // If we have retried submissions, wait for them too
-                if (updatedSubmissions.Any(s => !cluster.TryGetResponse(s.RequestId, out _) && s.FailoverCount > 0))
-                {
-                    var retryDeadline = cluster.TimeProvider.GetUtcNow() + clientTimeout;
+                    var timeoutDeadline = cluster.TimeProvider.GetUtcNow() + clientTimeout;
                     cluster.RunUntil(
-                        () => updatedSubmissions.All(s => cluster.TryGetResponse(s.RequestId, out _))
-                              || cluster.TimeProvider.GetUtcNow() >= retryDeadline,
+                        () => submissions.All(submission => cluster.TryGetResponse(submission.RequestId, out _))
+                              || cluster.TimeProvider.GetUtcNow() >= timeoutDeadline,
                         maxIterations: maxIterationsPerBatch);
-                }
 
-                submissions = updatedSubmissions;
+                    var pendingSubmissions = new List<(int ClientSlot, FastCasAddress Proposer, IOperation<StringValue> Operation, int RequestId, int FailoverCount)>();
+                    foreach (var submission in submissions)
+                    {
+                        if (cluster.TryGetResponse(submission.RequestId, out _))
+                        {
+                            occupiedProposers.Remove(submission.Proposer);
+                        }
+                        else
+                        {
+                            pendingSubmissions.Add(submission);
+                        }
+                    }
+
+                    if (pendingSubmissions.Count == 0)
+                    {
+                        break;
+                    }
+
+                    var respondedCount = submissions.Count - pendingSubmissions.Count;
+                    var reroutedAny = false;
+                    var droppedTimedOutFailures = 0;
+                    var reservedProposers = new HashSet<FastCasAddress>();
+                    var updatedSubmissions = new List<(int ClientSlot, FastCasAddress Proposer, IOperation<StringValue> Operation, int RequestId, int FailoverCount)>(submissions.Count);
+                    foreach (var submission in submissions)
+                    {
+                        if (cluster.TryGetResponse(submission.RequestId, out _))
+                        {
+                            updatedSubmissions.Add(submission);
+                            continue;
+                        }
+
+                        if (submission.FailoverCount >= benchmarkOptions.ClientMaxRetries)
+                        {
+                            if ((!proposerNodesByAddress[submission.Proposer].IsRunning || proposerNodesByAddress[submission.Proposer].IsSuspended)
+                                && FindPreferredHealthyProposer(proposers, proposerNodesByAddress, submission.Proposer) is { } fallbackProposer)
+                            {
+                                clientRoutes[submission.ClientSlot] = fallbackProposer;
+                            }
+
+                            droppedTimedOutFailures++;
+                            continue;
+                        }
+
+                        var currentProposerNode = proposerNodesByAddress[submission.Proposer];
+                        if (currentProposerNode.IsRunning && !currentProposerNode.IsSuspended)
+                        {
+                            var retriedRequestId = requestId++;
+                            _ = cluster.SendProposal(submission.Proposer, submission.Operation, retriedRequestId);
+                            recorder.RecordSend(cluster, submission.Proposer, submission.Operation, retriedRequestId);
+                            updatedSubmissions.Add((submission.ClientSlot, submission.Proposer, submission.Operation, retriedRequestId, submission.FailoverCount + 1));
+                            reroutedAny = true;
+                            continue;
+                        }
+
+                        var nextProposer = FindAvailableFailoverProposer(
+                            proposers,
+                            proposerNodesByAddress,
+                            submission.Proposer,
+                            occupiedProposers,
+                            reservedProposers);
+                        if (nextProposer is not { } failoverProposer)
+                        {
+                            updatedSubmissions.Add(submission);
+                            continue;
+                        }
+
+                        var retryRequestId = requestId++;
+                        _ = cluster.SendProposal(failoverProposer, submission.Operation, retryRequestId);
+                        recorder.RecordSend(cluster, failoverProposer, submission.Operation, retryRequestId);
+                        clientRoutes[submission.ClientSlot] = failoverProposer;
+                        occupiedProposers.Add(failoverProposer);
+                        reservedProposers.Add(failoverProposer);
+                        updatedSubmissions.Add((submission.ClientSlot, failoverProposer, submission.Operation, retryRequestId, submission.FailoverCount + 1));
+                        reroutedAny = true;
+                    }
+
+                    submissions = updatedSubmissions;
+                    if (respondedCount > 0 || reroutedAny || droppedTimedOutFailures > 0)
+                    {
+                        consecutiveTimeoutsWithoutProgress = 0;
+                        continue;
+                    }
+
+                    consecutiveTimeoutsWithoutProgress++;
+                    if (consecutiveTimeoutsWithoutProgress > benchmarkOptions.ClientMaxRetries + proposers.Length)
+                    {
+                        Ensure(
+                            false,
+                            $"Benchmark workload made no progress after repeated client timeouts at completed-proposals={completedProposals}. " +
+                            cluster.GetFailureDiagnostics($"benchmark-workload-batch-{completedProposals}"));
+                    }
+                }
             }
             else
             {
@@ -1662,6 +1729,83 @@ public static class SimulationScenarioCatalog
             ReproductionHint: string.Create(
                 CultureInfo.InvariantCulture,
                 $"{cluster.GetReproductionHint(BenchmarkWorkloadOptions.ScenarioName)} params: {string.Join(", ", benchmarkOptions.DescribeParameters().Select(p => $"{p.Key}={p.Value}"))}"));
+    }
+
+    private static FastCasAddress? FindAvailableFailoverProposer(
+        IReadOnlyList<FastCasAddress> proposers,
+        IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
+        FastCasAddress currentProposer,
+        IReadOnlySet<FastCasAddress> occupiedProposers,
+        IReadOnlySet<FastCasAddress> reservedProposers)
+    {
+        var currentIndex = -1;
+        for (var i = 0; i < proposers.Count; i++)
+        {
+            if (proposers[i] == currentProposer)
+            {
+                currentIndex = i;
+                break;
+            }
+        }
+
+        if (currentIndex < 0)
+        {
+            return null;
+        }
+
+        for (var offset = 1; offset < proposers.Count; offset++)
+        {
+            var candidate = proposers[(currentIndex + offset) % proposers.Count];
+            if (occupiedProposers.Contains(candidate) || reservedProposers.Contains(candidate))
+            {
+                continue;
+            }
+
+            var node = proposerNodesByAddress[candidate];
+            if (!node.IsRunning || node.IsSuspended)
+            {
+                continue;
+            }
+
+            return candidate;
+        }
+
+        return null;
+    }
+
+    private static FastCasAddress? FindPreferredHealthyProposer(
+        IReadOnlyList<FastCasAddress> proposers,
+        IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
+        FastCasAddress currentProposer)
+    {
+        var currentIndex = -1;
+        for (var i = 0; i < proposers.Count; i++)
+        {
+            if (proposers[i] == currentProposer)
+            {
+                currentIndex = i;
+                break;
+            }
+        }
+
+        if (currentIndex < 0)
+        {
+            return null;
+        }
+
+        for (var offset = 1; offset < proposers.Count; offset++)
+        {
+            var candidate = proposers[(currentIndex + offset) % proposers.Count];
+            var node = proposerNodesByAddress[candidate];
+            if (!node.IsRunning || node.IsSuspended)
+            {
+                continue;
+            }
+
+            return candidate;
+        }
+
+        return null;
     }
 
     private static async ValueTask<SimulationScenarioCompletion> RunSeededTransientFaultMixAsync(

@@ -127,61 +127,13 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
             return _cachedArtifact;
         }
 
-        Dictionary<Ballot, string>? formattedBallots = null;
-
-        string FormatBallot(Ballot ballot)
-        {
-            formattedBallots ??= [];
-            if (!formattedBallots.TryGetValue(ballot, out var formatted))
-            {
-                formatted = ballot.ToString();
-                formattedBallots.Add(ballot, formatted);
-            }
-
-            return formatted;
-        }
-
-        var commits = new AcceptorSafetyMonitorCommitArtifact[_commitHistory.Count];
-        for (var i = 0; i < commits.Length; i++)
-        {
-            var commit = _commitHistory[i];
-            var witnesses = new string[commit.Witnesses.Count];
-            for (var j = 0; j < witnesses.Length; j++)
-            {
-                witnesses[j] = GetFormattedAddress(commit.Witnesses[j]);
-            }
-
-            commits[i] = new AcceptorSafetyMonitorCommitArtifact(
-                Sequence: i + 1,
-                ObservedAt: commit.Timestamp.ToString("O", CultureInfo.InvariantCulture),
-                TriggeredByAcceptor: GetFormattedAddress(commit.UpdatedAcceptor),
-                Ballot: FormatBallot(commit.Ballot),
-                Version: commit.Value.Version,
-                Value: FormatValue(commit.Value),
-                Witnesses: witnesses);
-        }
-
-        var finalSnapshot = new AcceptorSafetyMonitorSnapshotArtifact[_lastSnapshot.Length];
-        for (var i = 0; i < finalSnapshot.Length; i++)
-        {
-            var snapshot = _lastSnapshot[i];
-            finalSnapshot[i] = new AcceptorSafetyMonitorSnapshotArtifact(
-                Acceptor: GetFormattedAddress(snapshot.Acceptor),
-                IsRunning: snapshot.IsRunning,
-                IsSuspended: snapshot.IsSuspended,
-                PromisedBallot: FormatBallot(snapshot.PromisedBallot),
-                AcceptedBallot: FormatBallot(snapshot.AcceptedBallot),
-                AcceptedVersion: snapshot.AcceptedValue.GetVersionOrDefault(),
-                AcceptedValue: FormatValue(snapshot.AcceptedValue));
-        }
-
         var artifact = new AcceptorSafetyMonitorArtifact(
             SchemaVersion,
             UpdateCount,
             _lastObservedAt?.ToString("O", CultureInfo.InvariantCulture),
             _lastUpdatedAcceptor is { } lastUpdatedAcceptor ? GetFormattedAddress(lastUpdatedAcceptor) : null,
-            commits,
-            finalSnapshot);
+            new FrozenCommitList(this, _commitHistory, _commitHistory.Count),
+            new FrozenSnapshotList(this, _lastSnapshot));
         _cachedArtifact = artifact;
         _artifactDirty = false;
         return artifact;
@@ -337,6 +289,35 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
         return formatted;
     }
 
+    private AcceptorSafetyMonitorCommitArtifact CreateCommitArtifact(int sequence, ObservedCommit commit)
+    {
+        var witnesses = new string[commit.Witnesses.Count];
+        for (var i = 0; i < witnesses.Length; i++)
+        {
+            witnesses[i] = GetFormattedAddress(commit.Witnesses[i]);
+        }
+
+        return new AcceptorSafetyMonitorCommitArtifact(
+            Sequence: sequence,
+            ObservedAt: commit.Timestamp.ToString("O", CultureInfo.InvariantCulture),
+            TriggeredByAcceptor: GetFormattedAddress(commit.UpdatedAcceptor),
+            Ballot: commit.Ballot.ToString(),
+            Version: commit.Value.Version,
+            Value: FormatValue(commit.Value),
+            Witnesses: witnesses);
+    }
+
+    private AcceptorSafetyMonitorSnapshotArtifact CreateSnapshotArtifact(
+        FastCasAcceptorStateSnapshot<TValue> snapshot) =>
+        new(
+            Acceptor: GetFormattedAddress(snapshot.Acceptor),
+            IsRunning: snapshot.IsRunning,
+            IsSuspended: snapshot.IsSuspended,
+            PromisedBallot: snapshot.PromisedBallot.ToString(),
+            AcceptedBallot: snapshot.AcceptedBallot.ToString(),
+            AcceptedVersion: snapshot.AcceptedValue.GetVersionOrDefault(),
+            AcceptedValue: FormatValue(snapshot.AcceptedValue));
+
     private static string CreateContextPrefix(DateTimeOffset timestamp, FastCasAddress updatedAcceptor) =>
         string.Create(
             CultureInfo.InvariantCulture,
@@ -353,6 +334,69 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
             StringComparer.Ordinal.Compare(
                 _owner.GetFormattedAddress(left.Acceptor),
                 _owner.GetFormattedAddress(right.Acceptor));
+    }
+
+    private sealed class FrozenCommitList(
+        FastCasAcceptorSafetyMonitor<TValue> owner,
+        IReadOnlyList<ObservedCommit> commits,
+        int count)
+        : IReadOnlyList<AcceptorSafetyMonitorCommitArtifact>
+    {
+        private readonly FastCasAcceptorSafetyMonitor<TValue> _owner = owner;
+        private readonly IReadOnlyList<ObservedCommit> _commits = commits;
+
+        public int Count { get; } = count;
+
+        public AcceptorSafetyMonitorCommitArtifact this[int index]
+        {
+            get
+            {
+                ArgumentOutOfRangeException.ThrowIfNegative(index);
+                ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, Count);
+                return _owner.CreateCommitArtifact(index + 1, _commits[index]);
+            }
+        }
+
+        public IEnumerator<AcceptorSafetyMonitorCommitArtifact> GetEnumerator()
+        {
+            for (var i = 0; i < Count; i++)
+            {
+                yield return this[i];
+            }
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    private sealed class FrozenSnapshotList(
+        FastCasAcceptorSafetyMonitor<TValue> owner,
+        IReadOnlyList<FastCasAcceptorStateSnapshot<TValue>> snapshots)
+        : IReadOnlyList<AcceptorSafetyMonitorSnapshotArtifact>
+    {
+        private readonly FastCasAcceptorSafetyMonitor<TValue> _owner = owner;
+        private readonly IReadOnlyList<FastCasAcceptorStateSnapshot<TValue>> _snapshots = snapshots;
+
+        public int Count => _snapshots.Count;
+
+        public AcceptorSafetyMonitorSnapshotArtifact this[int index]
+        {
+            get
+            {
+                ArgumentOutOfRangeException.ThrowIfNegative(index);
+                ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, Count);
+                return _owner.CreateSnapshotArtifact(_snapshots[index]);
+            }
+        }
+
+        public IEnumerator<AcceptorSafetyMonitorSnapshotArtifact> GetEnumerator()
+        {
+            for (var i = 0; i < Count; i++)
+            {
+                yield return this[i];
+            }
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     private readonly record struct ResolvedCommit(
