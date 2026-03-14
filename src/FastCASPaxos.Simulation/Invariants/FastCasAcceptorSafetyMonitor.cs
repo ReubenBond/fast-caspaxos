@@ -45,11 +45,17 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
 {
     private const string SchemaVersion = "fast-caspaxos-acceptor-safety-monitor-v1";
 
+    private readonly Dictionary<FastCasAddress, string> _formattedAddressCache = [];
     private readonly List<ObservedCommit> _commitHistory = [];
-    private IReadOnlyList<FastCasAcceptorStateSnapshot<TValue>> _lastSnapshot =
+    private readonly SnapshotComparer _snapshotComparer;
+    private FastCasAcceptorStateSnapshot<TValue>[] _lastSnapshot =
         Array.Empty<FastCasAcceptorStateSnapshot<TValue>>();
     private DateTimeOffset? _lastObservedAt;
     private FastCasAddress? _lastUpdatedAcceptor;
+    private AcceptorSafetyMonitorArtifact? _cachedArtifact;
+    private bool _artifactDirty = true;
+
+    public FastCasAcceptorSafetyMonitor() => _snapshotComparer = new SnapshotComparer(this);
 
     public int UpdateCount { get; private set; }
 
@@ -60,11 +66,22 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
     {
         ArgumentNullException.ThrowIfNull(snapshots);
 
+        var orderedSnapshots = new FastCasAcceptorStateSnapshot<TValue>[snapshots.Count];
+        for (var i = 0; i < orderedSnapshots.Length; i++)
+        {
+            orderedSnapshots[i] = snapshots[i];
+        }
+
+        if (orderedSnapshots.Length > 1)
+        {
+            Array.Sort(orderedSnapshots, _snapshotComparer);
+        }
+
         UpdateCount++;
         _lastObservedAt = timestamp;
         _lastUpdatedAcceptor = updatedAcceptor;
-        _lastSnapshot = [.. snapshots
-            .OrderBy(snapshot => snapshot.Acceptor.ToString(), StringComparer.Ordinal)];
+        _lastSnapshot = orderedSnapshots;
+        _artifactDirty = true;
 
         ValidateAcceptedBallotConsistency(timestamp, updatedAcceptor, _lastSnapshot);
 
@@ -103,29 +120,72 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
                 committed.Witnesses));
     }
 
-    public AcceptorSafetyMonitorArtifact CreateArtifact() =>
-        new(
+    public AcceptorSafetyMonitorArtifact CreateArtifact()
+    {
+        if (!_artifactDirty && _cachedArtifact is not null)
+        {
+            return _cachedArtifact;
+        }
+
+        Dictionary<Ballot, string>? formattedBallots = null;
+
+        string FormatBallot(Ballot ballot)
+        {
+            formattedBallots ??= [];
+            if (!formattedBallots.TryGetValue(ballot, out var formatted))
+            {
+                formatted = ballot.ToString();
+                formattedBallots.Add(ballot, formatted);
+            }
+
+            return formatted;
+        }
+
+        var commits = new AcceptorSafetyMonitorCommitArtifact[_commitHistory.Count];
+        for (var i = 0; i < commits.Length; i++)
+        {
+            var commit = _commitHistory[i];
+            var witnesses = new string[commit.Witnesses.Count];
+            for (var j = 0; j < witnesses.Length; j++)
+            {
+                witnesses[j] = GetFormattedAddress(commit.Witnesses[j]);
+            }
+
+            commits[i] = new AcceptorSafetyMonitorCommitArtifact(
+                Sequence: i + 1,
+                ObservedAt: commit.Timestamp.ToString("O", CultureInfo.InvariantCulture),
+                TriggeredByAcceptor: GetFormattedAddress(commit.UpdatedAcceptor),
+                Ballot: FormatBallot(commit.Ballot),
+                Version: commit.Value.Version,
+                Value: FormatValue(commit.Value),
+                Witnesses: witnesses);
+        }
+
+        var finalSnapshot = new AcceptorSafetyMonitorSnapshotArtifact[_lastSnapshot.Length];
+        for (var i = 0; i < finalSnapshot.Length; i++)
+        {
+            var snapshot = _lastSnapshot[i];
+            finalSnapshot[i] = new AcceptorSafetyMonitorSnapshotArtifact(
+                Acceptor: GetFormattedAddress(snapshot.Acceptor),
+                IsRunning: snapshot.IsRunning,
+                IsSuspended: snapshot.IsSuspended,
+                PromisedBallot: FormatBallot(snapshot.PromisedBallot),
+                AcceptedBallot: FormatBallot(snapshot.AcceptedBallot),
+                AcceptedVersion: snapshot.AcceptedValue.GetVersionOrDefault(),
+                AcceptedValue: FormatValue(snapshot.AcceptedValue));
+        }
+
+        var artifact = new AcceptorSafetyMonitorArtifact(
             SchemaVersion,
             UpdateCount,
             _lastObservedAt?.ToString("O", CultureInfo.InvariantCulture),
-            _lastUpdatedAcceptor?.ToString(),
-            [.. _commitHistory.Select(
-                (commit, index) => new AcceptorSafetyMonitorCommitArtifact(
-                    Sequence: index + 1,
-                    ObservedAt: commit.Timestamp.ToString("O", CultureInfo.InvariantCulture),
-                    TriggeredByAcceptor: commit.UpdatedAcceptor.ToString(),
-                    Ballot: commit.Ballot.ToString(),
-                    Version: commit.Value.Version,
-                    Value: FormatValue(commit.Value),
-                    Witnesses: [.. commit.Witnesses.Select(witness => witness.ToString())]))],
-            [.. _lastSnapshot.Select(snapshot => new AcceptorSafetyMonitorSnapshotArtifact(
-                Acceptor: snapshot.Acceptor.ToString(),
-                IsRunning: snapshot.IsRunning,
-                IsSuspended: snapshot.IsSuspended,
-                PromisedBallot: snapshot.PromisedBallot.ToString(),
-                AcceptedBallot: snapshot.AcceptedBallot.ToString(),
-                AcceptedVersion: snapshot.AcceptedValue.GetVersionOrDefault(),
-                AcceptedValue: FormatValue(snapshot.AcceptedValue)))]);
+            _lastUpdatedAcceptor is { } lastUpdatedAcceptor ? GetFormattedAddress(lastUpdatedAcceptor) : null,
+            commits,
+            finalSnapshot);
+        _cachedArtifact = artifact;
+        _artifactDirty = false;
+        return artifact;
+    }
 
     private static void ValidateAcceptedBallotConsistency(
         DateTimeOffset timestamp,
@@ -154,7 +214,6 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
             var detail = string.Join(
                 ", ",
                 ballotGroup
-                    .OrderBy(snapshot => snapshot.Acceptor.ToString(), StringComparer.Ordinal)
                     .Select(snapshot => $"{snapshot.Acceptor}={snapshot.AcceptedValue}"));
             throw new InvalidOperationException(
                 $"{CreateContextPrefix(timestamp, updatedAcceptor)} Accepted ballot {ballotGroup.Key} has conflicting values across acceptors: [{detail}].");
@@ -200,30 +259,32 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
         IGrouping<Ballot, FastCasAcceptorStateSnapshot<TValue>> ballotGroup,
         int acceptorCount)
     {
+        var ballotWitnesses = ballotGroup.ToArray();
         if (ballotGroup.Key.IsClassicRoundBallot)
         {
-            if (!HasQuorum(ballotGroup.Key, ballotGroup.Count(), acceptorCount))
+            if (!HasQuorum(ballotGroup.Key, ballotWitnesses.Length, acceptorCount))
             {
                 return Array.Empty<ResolvedCommit>();
             }
 
-            var witnesses = ballotGroup
-                .OrderBy(snapshot => snapshot.Acceptor.ToString(), StringComparer.Ordinal)
-                .ToArray();
+            var witnesses = new FastCasAddress[ballotWitnesses.Length];
+            for (var i = 0; i < witnesses.Length; i++)
+            {
+                witnesses[i] = ballotWitnesses[i].Acceptor;
+            }
+
             return
             [
                 new ResolvedCommit(
                     ballotGroup.Key,
-                    witnesses[0].AcceptedValue,
-                    [.. witnesses.Select(witness => witness.Acceptor)]),
+                    ballotWitnesses[0].AcceptedValue,
+                    witnesses),
             ];
         }
 
-        var committedValueGroups = ballotGroup
+        var committedValueGroups = ballotWitnesses
             .GroupBy(snapshot => snapshot.AcceptedValue, EqualityComparer<TValue>.Default)
-            .Select(group => group
-                .OrderBy(snapshot => snapshot.Acceptor.ToString(), StringComparer.Ordinal)
-                .ToArray())
+            .Select(group => group.ToArray())
             .Where(group => HasQuorum(ballotGroup.Key, group.Length, acceptorCount))
             .ToArray();
         if (committedValueGroups.Length > 1)
@@ -265,10 +326,34 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
             ? null
             : value.ToString();
 
+    private string GetFormattedAddress(FastCasAddress address)
+    {
+        if (!_formattedAddressCache.TryGetValue(address, out var formatted))
+        {
+            formatted = address.ToString();
+            _formattedAddressCache.Add(address, formatted);
+        }
+
+        return formatted;
+    }
+
     private static string CreateContextPrefix(DateTimeOffset timestamp, FastCasAddress updatedAcceptor) =>
         string.Create(
             CultureInfo.InvariantCulture,
             $"Acceptor safety monitor detected an inconsistency after {updatedAcceptor} updated at {timestamp:O}.");
+
+    private sealed class SnapshotComparer(FastCasAcceptorSafetyMonitor<TValue> owner)
+        : IComparer<FastCasAcceptorStateSnapshot<TValue>>
+    {
+        private readonly FastCasAcceptorSafetyMonitor<TValue> _owner = owner;
+
+        public int Compare(
+            FastCasAcceptorStateSnapshot<TValue> left,
+            FastCasAcceptorStateSnapshot<TValue> right) =>
+            StringComparer.Ordinal.Compare(
+                _owner.GetFormattedAddress(left.Acceptor),
+                _owner.GetFormattedAddress(right.Acceptor));
+    }
 
     private readonly record struct ResolvedCommit(
         Ballot Ballot,

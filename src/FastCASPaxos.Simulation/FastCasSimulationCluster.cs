@@ -416,6 +416,12 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         RecordFault($"link-latency {node1} <-> {node2} base={baseDelay} jitter={maxJitter}");
     }
 
+    public void ClearBidirectionalLinkLatency(FastCasAddress node1, FastCasAddress node2)
+    {
+        Network.ClearLinkLatency(node1.NetworkAddress, node2.NetworkAddress);
+        Network.ClearLinkLatency(node2.NetworkAddress, node1.NetworkAddress);
+    }
+
     public void ClearLinkLatencies()
     {
         Network.ClearAllLinkLatencies();

@@ -17,13 +17,16 @@ public sealed record FaultScheduleEntry(
     int AtProposal,
     int UntilProposal,
     FastCasParticipantRole SecondaryRole = default,
-    int SecondaryOrdinal = 0);
+    int SecondaryOrdinal = 0,
+    double SlowLinkDelayMs = 0,
+    double SlowLinkJitterMs = 0);
 
 public enum FaultScheduleAction
 {
     Suspend,
     Partition,
     Crash,
+    SlowLink,
 }
 
 internal sealed record BenchmarkWorkloadOptions(
@@ -35,7 +38,12 @@ internal sealed record BenchmarkWorkloadOptions(
     TimeSpan BaseDelay,
     TimeSpan MaxJitter,
     LinkLatencyProfile Topology,
-    IReadOnlyList<FaultScheduleEntry> FaultSchedule)
+    IReadOnlyList<FaultScheduleEntry> FaultSchedule,
+    bool AgreementMode,
+    bool RegisterInitMode,
+    int WriteIntervalMs,
+    int ClientTimeoutMs,
+    int ClientMaxRetries)
 {
     public const string ScenarioName = "benchmark-workload";
 
@@ -50,6 +58,11 @@ internal sealed record BenchmarkWorkloadOptions(
         "max-jitter-ms",
         "link-latency-profile",
         "fault-schedule",
+        "agreement-mode",
+        "register-init-mode",
+        "write-interval-ms",
+        "client-timeout-ms",
+        "client-max-retries",
     ];
 
     public string ModeName =>
@@ -82,6 +95,11 @@ internal sealed record BenchmarkWorkloadOptions(
         var topology = GetEnum<LinkLatencyProfile>(parameters, "link-latency-profile", defaultValue: LinkLatencyProfile.Lan);
         var faultSchedule = ParseFaultSchedule(
             parameters.TryGetValue("fault-schedule", out var fs) ? fs : string.Empty);
+        var agreementMode = GetBool(parameters, "agreement-mode", defaultValue: false);
+        var registerInitMode = GetBool(parameters, "register-init-mode", defaultValue: false);
+        var writeIntervalMs = GetPositiveIntOrZero(parameters, "write-interval-ms", defaultValue: 0);
+        var clientTimeoutMs = GetPositiveIntOrZero(parameters, "client-timeout-ms", defaultValue: 0);
+        var clientMaxRetries = GetPositiveIntOrZero(parameters, "client-max-retries", defaultValue: 2);
 
         return new(
             proposerCount,
@@ -92,7 +110,12 @@ internal sealed record BenchmarkWorkloadOptions(
             TimeSpan.FromMilliseconds(baseDelayMs),
             TimeSpan.FromMilliseconds(maxJitterMs),
             topology,
-            faultSchedule);
+            faultSchedule,
+            agreementMode,
+            registerInitMode,
+            writeIntervalMs,
+            clientTimeoutMs,
+            clientMaxRetries);
     }
 
     public IReadOnlyList<KeyValuePair<string, string>> DescribeParameters() =>
@@ -106,6 +129,11 @@ internal sealed record BenchmarkWorkloadOptions(
         new("max-jitter-ms", MaxJitter.TotalMilliseconds.ToString("0.###", CultureInfo.InvariantCulture)),
         new("link-latency-profile", Topology.ToString().ToLowerInvariant()),
         new("fault-schedule", FormatFaultSchedule()),
+        new("agreement-mode", AgreementMode.ToString().ToLowerInvariant()),
+        new("register-init-mode", RegisterInitMode.ToString().ToLowerInvariant()),
+        new("write-interval-ms", WriteIntervalMs.ToString(CultureInfo.InvariantCulture)),
+        new("client-timeout-ms", ClientTimeoutMs.ToString(CultureInfo.InvariantCulture)),
+        new("client-max-retries", ClientMaxRetries.ToString(CultureInfo.InvariantCulture)),
         new("mode", ModeName),
         new("topology", Topology.ToString().ToLowerInvariant()),
         new("fault-label", FaultLabel),
@@ -290,6 +318,22 @@ internal sealed record BenchmarkWorkloadOptions(
                 cluster.CrashNode(target);
                 recorder.RecordFault(cluster, $"crash {target}");
                 break;
+            case FaultScheduleAction.SlowLink:
+                var slowDelay = TimeSpan.FromMilliseconds(fault.SlowLinkDelayMs);
+                var slowJitter = TimeSpan.FromMilliseconds(fault.SlowLinkJitterMs);
+                foreach (var proposerNode in cluster.ProposerNodes)
+                {
+                    if (proposerNode.Host.Address != target)
+                        cluster.ConfigureBidirectionalLinkLatency(target, proposerNode.Host.Address, slowDelay, slowJitter);
+                }
+                foreach (var acceptorNode in cluster.AcceptorNodes)
+                {
+                    if (acceptorNode.Host.Address != target)
+                        cluster.ConfigureBidirectionalLinkLatency(target, acceptorNode.Host.Address, slowDelay, slowJitter);
+                }
+                cluster.ConfigureBidirectionalLinkLatency(target, cluster.ClientAddress, slowDelay, slowJitter);
+                recorder.RecordFault(cluster, $"slow-link {target} delay={fault.SlowLinkDelayMs}ms jitter={fault.SlowLinkJitterMs}ms");
+                break;
         }
     }
 
@@ -316,6 +360,20 @@ internal sealed record BenchmarkWorkloadOptions(
                 cluster.RestartNode(target);
                 recorder.RecordFault(cluster, $"restart {target}");
                 break;
+            case FaultScheduleAction.SlowLink:
+                foreach (var proposerNode in cluster.ProposerNodes)
+                {
+                    if (proposerNode.Host.Address != target)
+                        cluster.ClearBidirectionalLinkLatency(target, proposerNode.Host.Address);
+                }
+                foreach (var acceptorNode in cluster.AcceptorNodes)
+                {
+                    if (acceptorNode.Host.Address != target)
+                        cluster.ClearBidirectionalLinkLatency(target, acceptorNode.Host.Address);
+                }
+                cluster.ClearBidirectionalLinkLatency(target, cluster.ClientAddress);
+                recorder.RecordFault(cluster, $"heal-slow-link {target}");
+                break;
         }
     }
 
@@ -335,12 +393,16 @@ internal sealed record BenchmarkWorkloadOptions(
     private static string FormatFaultEntry(FaultScheduleEntry entry)
     {
         var action = entry.Action.ToString().ToLowerInvariant();
+        if (entry.Action == FaultScheduleAction.SlowLink)
+            action = "slow-link";
         var target = $"{entry.TargetRole.ToString().ToLowerInvariant()}:{entry.TargetOrdinal}";
         var timing = $"at:{entry.AtProposal}:until:{entry.UntilProposal}";
 
-        return entry.Action == FaultScheduleAction.Partition
-            ? $"{action}:{target}:{entry.SecondaryRole.ToString().ToLowerInvariant()}:{entry.SecondaryOrdinal}:{timing}"
-            : $"{action}:{target}:{timing}";
+        if (entry.Action == FaultScheduleAction.Partition)
+            return $"{action}:{target}:{entry.SecondaryRole.ToString().ToLowerInvariant()}:{entry.SecondaryOrdinal}:{timing}";
+        if (entry.Action == FaultScheduleAction.SlowLink)
+            return $"{action}:{target}:{timing}:delay:{entry.SlowLinkDelayMs}:jitter:{entry.SlowLinkJitterMs}";
+        return $"{action}:{target}:{timing}";
     }
 
     internal static IReadOnlyList<FaultScheduleEntry> ParseFaultSchedule(string schedule)
@@ -411,7 +473,24 @@ internal sealed record BenchmarkWorkloadOptions(
             throw new ArgumentException($"Expected 'until' or 'restart' keyword in fault entry '{entry}'.");
         }
 
-        return new FaultScheduleEntry(action, role, ordinal, atProposal, untilProposal, secondaryRole, secondaryOrdinal);
+        double slowLinkDelayMs = 0;
+        double slowLinkJitterMs = 0;
+
+        if (action == FaultScheduleAction.SlowLink)
+        {
+            var remaining = atIndex + 4;
+            if (remaining < tokens.Length && string.Equals(tokens[remaining], "delay", StringComparison.OrdinalIgnoreCase))
+            {
+                slowLinkDelayMs = double.Parse(tokens[remaining + 1], CultureInfo.InvariantCulture);
+                remaining += 2;
+            }
+            if (remaining < tokens.Length && string.Equals(tokens[remaining], "jitter", StringComparison.OrdinalIgnoreCase))
+            {
+                slowLinkJitterMs = double.Parse(tokens[remaining + 1], CultureInfo.InvariantCulture);
+            }
+        }
+
+        return new FaultScheduleEntry(action, role, ordinal, atProposal, untilProposal, secondaryRole, secondaryOrdinal, slowLinkDelayMs, slowLinkJitterMs);
     }
 
     private static FaultScheduleAction ParseAction(string token) =>
@@ -420,7 +499,8 @@ internal sealed record BenchmarkWorkloadOptions(
             "suspend" => FaultScheduleAction.Suspend,
             "partition" => FaultScheduleAction.Partition,
             "crash" => FaultScheduleAction.Crash,
-            _ => throw new ArgumentException($"Unknown fault action '{token}'. Expected: suspend, partition, crash."),
+            "slow-link" or "slowlink" => FaultScheduleAction.SlowLink,
+            _ => throw new ArgumentException($"Unknown fault action '{token}'. Expected: suspend, partition, crash, slow-link."),
         };
 
     private static FastCasParticipantRole ParseRole(string token) =>
@@ -473,6 +553,16 @@ internal sealed record BenchmarkWorkloadOptions(
             return defaultValue;
         if (!bool.TryParse(value, out var parsed))
             throw new ArgumentException($"Scenario '{ScenarioName}' expects '{name}' to be 'true' or 'false'.");
+        return parsed;
+    }
+
+    private static int GetPositiveIntOrZero(
+        IReadOnlyDictionary<string, string> parameters, string name, int defaultValue)
+    {
+        if (!parameters.TryGetValue(name, out var value))
+            return defaultValue;
+        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) || parsed < 0)
+            throw new ArgumentException($"Scenario '{ScenarioName}' expects '{name}' to be a non-negative integer.");
         return parsed;
     }
 

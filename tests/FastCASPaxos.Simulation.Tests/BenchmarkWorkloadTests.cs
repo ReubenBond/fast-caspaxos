@@ -80,11 +80,11 @@ public sealed class BenchmarkWorkloadTests
             var lines = await File.ReadAllLinesAsync(csvFiles[0]);
             Assert.True(lines.Length > 1, "Expected CSV header + data rows");
             Assert.StartsWith(
-                "request_id,proposer,kind,sent_ms,completed_ms,latency_ms,round_trips,mode,topology,fault_label",
+                "request_id,proposer,kind,sent_ms,completed_ms,latency_ms,round_trips,mode,topology,fault_label,failover_count",
                 lines[0]);
 
             var fields = lines[1].Split(',');
-            Assert.Equal(10, fields.Length);
+            Assert.Equal(11, fields.Length);
             Assert.True(double.TryParse(fields[3], out _), "sent_ms should be a number");
             Assert.True(double.TryParse(fields[5], out _), "latency_ms should be a number");
             Assert.Equal("leader", fields[7]);

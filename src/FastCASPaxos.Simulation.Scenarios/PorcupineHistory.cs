@@ -230,18 +230,16 @@ internal sealed class PorcupineHistoryBuilder
 
 internal static class PorcupineHistorySerializer
 {
-    private static readonly JsonSerializerOptions Options = new()
-    {
-        WriteIndented = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    };
-
-    public static Task WriteAsync(
+    public static async Task WriteAsync(
         string path,
         PorcupineHistoryArtifact history,
-        CancellationToken cancellationToken) =>
-        File.WriteAllTextAsync(
-            path,
-            JsonSerializer.Serialize(history, Options),
+        CancellationToken cancellationToken)
+    {
+        await using var stream = File.Create(path);
+        await JsonSerializer.SerializeAsync(
+            stream,
+            history,
+            SimulationArtifactJsonContext.Default.PorcupineHistoryArtifact,
             cancellationToken);
+    }
 }

@@ -45,7 +45,8 @@ public readonly record struct ProposalLatencySample(
     double SentMs,
     double CompletedMs,
     double LatencyMs,
-    int RoundTrips);
+    int RoundTrips,
+    int FailoverCount);
 
 public sealed record SimulationRunResult(
     string ScenarioName,
@@ -265,11 +266,13 @@ public sealed class SimulationObservabilitySession :
     private readonly Counter<long> _deliveredAcceptRejected;
     private readonly Counter<long> _localProposalCompletions;
     private readonly Dictionary<int, ActiveProposalRoundTrip> _activeProposalRoundTrips = [];
+    private readonly Dictionary<int, int> _lastCompletedRoundTrips = [];
     private readonly List<SimulationProposalRoundTripSample> _completedProposalRoundTrips = [];
     private readonly Dictionary<int, PendingProposalLatency> _pendingProposalLatencies = [];
     private readonly List<ProposalLatencySample> _completedProposalLatencySamples = [];
     private DateTimeOffset _simulationEpoch = DateTimeOffset.UnixEpoch;
-    private AcceptorSafetyMonitorArtifact? _acceptorSafetyMonitorArtifact;
+    private object? _acceptorSafetyMonitorSource;
+    private Func<AcceptorSafetyMonitorArtifact>? _acceptorSafetyMonitorArtifactFactory;
     private IFastCasSimulationHistoryObserver? _forwardHistoryObserver;
     private IFastCasSimulationAcceptorStateObserver? _forwardAcceptorStateObserver;
     private bool _disposed;
@@ -329,7 +332,7 @@ public sealed class SimulationObservabilitySession :
         [.. _completedProposalLatencySamples];
 
     public AcceptorSafetyMonitorArtifact? GetAcceptorSafetyMonitorArtifact() =>
-        _acceptorSafetyMonitorArtifact;
+        _acceptorSafetyMonitorArtifactFactory?.Invoke();
 
     public void OnProposalSent<TValue>(
         DateTimeOffset timestamp,
@@ -358,9 +361,13 @@ public sealed class SimulationObservabilitySession :
         if (_pendingProposalLatencies.Remove(requestId, out var pending))
         {
             var latency = timestamp - pending.Sent;
-            var roundTrips = _activeProposalRoundTrips.TryGetValue(proposer.Ordinal, out var active)
-                ? active.RoundTrips
-                : 0;
+            int roundTrips;
+            if (_activeProposalRoundTrips.TryGetValue(proposer.Ordinal, out var active))
+                roundTrips = active.RoundTrips;
+            else if (_lastCompletedRoundTrips.TryGetValue(proposer.Ordinal, out var last))
+                roundTrips = last;
+            else
+                roundTrips = 0;
             _completedProposalLatencySamples.Add(new ProposalLatencySample(
                 requestId,
                 pending.Proposer,
@@ -368,7 +375,8 @@ public sealed class SimulationObservabilitySession :
                 SentMs: (pending.Sent - _simulationEpoch).TotalMilliseconds,
                 CompletedMs: (timestamp - _simulationEpoch).TotalMilliseconds,
                 LatencyMs: latency.TotalMilliseconds,
-                RoundTrips: roundTrips));
+                RoundTrips: roundTrips,
+                FailoverCount: 0));
         }
 
         _forwardHistoryObserver?.OnProposalCompleted(timestamp, proposer, requestId, response);
@@ -380,7 +388,12 @@ public sealed class SimulationObservabilitySession :
         FastCasAcceptorSafetyMonitor<TValue> monitor)
         where TValue : FastCASPaxos.Simulation.Contracts.IVersionedValue<TValue>
     {
-        _acceptorSafetyMonitorArtifact = monitor.CreateArtifact();
+        if (!ReferenceEquals(_acceptorSafetyMonitorSource, monitor))
+        {
+            _acceptorSafetyMonitorSource = monitor;
+            _acceptorSafetyMonitorArtifactFactory = monitor.CreateArtifact;
+        }
+
         _forwardAcceptorStateObserver?.OnAcceptorStateObserved(timestamp, updatedAcceptor, monitor);
     }
 
@@ -474,6 +487,7 @@ public sealed class SimulationObservabilitySession :
             case ProposerDiagnostics.SuccessesMetricName:
                 if (_activeProposalRoundTrips.Remove(proposerId, out var completedProposal))
                 {
+                    _lastCompletedRoundTrips[proposerId] = completedProposal.RoundTrips;
                     _completedProposalRoundTrips.Add(
                         new SimulationProposalRoundTripSample(
                             completedProposal.Kind,
@@ -1488,6 +1502,9 @@ public static class SimulationScenarioCatalog
         var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
         var proposalCount = benchmarkOptions.ProposalCount;
         var requestId = 100_000;
+        var clientTimeoutEnabled = benchmarkOptions.ClientTimeoutMs > 0;
+        var clientTimeout = TimeSpan.FromMilliseconds(benchmarkOptions.ClientTimeoutMs);
+        var writeInterval = TimeSpan.FromMilliseconds(benchmarkOptions.WriteIntervalMs);
 
         // Concurrent workload: each step sends one proposal from each proposer
         var version = 0;
@@ -1498,7 +1515,7 @@ public static class SimulationScenarioCatalog
             benchmarkOptions.ApplyFaultAtProposal(cluster, completedProposals, recorder);
 
             // Send one proposal from each proposer concurrently
-            List<(FastCasAddress Proposer, IOperation<StringValue> Operation, int RequestId)> submissions = [];
+            List<(FastCasAddress Proposer, IOperation<StringValue> Operation, int RequestId, int FailoverCount)> submissions = [];
             foreach (var proposer in proposers)
             {
                 if (completedProposals + submissions.Count >= proposalCount)
@@ -1507,12 +1524,30 @@ public static class SimulationScenarioCatalog
                 }
 
                 version++;
-                var operation = StringScenarioOperations.AppendCharacter(
-                    (char)('A' + ((version - 1) % 26)));
+
+                IOperation<StringValue> operation;
+                if (benchmarkOptions.RegisterInitMode)
+                {
+                    // Each proposal targets an independent "register" — use unique prefix
+                    operation = StringScenarioOperations.AppendCharacter(
+                        (char)('A' + ((version - 1) % 26)));
+                }
+                else if (benchmarkOptions.AgreementMode)
+                {
+                    // All proposers in this batch propose the SAME value
+                    var batchChar = (char)('A' + ((completedProposals / Math.Max(1, proposers.Length)) % 26));
+                    operation = StringScenarioOperations.AppendCharacter(batchChar);
+                }
+                else
+                {
+                    operation = StringScenarioOperations.AppendCharacter(
+                        (char)('A' + ((version - 1) % 26)));
+                }
+
                 var submissionRequestId = requestId++;
                 _ = cluster.SendProposal(proposer, operation, submissionRequestId);
                 recorder.RecordSend(cluster, proposer, operation, submissionRequestId);
-                submissions.Add((proposer, operation, submissionRequestId));
+                submissions.Add((proposer, operation, submissionRequestId, 0));
             }
 
             if (submissions.Count == 0)
@@ -1524,9 +1559,60 @@ public static class SimulationScenarioCatalog
             // increase contention and the number of simulation steps needed.
             var maxIterationsPerBatch = 50_000 * Math.Max(1, submissions.Count);
 
-            cluster.RunUntil(
-                () => submissions.All(s => cluster.TryGetResponse(s.RequestId, out _)),
-                maxIterations: maxIterationsPerBatch);
+            if (clientTimeoutEnabled)
+            {
+                // Client failover: run until all complete OR timeout, then retry failed ones
+                var batchStartTime = cluster.TimeProvider.GetUtcNow();
+                var timeoutDeadline = batchStartTime + clientTimeout;
+
+                cluster.RunUntil(
+                    () => submissions.All(s => cluster.TryGetResponse(s.RequestId, out _))
+                          || cluster.TimeProvider.GetUtcNow() >= timeoutDeadline,
+                    maxIterations: maxIterationsPerBatch);
+
+                // Check for timed-out proposals and retry with different proposer
+                var updatedSubmissions = new List<(FastCasAddress Proposer, IOperation<StringValue> Operation, int RequestId, int FailoverCount)>();
+                foreach (var submission in submissions)
+                {
+                    if (cluster.TryGetResponse(submission.RequestId, out _))
+                    {
+                        updatedSubmissions.Add(submission);
+                    }
+                    else if (submission.FailoverCount < benchmarkOptions.ClientMaxRetries)
+                    {
+                        // Failover: pick a different proposer
+                        var currentIndex = Array.IndexOf(proposers, submission.Proposer);
+                        var nextProposer = proposers[(currentIndex + 1) % proposers.Length];
+                        var retryRequestId = requestId++;
+                        _ = cluster.SendProposal(nextProposer, submission.Operation, retryRequestId);
+                        recorder.RecordSend(cluster, nextProposer, submission.Operation, retryRequestId);
+                        updatedSubmissions.Add((nextProposer, submission.Operation, retryRequestId, submission.FailoverCount + 1));
+                    }
+                    else
+                    {
+                        // Exhausted retries — treat as completed (failed)
+                        updatedSubmissions.Add(submission);
+                    }
+                }
+
+                // If we have retried submissions, wait for them too
+                if (updatedSubmissions.Any(s => !cluster.TryGetResponse(s.RequestId, out _) && s.FailoverCount > 0))
+                {
+                    var retryDeadline = cluster.TimeProvider.GetUtcNow() + clientTimeout;
+                    cluster.RunUntil(
+                        () => updatedSubmissions.All(s => cluster.TryGetResponse(s.RequestId, out _))
+                              || cluster.TimeProvider.GetUtcNow() >= retryDeadline,
+                        maxIterations: maxIterationsPerBatch);
+                }
+
+                submissions = updatedSubmissions;
+            }
+            else
+            {
+                cluster.RunUntil(
+                    () => submissions.All(s => cluster.TryGetResponse(s.RequestId, out _)),
+                    maxIterations: maxIterationsPerBatch);
+            }
 
             // During fault injection, some proposals may not complete (proposers waiting for
             // responses from unreachable acceptors). Record what completed and continue.
@@ -1548,6 +1634,12 @@ public static class SimulationScenarioCatalog
             }
 
             completedProposals += batchResponded;
+
+            // Write interval: advance simulation clock between batches
+            if (writeInterval > TimeSpan.Zero && completedProposals < proposalCount)
+            {
+                cluster.RunForDuration(writeInterval);
+            }
         }
 
         // Check final fault schedule
@@ -2065,14 +2157,14 @@ public static class SimulationBatchRunner
 
         var lines = new List<string>(samples.Count + 1)
         {
-            "request_id,proposer,kind,sent_ms,completed_ms,latency_ms,round_trips,mode,topology,fault_label",
+            "request_id,proposer,kind,sent_ms,completed_ms,latency_ms,round_trips,mode,topology,fault_label,failover_count",
         };
 
         foreach (var sample in samples)
         {
             lines.Add(string.Create(
                 CultureInfo.InvariantCulture,
-                $"{sample.RequestId},{sample.Proposer},{sample.Kind},{sample.SentMs:F4},{sample.CompletedMs:F4},{sample.LatencyMs:F4},{sample.RoundTrips},{mode},{topology},{faultLabel}"));
+                $"{sample.RequestId},{sample.Proposer},{sample.Kind},{sample.SentMs:F4},{sample.CompletedMs:F4},{sample.LatencyMs:F4},{sample.RoundTrips},{mode},{topology},{faultLabel},{sample.FailoverCount}"));
         }
 
         await File.WriteAllLinesAsync(path, lines, cancellationToken);
