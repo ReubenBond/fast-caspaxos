@@ -22,6 +22,13 @@ public enum DeliveryStatus
 }
 
 /// <summary>
+/// Represents the latency parameters for a specific network link between two nodes.
+/// </summary>
+/// <param name="BaseDelay">The base (minimum) message delay for this link.</param>
+/// <param name="MaxJitter">The maximum additional random delay for this link.</param>
+public readonly record struct LinkLatency(TimeSpan BaseDelay, TimeSpan MaxJitter);
+
+/// <summary>
 /// Simulation network for in-memory transport between nodes.
 /// Provides hooks for injecting network faults like delays, partitions, and message loss.
 /// </summary>
@@ -31,6 +38,7 @@ public class SimulationNetwork
     private readonly Func<IReadOnlyList<SimulationNode>> _getNodes;
     private readonly SimulationRandom _random;
     private readonly ConcurrentDictionary<string, HashSet<string>> _partitions = new(StringComparer.Ordinal);
+    private readonly Dictionary<(string Source, string Target), LinkLatency> _linkLatencies = [];
     private readonly Lock _lock = new();
     private ILogger _logger;
 
@@ -238,7 +246,7 @@ public class SimulationNetwork
     public bool CanDeliver(string sourceAddress, string targetAddress) => CheckDelivery(sourceAddress, targetAddress) == DeliveryStatus.Success;
 
     /// <summary>
-    /// Gets the simulated delay for a message.
+    /// Gets the simulated delay for a message using global defaults.
     /// </summary>
     public TimeSpan GetMessageDelay()
     {
@@ -249,6 +257,123 @@ public class SimulationNetwork
 
         var jitter = _random.NextTimeSpan(MaxJitter);
         return BaseMessageDelay + jitter;
+    }
+
+    /// <summary>
+    /// Gets the simulated delay for a message between specific nodes.
+    /// Uses per-link latency overrides when configured, otherwise falls back to global defaults.
+    /// </summary>
+    /// <param name="sourceAddress">The sending node's network address.</param>
+    /// <param name="targetAddress">The receiving node's network address.</param>
+    public TimeSpan GetMessageDelay(string sourceAddress, string targetAddress)
+    {
+        if (!EnableDelays)
+        {
+            return TimeSpan.Zero;
+        }
+
+        // Loopback is always instant
+        if (string.Equals(sourceAddress, targetAddress, StringComparison.Ordinal))
+        {
+            return TimeSpan.Zero;
+        }
+
+        LinkLatency? linkLatency;
+        lock (_lock)
+        {
+            linkLatency = _linkLatencies.TryGetValue((sourceAddress, targetAddress), out var ll) ? ll : null;
+        }
+
+        if (linkLatency is { } latency)
+        {
+            var jitter = latency.MaxJitter > TimeSpan.Zero ? _random.NextTimeSpan(latency.MaxJitter) : TimeSpan.Zero;
+            return latency.BaseDelay + jitter;
+        }
+
+        return GetMessageDelay();
+    }
+
+    /// <summary>
+    /// Sets a directional per-link latency override from <paramref name="sourceAddress"/> to <paramref name="targetAddress"/>.
+    /// </summary>
+    public void SetLinkLatency(string sourceAddress, string targetAddress, TimeSpan baseDelay, TimeSpan maxJitter)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(baseDelay, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxJitter, TimeSpan.Zero);
+
+        lock (_lock)
+        {
+            _linkLatencies[(sourceAddress, targetAddress)] = new LinkLatency(baseDelay, maxJitter);
+        }
+
+        OnLinkLatencySet(sourceAddress, targetAddress, baseDelay, maxJitter);
+    }
+
+    /// <summary>
+    /// Sets a bidirectional per-link latency override between two nodes.
+    /// </summary>
+    public void SetBidirectionalLinkLatency(string node1, string node2, TimeSpan baseDelay, TimeSpan maxJitter)
+    {
+        SetLinkLatency(node1, node2, baseDelay, maxJitter);
+        SetLinkLatency(node2, node1, baseDelay, maxJitter);
+    }
+
+    /// <summary>
+    /// Removes a directional per-link latency override. Messages will revert to global defaults.
+    /// </summary>
+    /// <returns>True if an override was removed; false if none existed.</returns>
+    public bool ClearLinkLatency(string sourceAddress, string targetAddress)
+    {
+        bool removed;
+        lock (_lock)
+        {
+            removed = _linkLatencies.Remove((sourceAddress, targetAddress));
+        }
+
+        if (removed)
+        {
+            OnLinkLatencyCleared(sourceAddress, targetAddress);
+        }
+
+        return removed;
+    }
+
+    /// <summary>
+    /// Removes all per-link latency overrides.
+    /// </summary>
+    public void ClearAllLinkLatencies()
+    {
+        int count;
+        lock (_lock)
+        {
+            count = _linkLatencies.Count;
+            _linkLatencies.Clear();
+        }
+
+        OnAllLinkLatenciesCleared(count);
+    }
+
+    /// <summary>
+    /// Gets the per-link latency override for a specific directional link, if one exists.
+    /// </summary>
+    /// <returns>The <see cref="LinkLatency"/> override, or null if the link uses global defaults.</returns>
+    public LinkLatency? GetLinkLatency(string sourceAddress, string targetAddress)
+    {
+        lock (_lock)
+        {
+            return _linkLatencies.TryGetValue((sourceAddress, targetAddress), out var latency) ? latency : null;
+        }
+    }
+
+    /// <summary>
+    /// Gets all configured per-link latency overrides.
+    /// </summary>
+    public IReadOnlyDictionary<(string Source, string Target), LinkLatency> GetAllLinkLatencies()
+    {
+        lock (_lock)
+        {
+            return new Dictionary<(string, string), LinkLatency>(_linkLatencies);
+        }
     }
 
 #pragma warning disable CA1848 // Use the LoggerMessage delegates - these are virtual hooks, override for high-performance logging
@@ -281,7 +406,16 @@ public class SimulationNetwork
     /// <summary>Called when a message is randomly dropped.</summary>
     protected virtual void OnMessageDroppedRandom(string source, string target) => _logger.LogTrace("Message randomly dropped: {Source} -> {Target}", source, target);
 
+    /// <summary>Called when a per-link latency override is set.</summary>
+    protected virtual void OnLinkLatencySet(string source, string target, TimeSpan baseDelay, TimeSpan maxJitter) => _logger.LogDebug("Link latency set: {Source} -> {Target} (base={BaseDelay}, jitter={MaxJitter})", source, target, baseDelay, maxJitter);
+
+    /// <summary>Called when a per-link latency override is cleared.</summary>
+    protected virtual void OnLinkLatencyCleared(string source, string target) => _logger.LogDebug("Link latency cleared: {Source} -> {Target}", source, target);
+
+    /// <summary>Called when all per-link latency overrides are cleared.</summary>
+    protected virtual void OnAllLinkLatenciesCleared(int count) => _logger.LogDebug("All link latencies cleared: {Count} overrides", count);
+
 #pragma warning restore CA1873, CA1848
 
-    private string DebuggerDisplay => string.Create(CultureInfo.InvariantCulture, $"SimulationNetwork(Partitions={_partitions.Count}, DropRate={MessageDropRate:P0})");
+    private string DebuggerDisplay => string.Create(CultureInfo.InvariantCulture, $"SimulationNetwork(Partitions={_partitions.Count}, LinkLatencies={_linkLatencies.Count}, DropRate={MessageDropRate:P0})");
 }

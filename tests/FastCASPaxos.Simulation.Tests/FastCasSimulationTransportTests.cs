@@ -64,6 +64,45 @@ public sealed class FastCasSimulationTransportTests
         Assert.Equal(0, targetEndpoint.Queue.RunUntilIdle());
     }
 
+    [Fact]
+    public void Send_UsesPerLinkLatencyOverrideForDelay()
+    {
+        var clock = new SimulationClock(DateTimeOffset.UnixEpoch);
+        var guard = new SingleThreadedGuard();
+        var queue = new SimulationTaskQueue(clock, guard);
+        var network = new SimulationNetwork(() => [], new SimulationRandom(1234));
+        network.EnableDelays = true;
+        network.BaseMessageDelay = TimeSpan.FromMilliseconds(1);
+        network.MaxJitter = TimeSpan.Zero;
+
+        var transport = new FastCasSimulationTransport<TestValue>(network);
+        var source = FastCasAddress.Proposer(1);
+        var target = FastCasAddress.Acceptor(1);
+        var endpoint = new TestEndpoint(target, queue);
+        transport.RegisterEndpoint(endpoint.Registration);
+
+        // Set a large per-link latency
+        network.SetLinkLatency(source.NetworkAddress, target.NetworkAddress, TimeSpan.FromMilliseconds(100), TimeSpan.Zero);
+
+        var message = new FastCasPrepareRequestMessage<TestValue>(
+            source,
+            target,
+            new PrepareRequest(Ballot.InitialClassic(1)));
+
+        var status = transport.Send(message);
+        Assert.Equal(DeliveryStatus.Success, status);
+
+        // Advance clock by less than per-link latency — message should not arrive yet
+        clock.Advance(TimeSpan.FromMilliseconds(50));
+        Assert.Equal(0, queue.RunUntilIdle());
+        Assert.Empty(endpoint.Received);
+
+        // Advance past the per-link latency — message should now be delivered
+        clock.Advance(TimeSpan.FromMilliseconds(60));
+        Assert.Equal(1, queue.RunUntilIdle());
+        Assert.Single(endpoint.Received);
+    }
+
     private static FastCasSimulationTransport<TestValue> CreateTransport(out TestEndpoint endpoint)
     {
         var clock = new SimulationClock(DateTimeOffset.UnixEpoch);

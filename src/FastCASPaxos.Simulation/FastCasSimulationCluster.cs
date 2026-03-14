@@ -226,6 +226,15 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         builder.AppendLine($"time: {TimeProvider.GetUtcNow():O}");
         builder.AppendLine($"responses: {_clientResponses.Count}");
         builder.AppendLine($"network: dropRate={Network.MessageDropRate:P0}, delays={Network.EnableDelays}, baseDelay={Network.BaseMessageDelay}, maxJitter={Network.MaxJitter}");
+        var linkLatencies = Network.GetAllLinkLatencies();
+        if (linkLatencies.Count > 0)
+        {
+            builder.AppendLine($"link-latencies: {linkLatencies.Count} override(s)");
+            foreach (var ((source, target), latency) in linkLatencies.OrderBy(entry => entry.Key.Source, StringComparer.Ordinal).ThenBy(entry => entry.Key.Target, StringComparer.Ordinal))
+            {
+                builder.AppendLine($"  {source} -> {target}: base={latency.BaseDelay}, jitter={latency.MaxJitter}");
+            }
+        }
         builder.AppendLine($"classicQuorumAvailable: {CanFormClassicQuorum()}");
         foreach (var proposer in _proposerNodes)
         {
@@ -391,6 +400,26 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         Network.BaseMessageDelay = baseDelay;
         Network.MaxJitter = maxJitter;
         RecordFault($"delays base={baseDelay} jitter={maxJitter}");
+    }
+
+    public void ConfigureLinkLatency(FastCasAddress source, FastCasAddress target, TimeSpan baseDelay, TimeSpan maxJitter)
+    {
+        Network.EnableDelays = true;
+        Network.SetLinkLatency(source.NetworkAddress, target.NetworkAddress, baseDelay, maxJitter);
+        RecordFault($"link-latency {source} -> {target} base={baseDelay} jitter={maxJitter}");
+    }
+
+    public void ConfigureBidirectionalLinkLatency(FastCasAddress node1, FastCasAddress node2, TimeSpan baseDelay, TimeSpan maxJitter)
+    {
+        Network.EnableDelays = true;
+        Network.SetBidirectionalLinkLatency(node1.NetworkAddress, node2.NetworkAddress, baseDelay, maxJitter);
+        RecordFault($"link-latency {node1} <-> {node2} base={baseDelay} jitter={maxJitter}");
+    }
+
+    public void ClearLinkLatencies()
+    {
+        Network.ClearAllLinkLatencies();
+        RecordFault("link-latencies cleared");
     }
 
     public void CrashNode(FastCasAddress address)

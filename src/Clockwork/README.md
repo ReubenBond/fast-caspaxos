@@ -221,14 +221,33 @@ A `TimeProvider` implementation for .NET 8+ that integrates with the simulation:
 Simulates network communication with support for:
 
 - Message delays (configurable base delay + jitter)
+- Per-link latency overrides (model geo-distributed clusters)
 - Random message drops
 - Network partitions (unidirectional or bidirectional)
 - Node isolation
 
 ```csharp
+// Global defaults (apply to all links without a specific override)
 harness.Network.BaseMessageDelay = TimeSpan.FromMilliseconds(5);
 harness.Network.MaxJitter = TimeSpan.FromMilliseconds(10);
 harness.Network.MessageDropRate = 0.01; // 1% drop rate
+
+// Per-link latency overrides (e.g., geo-distributed cluster)
+// US-East <-> EU-West: ~80ms RTT
+harness.Network.SetBidirectionalLinkLatency("us-east", "eu-west",
+    baseDelay: TimeSpan.FromMilliseconds(40), maxJitter: TimeSpan.FromMilliseconds(5));
+// US-East <-> US-West: ~30ms RTT
+harness.Network.SetBidirectionalLinkLatency("us-east", "us-west",
+    baseDelay: TimeSpan.FromMilliseconds(15), maxJitter: TimeSpan.FromMilliseconds(3));
+// Directional override (asymmetric link)
+harness.Network.SetLinkLatency("satellite", "ground",
+    baseDelay: TimeSpan.FromMilliseconds(300), maxJitter: TimeSpan.FromMilliseconds(50));
+
+// Inspect and clear overrides
+var latency = harness.Network.GetLinkLatency("us-east", "eu-west");
+var all = harness.Network.GetAllLinkLatencies();
+harness.Network.ClearLinkLatency("satellite", "ground");
+harness.Network.ClearAllLinkLatencies();
 
 // Create partition
 harness.Network.CreateBidirectionalPartition("node1", "node2");

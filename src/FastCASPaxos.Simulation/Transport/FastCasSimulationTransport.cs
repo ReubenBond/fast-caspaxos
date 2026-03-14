@@ -48,7 +48,7 @@ public sealed class FastCasSimulationTransport<TValue>
             return deliveryStatus;
         }
 
-        endpoint.DeliveryQueue.EnqueueAfter(() => endpoint.Deliver(message), Network.GetMessageDelay());
+        endpoint.DeliveryQueue.EnqueueAfter(() => endpoint.Deliver(message), Network.GetMessageDelay(message.From.NetworkAddress, message.To.NetworkAddress));
         return DeliveryStatus.Success;
     }
 
