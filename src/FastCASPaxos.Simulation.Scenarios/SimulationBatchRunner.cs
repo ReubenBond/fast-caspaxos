@@ -38,6 +38,15 @@ public readonly record struct SimulationProposalRoundTripSample(
     SimulationProposalKind Kind,
     int RoundTrips);
 
+public readonly record struct ProposalLatencySample(
+    int RequestId,
+    string Proposer,
+    SimulationProposalKind Kind,
+    double SentMs,
+    double CompletedMs,
+    double LatencyMs,
+    int RoundTrips);
+
 public sealed record SimulationRunResult(
     string ScenarioName,
     int Round,
@@ -49,6 +58,7 @@ public sealed record SimulationRunResult(
     string LogOutput,
     IReadOnlyDictionary<string, long> Statistics,
     IReadOnlyList<SimulationProposalRoundTripSample> ProposalRoundTrips,
+    IReadOnlyList<ProposalLatencySample> ProposalLatencySamples,
     IReadOnlyDictionary<string, string> Details,
     AcceptorSafetyMonitorArtifact? AcceptorSafetyMonitor,
     PorcupineHistoryArtifact? PorcupineHistory,
@@ -256,6 +266,9 @@ public sealed class SimulationObservabilitySession :
     private readonly Counter<long> _localProposalCompletions;
     private readonly Dictionary<int, ActiveProposalRoundTrip> _activeProposalRoundTrips = [];
     private readonly List<SimulationProposalRoundTripSample> _completedProposalRoundTrips = [];
+    private readonly Dictionary<int, PendingProposalLatency> _pendingProposalLatencies = [];
+    private readonly List<ProposalLatencySample> _completedProposalLatencySamples = [];
+    private DateTimeOffset _simulationEpoch = DateTimeOffset.UnixEpoch;
     private AcceptorSafetyMonitorArtifact? _acceptorSafetyMonitorArtifact;
     private IFastCasSimulationHistoryObserver? _forwardHistoryObserver;
     private IFastCasSimulationAcceptorStateObserver? _forwardAcceptorStateObserver;
@@ -312,6 +325,9 @@ public sealed class SimulationObservabilitySession :
     public IReadOnlyList<SimulationProposalRoundTripSample> GetProposalRoundTrips() =>
         [.. _completedProposalRoundTrips];
 
+    public IReadOnlyList<ProposalLatencySample> GetProposalLatencySamples() =>
+        [.. _completedProposalLatencySamples];
+
     public AcceptorSafetyMonitorArtifact? GetAcceptorSafetyMonitorArtifact() =>
         _acceptorSafetyMonitorArtifact;
 
@@ -324,8 +340,11 @@ public sealed class SimulationObservabilitySession :
     {
         // The simulation only keeps one in-flight client request per proposer, so proposer ordinal
         // is enough to associate later phase counters with the request kind.
+        var kind = GetProposalKind(operation);
         _activeProposalRoundTrips[proposer.Ordinal] =
-            new ActiveProposalRoundTrip(GetProposalKind(operation), 0);
+            new ActiveProposalRoundTrip(kind, 0);
+        _pendingProposalLatencies[requestId] =
+            new PendingProposalLatency(proposer.ToString(), kind, timestamp);
         _forwardHistoryObserver?.OnProposalSent(timestamp, proposer, requestId, operation);
     }
 
@@ -336,6 +355,22 @@ public sealed class SimulationObservabilitySession :
         ProposeResponse<TValue> response)
         where TValue : FastCASPaxos.Simulation.Contracts.IVersionedValue<TValue>
     {
+        if (_pendingProposalLatencies.Remove(requestId, out var pending))
+        {
+            var latency = timestamp - pending.Sent;
+            var roundTrips = _activeProposalRoundTrips.TryGetValue(proposer.Ordinal, out var active)
+                ? active.RoundTrips
+                : 0;
+            _completedProposalLatencySamples.Add(new ProposalLatencySample(
+                requestId,
+                pending.Proposer,
+                pending.Kind,
+                SentMs: (pending.Sent - _simulationEpoch).TotalMilliseconds,
+                CompletedMs: (timestamp - _simulationEpoch).TotalMilliseconds,
+                LatencyMs: latency.TotalMilliseconds,
+                RoundTrips: roundTrips));
+        }
+
         _forwardHistoryObserver?.OnProposalCompleted(timestamp, proposer, requestId, response);
     }
 
@@ -550,6 +585,11 @@ public sealed class SimulationObservabilitySession :
         SimulationProposalKind Kind,
         int RoundTrips);
 
+    private readonly record struct PendingProposalLatency(
+        string Proposer,
+        SimulationProposalKind Kind,
+        DateTimeOffset Sent);
+
     private sealed class CompositeHistoryObserver(
         IFastCasSimulationHistoryObserver left,
         IFastCasSimulationHistoryObserver right) : IFastCasSimulationHistoryObserver
@@ -676,6 +716,21 @@ public static class SimulationScenarioCatalog
                 "bounded-chaos-sequence",
                 "Inject bounded chaos across partitions, suspends, crashes, and delays.",
                 RunBoundedChaosSequenceAsync),
+            new(
+                BenchmarkWorkloadOptions.ScenarioName,
+                "Run a sustained benchmark workload with configurable topology, protocol mode, and fault schedule.",
+                parameters =>
+                {
+                    var benchmarkOptions = BenchmarkWorkloadOptions.Parse(parameters);
+                    return (seed, round, recorder, observability, cancellationToken) =>
+                        RunBenchmarkWorkloadAsync(
+                            benchmarkOptions,
+                            seed,
+                            round,
+                            recorder,
+                            observability,
+                            cancellationToken);
+                }),
         ];
 
         foreach (var mode in ProtocolOptionMatrix.GetAllModes())
@@ -1403,6 +1458,107 @@ public static class SimulationScenarioCatalog
             ReproductionHint: cluster.GetReproductionHint("bounded-chaos-sequence"));
     }
 
+    private static async ValueTask<SimulationScenarioCompletion> RunBenchmarkWorkloadAsync(
+        BenchmarkWorkloadOptions benchmarkOptions,
+        int seed,
+        int round,
+        SimulationRunRecorder recorder,
+        SimulationObservabilitySession observability,
+        CancellationToken cancellationToken)
+    {
+        _ = round;
+        foreach (var parameter in benchmarkOptions.DescribeParameters())
+        {
+            recorder.SetDetail($"parameter.{parameter.Key}", parameter.Value);
+        }
+
+        var options = observability.AttachOptions(
+            new FastCasSimulationOptions
+            {
+                EnableFastCommit = benchmarkOptions.EnableFastCommit,
+                EnableDistinguishedLeader = benchmarkOptions.EnableDistinguishedLeader,
+            });
+        await using var cluster = CreateStringCluster(seed, options, cancellationToken);
+        cluster.CreateConfiguration(
+            proposerCount: benchmarkOptions.ProposerCount,
+            acceptorCount: benchmarkOptions.AcceptorCount);
+        benchmarkOptions.ApplyTopology(cluster);
+        recorder.RecordFault(cluster, $"topology {benchmarkOptions.Topology}");
+
+        var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
+        var proposalCount = benchmarkOptions.ProposalCount;
+        var requestId = 100_000;
+
+        // Concurrent workload: each step sends one proposal from each proposer
+        var version = 0;
+        var completedProposals = 0;
+        while (completedProposals < proposalCount)
+        {
+            // Check fault schedule before each batch
+            benchmarkOptions.ApplyFaultAtProposal(cluster, completedProposals, recorder);
+
+            // Send one proposal from each proposer concurrently
+            List<(FastCasAddress Proposer, IOperation<StringValue> Operation, int RequestId)> submissions = [];
+            foreach (var proposer in proposers)
+            {
+                if (completedProposals + submissions.Count >= proposalCount)
+                {
+                    break;
+                }
+
+                version++;
+                var operation = StringScenarioOperations.AppendCharacter(
+                    (char)('A' + ((version - 1) % 26)));
+                var submissionRequestId = requestId++;
+                _ = cluster.SendProposal(proposer, operation, submissionRequestId);
+                recorder.RecordSend(cluster, proposer, operation, submissionRequestId);
+                submissions.Add((proposer, operation, submissionRequestId));
+            }
+
+            if (submissions.Count == 0)
+            {
+                break;
+            }
+
+            Ensure(
+                cluster.RunUntil(
+                    () => submissions.All(s => cluster.TryGetResponse(s.RequestId, out _)),
+                    maxIterations: 25_000),
+                $"Expected benchmark proposals {completedProposals + 1}-{completedProposals + submissions.Count} to complete.");
+
+            foreach (var submission in submissions)
+            {
+                Ensure(
+                    cluster.TryGetResponse(submission.RequestId, out var response),
+                    $"Expected response for request {submission.RequestId}.");
+                recorder.RecordProposal(cluster, submission.Proposer, submission.Operation, response);
+            }
+
+            completedProposals += submissions.Count;
+        }
+
+        // Check final fault schedule
+        benchmarkOptions.ApplyFaultAtProposal(cluster, completedProposals, recorder);
+
+        cluster.AssertSafetyInvariants();
+
+        recorder.SetDetail("completed-proposals", completedProposals);
+        recorder.SetDetail("final-version", version);
+
+        var elapsed = cluster.TimeProvider.GetUtcNow() - DateTimeOffset.UnixEpoch;
+        var throughput = completedProposals / elapsed.TotalSeconds;
+        recorder.SetDetail("elapsed-ms", elapsed.TotalMilliseconds);
+        recorder.SetDetail("throughput-proposals-per-sec", throughput);
+
+        return new(
+            Summary: string.Create(
+                CultureInfo.InvariantCulture,
+                $"mode={benchmarkOptions.ModeName} topology={benchmarkOptions.Topology} proposals={completedProposals} elapsed={elapsed.TotalMilliseconds:F1}ms throughput={throughput:F1}/s"),
+            ReproductionHint: string.Create(
+                CultureInfo.InvariantCulture,
+                $"{cluster.GetReproductionHint(BenchmarkWorkloadOptions.ScenarioName)} params: {string.Join(", ", benchmarkOptions.DescribeParameters().Select(p => $"{p.Key}={p.Value}"))}"));
+    }
+
     private static async ValueTask<SimulationScenarioCompletion> RunSeededTransientFaultMixAsync(
         ProtocolModeCase mode,
         int seed,
@@ -1745,6 +1901,7 @@ public static class SimulationBatchRunner
                 observability.GetLogOutput(),
                 new Dictionary<string, long>(recorder.Statistics, StringComparer.Ordinal),
                 new List<SimulationProposalRoundTripSample>(observability.GetProposalRoundTrips()),
+                new List<ProposalLatencySample>(observability.GetProposalLatencySamples()),
                 new Dictionary<string, string>(recorder.Details, StringComparer.Ordinal),
                 acceptorSafetyMonitor,
                 porcupineHistory,
@@ -1778,6 +1935,7 @@ public static class SimulationBatchRunner
                 observability.GetLogOutput(),
                 new Dictionary<string, long>(recorder.Statistics, StringComparer.Ordinal),
                 new List<SimulationProposalRoundTripSample>(observability.GetProposalRoundTrips()),
+                new List<ProposalLatencySample>(observability.GetProposalLatencySamples()),
                 new Dictionary<string, string>(recorder.Details, StringComparer.Ordinal),
                 acceptorSafetyMonitor,
                 porcupineHistory,
@@ -1872,6 +2030,39 @@ public static class SimulationBatchRunner
                 result.PorcupineHistory,
                 cancellationToken);
         }
+        if (result.ProposalLatencySamples.Count > 0)
+        {
+            await WriteLatencyCsvAsync(
+                Path.Combine(scenarioDirectory, "benchmark-latency.csv"),
+                result.ProposalLatencySamples,
+                result.Details,
+                cancellationToken);
+        }
+    }
+
+    private static async Task WriteLatencyCsvAsync(
+        string path,
+        IReadOnlyList<ProposalLatencySample> samples,
+        IReadOnlyDictionary<string, string> details,
+        CancellationToken cancellationToken)
+    {
+        var mode = details.TryGetValue("parameter.mode", out var m) ? m : "";
+        var topology = details.TryGetValue("parameter.topology", out var t) ? t : "";
+        var faultLabel = details.TryGetValue("parameter.fault-label", out var f) ? f : "";
+
+        var lines = new List<string>(samples.Count + 1)
+        {
+            "request_id,proposer,kind,sent_ms,completed_ms,latency_ms,round_trips,mode,topology,fault_label",
+        };
+
+        foreach (var sample in samples)
+        {
+            lines.Add(string.Create(
+                CultureInfo.InvariantCulture,
+                $"{sample.RequestId},{sample.Proposer},{sample.Kind},{sample.SentMs:F4},{sample.CompletedMs:F4},{sample.LatencyMs:F4},{sample.RoundTrips},{mode},{topology},{faultLabel}"));
+        }
+
+        await File.WriteAllLinesAsync(path, lines, cancellationToken);
     }
 
     private static async Task<SimulationBatchResult> FinalizeBatchAsync(

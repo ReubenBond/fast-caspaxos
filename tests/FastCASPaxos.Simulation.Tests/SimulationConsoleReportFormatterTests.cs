@@ -113,6 +113,7 @@ public sealed class SimulationConsoleReportFormatterTests
             LogOutput: string.Empty,
             Statistics: new Dictionary<string, long>(StringComparer.Ordinal),
             ProposalRoundTrips: Array.Empty<SimulationProposalRoundTripSample>(),
+            ProposalLatencySamples: Array.Empty<ProposalLatencySample>(),
             Details: new Dictionary<string, string>(StringComparer.Ordinal),
             AcceptorSafetyMonitor: null,
             PorcupineHistory: null,

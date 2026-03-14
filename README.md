@@ -260,3 +260,80 @@ run the dedicated script, which executes the simulator and then runs the Go chec
 ```powershell
 .\scripts\validate_porcupine.ps1
 ```
+
+## Benchmarking
+
+The `benchmark-workload` scenario runs a sustained workload and emits per-proposal latency data as CSV, suitable for graphing.
+
+### Quick start
+
+Run a single benchmark:
+
+```powershell
+.\run_simulation_suite.ps1 -Scenario benchmark-workload -Seed 42 -Rounds 1 `
+    -ScenarioParam 'proposal-count=200','fast=true','link-latency-profile=lan'
+```
+
+### Benchmark sweep
+
+`run_benchmark_suite.ps1` sweeps across protocol modes × topologies × faults × proposer counts:
+
+```powershell
+# Full sweep (default: 4 modes × 3 topologies × 2 faults × 2 proposer counts = 48 runs)
+.\run_benchmark_suite.ps1 -ProposalCount 1000
+
+# Smaller sweep
+.\run_benchmark_suite.ps1 -Mode classic,fast -Topology lan,geo3region -ProposerCount 1 -ProposalCount 200
+
+# Dry run to see what would execute
+.\run_benchmark_suite.ps1 -DryRun
+```
+
+### Generating charts
+
+After running the benchmark suite, generate charts with the Python script:
+
+```bash
+pip install matplotlib numpy plotly
+python scripts/plot_benchmarks.py --input artifacts/benchmark
+```
+
+This produces:
+- **Latency time-series** — commit latency vs proposal index, one line per protocol mode
+- **Throughput** — proposals/second over simulated time (sliding window)
+- **Latency CDF** — cumulative distribution comparison across modes
+- **Box plot comparison** — latency distribution across topologies
+
+Charts are written to `artifacts/benchmark/charts/` as PNG (matplotlib) and interactive HTML (plotly).
+
+### Benchmark parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `proposer-count` | 3 | Number of proposers |
+| `acceptor-count` | 5 | Number of acceptors |
+| `proposal-count` | 1000 | Total proposals to run |
+| `fast` | false | Enable fast (leaderless) commit |
+| `leader` | false | Enable distinguished leader mode |
+| `base-delay-ms` | 1 | Global base message delay |
+| `max-jitter-ms` | 1 | Global max random jitter |
+| `link-latency-profile` | lan | Topology: `lan`, `uscrossregion`, `geo3region` |
+| `fault-schedule` | none | Fault injection DSL (see below) |
+
+### Topology profiles
+
+- **`lan`** — Same datacenter, 1ms base + 1ms jitter
+- **`uscrossregion`** — US-East + US-West, ~30ms RTT cross-region
+- **`geo3region`** — US/EU/AP regions, 80-160ms cross-region RTT
+
+### Fault schedule DSL
+
+Inject faults at specific proposal indices:
+
+```text
+suspend:acceptor:3:at:333:until:666
+partition:proposer:1:acceptor:2:at:100:until:200
+crash:acceptor:1:at:50:restart:80
+```
+
+Multiple faults can be comma-separated.
