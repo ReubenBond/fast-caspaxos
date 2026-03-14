@@ -293,12 +293,17 @@ public abstract class SimulationCluster<TNode> : IAsyncDisposable
     }
 
     /// <summary>
-    /// Gets the earliest due time across all queues (node contexts + cluster queue).
+    /// Gets the earliest due time across all executable queues (running node contexts + cluster queue).
+    /// Suspended nodes are excluded since their items cannot execute.
     /// </summary>
     protected DateTimeOffset? GetNextWaitingDueTime()
     {
         using var _ = Guard.Enter();
-        return Nodes.Select(n => n.Context.NextWaitingDueTime).Concat([TaskQueue.NextWaitingDueTime]).Min();
+        return Nodes
+            .Where(n => n.Context.State == SimulationNodeState.Running)
+            .Select(n => n.Context.NextWaitingDueTime)
+            .Concat([TaskQueue.NextWaitingDueTime])
+            .Min();
     }
 
     /// <summary>

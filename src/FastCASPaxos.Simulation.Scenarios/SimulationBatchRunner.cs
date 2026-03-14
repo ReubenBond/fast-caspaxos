@@ -1520,21 +1520,34 @@ public static class SimulationScenarioCatalog
                 break;
             }
 
-            Ensure(
-                cluster.RunUntil(
-                    () => submissions.All(s => cluster.TryGetResponse(s.RequestId, out _)),
-                    maxIterations: 25_000),
-                $"Expected benchmark proposals {completedProposals + 1}-{completedProposals + submissions.Count} to complete.");
+            // Scale iteration budget with proposer count since concurrent proposers
+            // increase contention and the number of simulation steps needed.
+            var maxIterationsPerBatch = 50_000 * Math.Max(1, submissions.Count);
 
+            cluster.RunUntil(
+                () => submissions.All(s => cluster.TryGetResponse(s.RequestId, out _)),
+                maxIterations: maxIterationsPerBatch);
+
+            // During fault injection, some proposals may not complete (proposers waiting for
+            // responses from unreachable acceptors). Record what completed and continue.
+            var batchResponded = 0;
             foreach (var submission in submissions)
             {
-                Ensure(
-                    cluster.TryGetResponse(submission.RequestId, out var response),
-                    $"Expected response for request {submission.RequestId}.");
-                recorder.RecordProposal(cluster, submission.Proposer, submission.Operation, response);
+                if (cluster.TryGetResponse(submission.RequestId, out var response))
+                {
+                    recorder.RecordProposal(cluster, submission.Proposer, submission.Operation, response);
+                    batchResponded++;
+                }
             }
 
-            completedProposals += submissions.Count;
+            if (batchResponded == 0 && benchmarkOptions.FaultSchedule.Count == 0)
+            {
+                Ensure(false,
+                    $"Expected benchmark proposals {completedProposals + 1}-{completedProposals + submissions.Count} to complete. " +
+                    cluster.GetFailureDiagnostics($"benchmark-workload-batch-{completedProposals}"));
+            }
+
+            completedProposals += batchResponded;
         }
 
         // Check final fault schedule

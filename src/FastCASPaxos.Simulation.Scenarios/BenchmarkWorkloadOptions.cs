@@ -275,8 +275,11 @@ internal sealed record BenchmarkWorkloadOptions(
         switch (fault.Action)
         {
             case FaultScheduleAction.Suspend:
+                // Isolate the node from the network so proposers don't wait forever
+                // for responses from it, then suspend processing.
+                cluster.IsolateNode(target);
                 cluster.SuspendNode(target);
-                recorder.RecordFault(cluster, $"suspend {target}");
+                recorder.RecordFault(cluster, $"isolate+suspend {target}");
                 break;
             case FaultScheduleAction.Partition:
                 var secondary = MakeAddress(fault.SecondaryRole, fault.SecondaryOrdinal);
@@ -301,7 +304,8 @@ internal sealed record BenchmarkWorkloadOptions(
         {
             case FaultScheduleAction.Suspend:
                 cluster.ResumeNode(target);
-                recorder.RecordFault(cluster, $"resume {target}");
+                cluster.ReconnectNode(target);
+                recorder.RecordFault(cluster, $"resume+reconnect {target}");
                 break;
             case FaultScheduleAction.Partition:
                 var secondary = MakeAddress(fault.SecondaryRole, fault.SecondaryOrdinal);
