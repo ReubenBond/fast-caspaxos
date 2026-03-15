@@ -44,6 +44,7 @@ internal sealed record BenchmarkWorkloadOptions(
     int WriteIntervalMs,
     int ClientTimeoutMs,
     int ClientMaxRetries,
+    int? ClientOrdinal,
     int? ProposerRetryStartAfterFailuresOverride,
     TimeSpan? ProposerRetryBaseDelayOverride,
     TimeSpan? ProposerRetryMaxDelayOverride,
@@ -69,6 +70,7 @@ internal sealed record BenchmarkWorkloadOptions(
         "write-interval-ms",
         "client-timeout-ms",
         "client-max-retries",
+        "client-ordinal",
         "proposer-retry-start-after-failures",
         "proposer-retry-base-ms",
         "proposer-retry-max-ms",
@@ -121,6 +123,16 @@ internal sealed record BenchmarkWorkloadOptions(
         var writeIntervalMs = GetPositiveIntOrZero(parameters, "write-interval-ms", defaultValue: 0);
         var clientTimeoutMs = GetPositiveIntOrZero(parameters, "client-timeout-ms", defaultValue: 0);
         var clientMaxRetries = GetPositiveIntOrZero(parameters, "client-max-retries", defaultValue: 2);
+        var clientOrdinal = GetOptionalPositiveIntOrZero(parameters, "client-ordinal");
+        if (clientOrdinal is <= 0)
+        {
+            clientOrdinal = null;
+        }
+        if (agreementMode && clientOrdinal is not null)
+        {
+            throw new ArgumentException(
+                $"Scenario '{ScenarioName}' does not support 'client-ordinal' when 'agreement-mode=true'.");
+        }
         var proposerRetryStartAfterFailuresOverride = GetOptionalPositiveIntOrZero(
             parameters,
             "proposer-retry-start-after-failures");
@@ -160,6 +172,7 @@ internal sealed record BenchmarkWorkloadOptions(
             writeIntervalMs,
             clientTimeoutMs,
             clientMaxRetries,
+            clientOrdinal,
             proposerRetryStartAfterFailuresOverride,
             proposerRetryBaseDelayOverride,
             proposerRetryMaxDelayOverride,
@@ -183,6 +196,7 @@ internal sealed record BenchmarkWorkloadOptions(
         new("write-interval-ms", WriteIntervalMs.ToString(CultureInfo.InvariantCulture)),
         new("client-timeout-ms", ClientTimeoutMs.ToString(CultureInfo.InvariantCulture)),
         new("client-max-retries", ClientMaxRetries.ToString(CultureInfo.InvariantCulture)),
+        new("client-ordinal", FormatOptionalInt(ClientOrdinal)),
         new("proposer-retry-start-after-failures", FormatOptionalInt(ProposerRetryStartAfterFailuresOverride)),
         new("proposer-retry-base-ms", FormatOptionalMilliseconds(ProposerRetryBaseDelayOverride)),
         new("proposer-retry-max-ms", FormatOptionalMilliseconds(ProposerRetryMaxDelayOverride)),
@@ -192,6 +206,8 @@ internal sealed record BenchmarkWorkloadOptions(
         new("topology", Topology.ToString().ToLowerInvariant()),
         new("fault-label", FaultLabel),
     ];
+
+    internal bool UsesExplicitClient => ClientOrdinal is not null;
 
     internal int GetAgreementClientCount() => Math.Max(ProposerCount, GetTopologyRegionCount(Topology));
 

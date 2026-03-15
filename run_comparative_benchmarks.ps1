@@ -30,12 +30,8 @@ function Get-ModeParams {
 function Get-TopologyParams {
     param([string]$topology)
     switch ($topology) {
-        # LAN: ~1ms RTT, all links equal. Both quorums local → difference is purely RTT count.
+        # LAN: ~1ms RTT, all links equal.
         "lan"            { return @("link-latency-profile=lan", "base-delay-ms=1",  "max-jitter-ms=1") }
-        # Symmetric 40ms: all links ~40ms one-way (~80-90ms RTT). Eliminates quorum-distribution
-        # effects — fast saves exactly 1 RTT of ~85ms vs classic's 2 RTTs. This is the clearest
-        # topology for demonstrating the 1-vs-2 RTT advantage.
-        "symmetric40"    { return @("link-latency-profile=lan", "base-delay-ms=40", "max-jitter-ms=5") }
         # 3-region US: East US 2 / West US / West US 3 with Azure-backed RTTs of 20-66ms.
         "us3region"      { return @("link-latency-profile=us3region",      "base-delay-ms=1", "max-jitter-ms=1") }
         "uscrossregion"  { return @("link-latency-profile=us3region",      "base-delay-ms=1", "max-jitter-ms=1") }
@@ -78,12 +74,12 @@ function Resolve-PathString {
 $allModes = @("classic", "fast", "leader")
 
 $scenarios = [ordered]@{
-    "S1-geo-low-contention" = @{
-        Description  = "Geo-distributed, low-contention: 1 proposer, no faults. Fast saves 1 RTT when all links are high-latency."
+    "S1-geo-no-contention" = @{
+        Description  = "Geo-distributed, no contention: one client stream is collocated with a non-primary proposer, so leader mode pays the extra client-to-primary hop."
         Combinations = @()
     }
     "S2-agreement-consensus" = @{
-        Description  = "Everywhere agreement: geo-aware clients and proposers converge on the same next value, so fast rounds avoid conflict."
+        Description  = "Agreement workload: client-aware routing and proposer learning converge on the same next value, so fast rounds avoid conflict."
         Combinations = @()
     }
     "S3-register-init-burst" = @{
@@ -112,32 +108,31 @@ $scenarios = [ordered]@{
     }
 }
 
-# --- S1: geo-low-contention ---
-# Primary showcase: symmetric40 (all links equal, 1-vs-2 RTT is the only signal).
-# Also LAN (small absolute difference) and geo5region (real-world asymmetric).
-foreach ($topo in @("symmetric40", "lan", "geo5region")) {
-    foreach ($mode in $allModes) {
-        $modeParams = Get-ModeParams $mode
-        $topoParams = Get-TopologyParams $topo
-        $params = $modeParams + $topoParams + @(
-            "proposer-count=1",
-            "acceptor-count=$AcceptorCount",
-            "proposal-count=1000"
-        )
-        $scenarios["S1-geo-low-contention"].Combinations += New-Combination `
-            -Params $params `
-            -Label "topo=$topo mode=$mode proposers=1" `
-            -OutputSubpath "$topo\$mode\p1\none"
-    }
+# --- S1: geo-no-contention ---
+# One explicit geo client is collocated with proposer 2, while leader mode still targets proposer 1.
+# The workload stays contention-free by driving a single client request stream.
+foreach ($mode in $allModes) {
+    $modeParams = Get-ModeParams $mode
+    $topoParams = Get-TopologyParams "geo5region"
+    $params = $modeParams + $topoParams + @(
+        "proposer-count=3",
+        "acceptor-count=$AcceptorCount",
+        "proposal-count=1000",
+        "client-ordinal=2"
+    )
+    $scenarios["S1-geo-no-contention"].Combinations += New-Combination `
+        -Params $params `
+        -Label "topo=geo mode=$mode proposers=3 client=2" `
+        -OutputSubpath "geo\$mode\p3\client-2"
 }
 
 # --- S2: agreement-consensus ---
-# Symmetric40 shows the RTT advantage clearly; agreement=true vs false shows everywhere-agreement routing and learning.
+# LAN is the merged single-region baseline; agreement=true vs false shows client-aware routing and proposer learning.
 foreach ($pCount in @(3, 5)) {
     foreach ($mode in $allModes) {
         foreach ($agreement in @("true", "false")) {
             $modeParams = Get-ModeParams $mode
-            $topoParams = Get-TopologyParams "symmetric40"
+            $topoParams = Get-TopologyParams "lan"
             $params = $modeParams + $topoParams + @(
                 "proposer-count=$pCount",
                 "acceptor-count=$AcceptorCount",
@@ -147,15 +142,15 @@ foreach ($pCount in @(3, 5)) {
             $slug = "agreement-$agreement"
             $scenarios["S2-agreement-consensus"].Combinations += New-Combination `
                 -Params $params `
-                -Label "topo=symmetric40 mode=$mode proposers=$pCount agreement=$agreement" `
-                -OutputSubpath "symmetric40\$mode\p${pCount}\$slug"
+                -Label "topo=lan mode=$mode proposers=$pCount agreement=$agreement" `
+                -OutputSubpath "lan\$mode\p${pCount}\$slug"
         }
     }
 }
 
 # --- S3: register-init-burst ---
-# Symmetric40 for clear RTT distinction, LAN for baseline.
-foreach ($topo in @("symmetric40", "lan")) {
+# LAN is the merged single-region baseline.
+foreach ($topo in @("lan")) {
     foreach ($pCount in @(1, 3)) {
         foreach ($mode in $allModes) {
             $modeParams = Get-ModeParams $mode
@@ -175,11 +170,11 @@ foreach ($topo in @("symmetric40", "lan")) {
 }
 
 # --- S4: infrequent-writes ---
-# Symmetric40 removes quorum noise; write-interval is the sweep variable.
+# LAN is the merged single-region baseline; write-interval is the sweep variable.
 foreach ($interval in @(0, 10, 50, 200)) {
     foreach ($mode in @("fast", "leader")) {
         $modeParams = Get-ModeParams $mode
-        $topoParams = Get-TopologyParams "symmetric40"
+        $topoParams = Get-TopologyParams "lan"
         $params = $modeParams + $topoParams + @(
             "proposer-count=3",
             "acceptor-count=$AcceptorCount",
@@ -189,35 +184,33 @@ foreach ($interval in @(0, 10, 50, 200)) {
         $slug = "interval-$interval"
         $scenarios["S4-infrequent-writes"].Combinations += New-Combination `
             -Params $params `
-            -Label "topo=symmetric40 mode=$mode proposers=3 interval=${interval}ms" `
-            -OutputSubpath "symmetric40\$mode\p3\$slug"
+            -Label "topo=lan mode=$mode proposers=3 interval=${interval}ms" `
+            -OutputSubpath "lan\$mode\p3\$slug"
     }
 }
 
 # --- S5: high-throughput-stream ---
-# LAN shows throughput ceiling; symmetric40 shows RTT-dominated throughput.
-foreach ($topo in @("lan", "symmetric40")) {
-    foreach ($mode in $allModes) {
-        $modeParams = Get-ModeParams $mode
-        $topoParams = Get-TopologyParams $topo
-        $params = $modeParams + $topoParams + @(
-            "proposer-count=1",
-            "acceptor-count=$AcceptorCount",
-            "proposal-count=2000"
-        )
-        $scenarios["S5-high-throughput-stream"].Combinations += New-Combination `
-            -Params $params `
-            -Label "topo=$topo mode=$mode proposers=1" `
-            -OutputSubpath "$topo\$mode\p1\none"
-    }
+# LAN is the merged single-region throughput baseline.
+foreach ($mode in $allModes) {
+    $modeParams = Get-ModeParams $mode
+    $topoParams = Get-TopologyParams "lan"
+    $params = $modeParams + $topoParams + @(
+        "proposer-count=1",
+        "acceptor-count=$AcceptorCount",
+        "proposal-count=2000"
+    )
+    $scenarios["S5-high-throughput-stream"].Combinations += New-Combination `
+        -Params $params `
+        -Label "topo=lan mode=$mode proposers=1" `
+        -OutputSubpath "lan\$mode\p1\none"
 }
 
 # --- S6: contention-spectrum ---
-# Symmetric40 isolates the contention variable (no quorum distribution noise).
+# LAN is the merged single-region baseline for the contention sweep.
 foreach ($pCount in @(1, 2, 3, 5, 7)) {
     foreach ($mode in $allModes) {
         $modeParams = Get-ModeParams $mode
-        $topoParams = Get-TopologyParams "symmetric40"
+        $topoParams = Get-TopologyParams "lan"
         $params = $modeParams + $topoParams + @(
             "proposer-count=$pCount",
             "acceptor-count=$AcceptorCount",
@@ -225,18 +218,18 @@ foreach ($pCount in @(1, 2, 3, 5, 7)) {
         )
         $scenarios["S6-contention-spectrum"].Combinations += New-Combination `
             -Params $params `
-            -Label "topo=symmetric40 mode=$mode proposers=$pCount" `
-            -OutputSubpath "symmetric40\$mode\p${pCount}\none"
+            -Label "topo=lan mode=$mode proposers=$pCount" `
+            -OutputSubpath "lan\$mode\p${pCount}\none"
     }
 }
 
 # --- S7: leader-gray-failure ---
-# Symmetric40 baseline; slow-link adds 200ms+50ms to the leader, making the degradation dramatic.
+# LAN baseline; slow-link adds 200ms+50ms to the leader, making the degradation dramatic.
 $grayFault = "slow-link:proposer:1:at:200:until:400:delay:200:jitter:50"
 $grayFaultSlug = "slow-link-proposer-1-at-200-until-400"
 foreach ($mode in @("fast", "leader")) {
     $modeParams = Get-ModeParams $mode
-    $topoParams = Get-TopologyParams "symmetric40"
+    $topoParams = Get-TopologyParams "lan"
     $params = $modeParams + $topoParams + @(
         "proposer-count=3",
         "acceptor-count=$AcceptorCount",
@@ -245,31 +238,31 @@ foreach ($mode in @("fast", "leader")) {
     )
     $scenarios["S7-leader-gray-failure"].Combinations += New-Combination `
         -Params $params `
-        -Label "topo=symmetric40 mode=$mode proposers=3 fault=slow-link" `
-        -OutputSubpath "symmetric40\$mode\p3\$grayFaultSlug"
+        -Label "topo=lan mode=$mode proposers=3 fault=slow-link" `
+        -OutputSubpath "lan\$mode\p3\$grayFaultSlug"
 }
 
 # --- S8: leader-crash-failover ---
-# Symmetric40; crash + client failover. Client timeout at 3x baseline RTT for realistic detection.
+# LAN baseline; crash + client failover. Keep timeout modest so failover remains visible on a low-latency link.
 # Keep this scenario smaller than the others so the crash/retry window stays representative
 # without dominating the full comparative suite runtime.
 $crashFault = "crash:proposer:1:at:30:until:60"
 $crashFaultSlug = "crash-proposer-1-at-30-until-60"
 foreach ($mode in @("fast", "leader")) {
     $modeParams = Get-ModeParams $mode
-    $topoParams = Get-TopologyParams "symmetric40"
+    $topoParams = Get-TopologyParams "lan"
     $params = $modeParams + $topoParams + @(
         "proposer-count=3",
         "acceptor-count=$AcceptorCount",
         "proposal-count=90",
         "fault-schedule=$crashFault",
-        "client-timeout-ms=300",
+        "client-timeout-ms=20",
         "agreement-mode=true"
     )
     $scenarios["S8-leader-crash-failover"].Combinations += New-Combination `
         -Params $params `
-        -Label "topo=symmetric40 mode=$mode proposers=3 fault=crash" `
-        -OutputSubpath "symmetric40\$mode\p3\$crashFaultSlug"
+        -Label "topo=lan mode=$mode proposers=3 fault=crash" `
+        -OutputSubpath "lan\$mode\p3\$crashFaultSlug"
 }
 
 # ---------------------------------------------------------------------------

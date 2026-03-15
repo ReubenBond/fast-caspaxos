@@ -418,6 +418,23 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
+    public void ProposerEngine_LearnCommittedValue_PrefersHigherPreparedBallotAlreadyCached()
+    {
+        var engine = CreateFastProposer();
+        var firstAcceptedBallot = new Ballot(1, 1);
+        var higherPreparedBallot = new Ballot(2, 2);
+        var secondAcceptedBallot = new Ballot(1, 2);
+        var lowerPreparedBallot = new Ballot(2, 1);
+
+        engine.LearnCommittedValue(firstAcceptedBallot, new TestValue(1, "A"), higherPreparedBallot);
+        engine.LearnCommittedValue(secondAcceptedBallot, new TestValue(2, "AB"), lowerPreparedBallot);
+
+        Assert.Equal(secondAcceptedBallot, engine.Ballot);
+        Assert.Equal(new TestValue(2, "AB"), engine.CachedValue);
+        Assert.Equal(higherPreparedBallot, engine.PreparedBallot);
+    }
+
+    [Fact]
     public void ProposerEngine_LearnCommittedValue_IgnoresRequestWhileOperationIsInFlight()
     {
         var engine = CreateFastProposer();
@@ -443,6 +460,32 @@ public sealed class CoreProtocolRegressionTests
         Assert.NotNull(engine.LastProposalCompleted);
         Assert.Equal(new TestValue(1, "A"), engine.CachedValue);
         Assert.Equal(preparedBallot, engine.PreparedBallot);
+    }
+
+    [Fact]
+    public void ProposerEngine_BeginOperation_DoesNotReusePreparedClassicBallotOwnedByAnotherProposer()
+    {
+        var engine = new RecordingProposerEngine<TestValue, string>(
+            "p2",
+            proposerId: 2,
+            acceptors: ["a1", "a2", "a3", "a4", "a5"],
+            enableDistinguishedLeader: false,
+            enableFastCommit: false);
+        var acceptedBallot = Ballot.InitialClassic(1);
+        var foreignPreparedBallot = acceptedBallot.NextRound(proposer: 1);
+
+        engine.LearnCommittedValue(acceptedBallot, new TestValue(1, "A"), foreignPreparedBallot);
+
+        Assert.Equal(acceptedBallot, engine.Ballot);
+        Assert.Equal(new TestValue(1, "A"), engine.CachedValue);
+        Assert.Equal(foreignPreparedBallot, engine.PreparedBallot);
+
+        engine.ResetRecording();
+        engine.StartProposal(AppendOperation(2, "B"));
+
+        Assert.NotNull(engine.LastSendPrepare);
+        var prepare = engine.LastSendPrepare!.Value;
+        Assert.Equal(Ballot.InitialClassic(2).NextRound(2), prepare.Ballot);
     }
 
     [Fact]

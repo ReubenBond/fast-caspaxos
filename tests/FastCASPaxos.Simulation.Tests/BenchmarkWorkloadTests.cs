@@ -241,6 +241,128 @@ public sealed class BenchmarkWorkloadTests
     }
 
     [Fact]
+    public async Task RunAsync_BenchmarkWorkload_ExplicitClientOrdinal_RoutesLocallyUnlessLeaderMode()
+    {
+        var localDir = Path.Combine(Path.GetTempPath(), $"benchmark-explicit-local-{Guid.NewGuid():N}");
+        var leaderDir = Path.Combine(Path.GetTempPath(), $"benchmark-explicit-leader-{Guid.NewGuid():N}");
+        try
+        {
+            var localResult = await SimulationBatchRunner.RunAsync(
+                new SimulationBatchOptions
+                {
+                    ScenarioNames = ["benchmark-workload"],
+                    ScenarioParameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["proposer-count"] = "3",
+                        ["acceptor-count"] = "5",
+                        ["proposal-count"] = "6",
+                        ["fast"] = "true",
+                        ["leader"] = "false",
+                        ["link-latency-profile"] = "geo5region",
+                        ["client-ordinal"] = "2",
+                    },
+                    Seed = 9101,
+                    Rounds = 1,
+                    OutputDirectory = localDir,
+                    StopOnFailure = true,
+                });
+
+            var leaderResult = await SimulationBatchRunner.RunAsync(
+                new SimulationBatchOptions
+                {
+                    ScenarioNames = ["benchmark-workload"],
+                    ScenarioParameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["proposer-count"] = "3",
+                        ["acceptor-count"] = "5",
+                        ["proposal-count"] = "6",
+                        ["fast"] = "false",
+                        ["leader"] = "true",
+                        ["link-latency-profile"] = "geo5region",
+                        ["client-ordinal"] = "2",
+                    },
+                    Seed = 9101,
+                    Rounds = 1,
+                    OutputDirectory = leaderDir,
+                    StopOnFailure = true,
+                });
+
+            var localRun = Assert.Single(localResult.Runs);
+            var leaderRun = Assert.Single(leaderResult.Runs);
+            Assert.Equal("2", localRun.Details["parameter.client-ordinal"]);
+            Assert.Equal("2", leaderRun.Details["parameter.client-ordinal"]);
+
+            var localSendLines = localRun.TraceLines
+                .Where(line => line.Contains("|send|", StringComparison.Ordinal))
+                .ToArray();
+            var leaderSendLines = leaderRun.TraceLines
+                .Where(line => line.Contains("|send|", StringComparison.Ordinal))
+                .ToArray();
+
+            Assert.Equal(6, localSendLines.Length);
+            Assert.Equal(6, leaderSendLines.Length);
+            Assert.All(
+                localSendLines,
+                line => Assert.Contains("|send|proposer-2|", line, StringComparison.Ordinal));
+            Assert.All(
+                leaderSendLines,
+                line => Assert.Contains("|send|proposer-1|", line, StringComparison.Ordinal));
+
+            var localAvgLatency = localRun.ProposalLatencySamples.Average(sample => sample.LatencyMs);
+            var leaderAvgLatency = leaderRun.ProposalLatencySamples.Average(sample => sample.LatencyMs);
+            Assert.True(
+                leaderAvgLatency > localAvgLatency + 20,
+                $"Expected leader latency ({leaderAvgLatency:F1}ms) to exceed local fast latency ({localAvgLatency:F1}ms) because the client is collocated with proposer-2, not the primary.");
+        }
+        finally
+        {
+            if (Directory.Exists(localDir)) Directory.Delete(localDir, recursive: true);
+            if (Directory.Exists(leaderDir)) Directory.Delete(leaderDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_BenchmarkWorkload_ExplicitClientOrdinal_BroadcastsCommittedValueToPeers()
+    {
+        const string learnMetricName = "fast_caspaxos.simulation.transport.delivered_learn_committed_value";
+        var outputDir = Path.Combine(Path.GetTempPath(), $"benchmark-explicit-learn-{Guid.NewGuid():N}");
+        try
+        {
+            var result = await SimulationBatchRunner.RunAsync(
+                new SimulationBatchOptions
+                {
+                    ScenarioNames = ["benchmark-workload"],
+                    ScenarioParameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["proposer-count"] = "3",
+                        ["acceptor-count"] = "5",
+                        ["proposal-count"] = "1",
+                        ["fast"] = "true",
+                        ["leader"] = "false",
+                        ["link-latency-profile"] = "geo5region",
+                        ["client-ordinal"] = "2",
+                    },
+                    Seed = 9102,
+                    Rounds = 1,
+                    OutputDirectory = outputDir,
+                    StopOnFailure = true,
+                });
+
+            var run = Assert.Single(result.Runs);
+            Assert.True(run.Success);
+            Assert.Contains(run.TraceLines, line => line.Contains("|learn|proposer-1|", StringComparison.Ordinal));
+            Assert.Contains(run.TraceLines, line => line.Contains("|learn|proposer-3|", StringComparison.Ordinal));
+            Assert.True(
+                run.Statistics.TryGetValue(learnMetricName, out var learns) && learns >= 2,
+                $"Expected at least two delivered learn messages, but saw {run.Statistics.GetValueOrDefault(learnMetricName, 0)}.");
+        }
+        finally
+        {
+            if (Directory.Exists(outputDir)) Directory.Delete(outputDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task RunAsync_BenchmarkWorkload_WithFaultSchedule_Succeeds()
     {
         var outputDir = Path.Combine(Path.GetTempPath(), $"benchmark-fault-{Guid.NewGuid():N}");

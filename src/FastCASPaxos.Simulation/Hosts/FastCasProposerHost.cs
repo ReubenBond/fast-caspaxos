@@ -14,11 +14,18 @@ namespace FastCASPaxos.Simulation.Hosts;
 /// </summary>
 public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
 {
+    private readonly record struct LearnedCommit(
+        Ballot AcceptedBallot,
+        TValue Value,
+        Ballot PreparedBallot);
+
     private readonly FastCasSimulationTransport<TValue> _transport;
     private readonly List<FastCasAddress> _acceptors;
     private readonly FastCasSimulationOptions _options;
     private HostProposerEngine _engine;
     private SimulationNodeContext? _simulationContext;
+    private Action<FastCasAddress, Ballot, TValue, Ballot>? _committedValueBroadcaster;
+    private LearnedCommit? _pendingLearnedCommit;
     private int? _activeRequestId;
     private int _proposalGeneration;
     private int _prepareSendCount;
@@ -78,6 +85,10 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
         _simulationContext = simulationContext;
     }
 
+    public void ConfigureCommittedValueBroadcaster(
+        Action<FastCasAddress, Ballot, TValue, Ballot>? committedValueBroadcaster) =>
+        _committedValueBroadcaster = committedValueBroadcaster;
+
     /// <summary>
     /// Delivers a transport message into the proposer state machine.
     /// </summary>
@@ -111,7 +122,7 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
                 LearnCommittedValue(
                     learnedCommit.AcceptedBallot,
                     learnedCommit.Value,
-                    learnedCommit.PreparedNextBallot);
+                    learnedCommit.PreparedBallot);
                 break;
             default:
                 throw new InvalidOperationException($"Proposer host '{Address}' cannot handle message type '{message.GetType().Name}'.");
@@ -124,6 +135,7 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
     public void Crash()
     {
         ClearPendingClientRequests();
+        _pendingLearnedCommit = null;
         ResetPendingRetryState();
         IsRunning = false;
     }
@@ -134,12 +146,13 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
     public void Restart()
     {
         ClearPendingClientRequests();
+        _pendingLearnedCommit = null;
         ResetPendingRetryState();
         _engine = CreateEngine();
         IsRunning = true;
     }
 
-    public void LearnCommittedValue(Ballot acceptedBallot, TValue value, Ballot preparedNextBallot = default)
+    public void LearnCommittedValue(Ballot acceptedBallot, TValue value, Ballot preparedBallot = default)
     {
         if (!IsRunning)
         {
@@ -149,10 +162,11 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
 
         if (HasPendingClientRequests)
         {
+            QueueLearnedCommit(acceptedBallot, value, preparedBallot);
             return;
         }
 
-        _engine.LearnCommittedValue(acceptedBallot, value, preparedNextBallot);
+        _engine.LearnCommittedValue(acceptedBallot, value, preparedBallot);
     }
 
     private HostProposerEngine CreateEngine() =>
@@ -212,6 +226,47 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
     {
         ResetPendingRetryState();
         _activeRequestId = null;
+        ApplyPendingLearnedCommit();
+    }
+
+    private void BroadcastCommittedValue(Ballot acceptedBallot, TValue value, Ballot preparedBallot)
+    {
+        _committedValueBroadcaster?.Invoke(Address, acceptedBallot, value, preparedBallot);
+    }
+
+    private void QueueLearnedCommit(Ballot acceptedBallot, TValue value, Ballot preparedBallot)
+    {
+        if (acceptedBallot < _engine.Ballot)
+        {
+            return;
+        }
+
+        if (_pendingLearnedCommit is
+            {
+                AcceptedBallot: var pendingAcceptedBallot,
+                PreparedBallot: var pendingPreparedBallot
+            }
+            && (acceptedBallot < pendingAcceptedBallot
+                || (acceptedBallot == pendingAcceptedBallot && preparedBallot <= pendingPreparedBallot)))
+        {
+            return;
+        }
+
+        _pendingLearnedCommit = new LearnedCommit(acceptedBallot, value, preparedBallot);
+    }
+
+    private void ApplyPendingLearnedCommit()
+    {
+        if (HasPendingClientRequests || _pendingLearnedCommit is not { } learnedCommit)
+        {
+            return;
+        }
+
+        _pendingLearnedCommit = null;
+        _engine.LearnCommittedValue(
+            learnedCommit.AcceptedBallot,
+            learnedCommit.Value,
+            learnedCommit.PreparedBallot);
     }
 
     private void SendPrepare(
@@ -376,8 +431,10 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
 
         protected override void OnValueCommitted(CommittedValue<TValue> committedValue)
         {
-            // Value committed is tracked at the protocol level; the simulation host doesn't need
-            // additional action here since the proposer host's CachedValue is updated by the engine.
+            _host.BroadcastCommittedValue(
+                Ballot,
+                committedValue.Value,
+                PreparedBallot ?? Ballot.Zero);
         }
     }
 }

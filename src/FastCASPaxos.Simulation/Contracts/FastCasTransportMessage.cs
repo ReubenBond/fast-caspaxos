@@ -65,5 +65,5 @@ public sealed record FastCasLearnCommittedValueMessage<TValue>(
     FastCasAddress To,
     Ballot AcceptedBallot,
     TValue Value,
-    Ballot PreparedNextBallot = default)
+    Ballot PreparedBallot = default)
     : IFastCasTransportMessage<TValue>;

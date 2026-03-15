@@ -2030,7 +2030,7 @@ def main():
             all_scenario_rows[scenario_name] = rows
             print(f"  Scenario {scenario_name}: {len(rows)} samples from {len(scenario_csvs)} CSV(s)")
 
-            # Extract scenario ID (e.g., "S1" from "S1-geo-low-contention")
+            # Extract scenario ID (e.g., "S1" from "S1-geo-no-contention")
             scenario_id = scenario_name.split("-", 1)[0]
 
             # Sub-group by all config fields except mode
@@ -2072,10 +2072,10 @@ def main():
                 if args.format in ("html", "both"):
                     plot_contention_spectrum_plotly(rows, charts_dir, scenario_id)
 
-        # Topology heatmap (from geo-low-contention data)
+        # Topology heatmap (from S1 comparative data)
         geo_key = None
         for k in all_scenario_rows:
-            if "geo-low-contention" in k.lower():
+            if k.split("-", 1)[0].upper() == "S1":
                 geo_key = k
                 break
         if geo_key is not None:

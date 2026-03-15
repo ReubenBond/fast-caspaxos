@@ -1,3 +1,4 @@
+using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
 using FastCASPaxos.Simulation.Contracts;
 using FastCASPaxos.Simulation;
@@ -46,6 +47,77 @@ public sealed class FastCasSimulationClusterTests
         Assert.True(cluster.RunUntil(() => cluster.TryGetResponse(requestId, out _), maxIterations: 1000));
         Assert.True(cluster.TryGetResponse(requestId, out var response));
         Assert.Equal(Ballot.InitialClassic(1).Round, response.Round);
+    }
+
+    [Fact]
+    public async Task RunProposal_BroadcastsCommittedValueToPeerProposers()
+    {
+        var history = new RecordingHistoryObserver();
+        await using var cluster = new FastCasSimulationCluster<TestValue>(
+            seed: 457,
+            options: new FastCasSimulationOptions
+            {
+                EnableFastCommit = true,
+                EnableDistinguishedLeader = false,
+                HistoryObserver = history,
+            },
+            startDateTime: DateTimeOffset.UnixEpoch);
+
+        cluster.CreateConfiguration(proposerCount: 2, acceptorCount: 5);
+
+        var sourceProposer = FastCasAddress.Proposer(1);
+        var peerProposer = FastCasAddress.Proposer(2);
+        var response = cluster.RunProposal(sourceProposer, AppendOperation(1, "A"));
+        Assert.Equal(new TestValue(1, "A"), response.CommittedValue);
+
+        var peerHost = Assert.IsType<FastCasProposerHost<TestValue>>(cluster.ProposerNodes[1].Host);
+        Assert.True(
+            cluster.RunUntil(
+                () => EqualityComparer<TestValue>.Default.Equals(peerHost.CachedValue, new TestValue(1, "A")),
+                maxIterations: 5000),
+            "Expected peer proposer to learn the committed value from the winner.");
+
+        var learnEvent = Assert.Single(history.LearnEvents);
+        Assert.Equal(cluster.GetProposerBallot(sourceProposer), peerHost.Ballot);
+        Assert.Equal(cluster.GetProposerPreparedBallot(sourceProposer), peerHost.PreparedBallot);
+        Assert.Equal(cluster.GetProposerBallot(sourceProposer), learnEvent.AcceptedBallot);
+        Assert.Equal(new TestValue(1, "A"), learnEvent.Value);
+        Assert.Equal(cluster.GetProposerPreparedBallot(sourceProposer) ?? Ballot.Zero, learnEvent.PreparedBallot);
+        Assert.Equal(peerProposer, peerHost.Address);
+        Assert.Equal(peerProposer, learnEvent.TargetProposer);
+    }
+
+    [Fact]
+    public async Task RunProposal_BroadcastsClassicPreparedBallotToPeerProposers()
+    {
+        var history = new RecordingHistoryObserver();
+        await using var cluster = new FastCasSimulationCluster<TestValue>(
+            seed: 458,
+            options: new FastCasSimulationOptions
+            {
+                EnableFastCommit = false,
+                EnableDistinguishedLeader = true,
+                HistoryObserver = history,
+            },
+            startDateTime: DateTimeOffset.UnixEpoch);
+
+        cluster.CreateConfiguration(proposerCount: 2, acceptorCount: 5);
+
+        var sourceProposer = FastCasAddress.Proposer(1);
+        var response = cluster.RunProposal(sourceProposer, AppendOperation(1, "A"));
+        Assert.Equal(new TestValue(1, "A"), response.CommittedValue);
+
+        var peerHost = Assert.IsType<FastCasProposerHost<TestValue>>(cluster.ProposerNodes[1].Host);
+        Assert.True(
+            cluster.RunUntil(
+                () => EqualityComparer<TestValue>.Default.Equals(peerHost.CachedValue, new TestValue(1, "A")),
+                maxIterations: 5000),
+            "Expected peer proposer to learn the committed value from the winner.");
+
+        var learnEvent = Assert.Single(history.LearnEvents);
+        Assert.Equal(cluster.GetProposerBallot(sourceProposer), peerHost.Ballot);
+        Assert.Equal(cluster.GetProposerPreparedBallot(sourceProposer), peerHost.PreparedBallot);
+        Assert.Equal(cluster.GetProposerPreparedBallot(sourceProposer) ?? Ballot.Zero, learnEvent.PreparedBallot);
     }
 
     [Fact]
@@ -200,6 +272,53 @@ public sealed class FastCasSimulationClusterTests
             predecessor.Value is null || (Value is not null && Value.StartsWith(predecessor.Value, StringComparison.Ordinal));
 
         public override string ToString() => $"Val({((Value == default && Version == default) ? "GENESIS" : $"{Value}@{Version}")})";
+    }
+
+    private readonly record struct LearnEvent(
+        FastCasAddress SourceProposer,
+        FastCasAddress TargetProposer,
+        Ballot AcceptedBallot,
+        TestValue Value,
+        Ballot PreparedBallot);
+
+    private sealed class RecordingHistoryObserver : IFastCasSimulationHistoryObserver
+    {
+        public List<LearnEvent> LearnEvents { get; } = [];
+
+        public void OnProposalSent<TValue>(
+            DateTimeOffset timestamp,
+            FastCasAddress proposer,
+            int requestId,
+            IOperation<TValue> operation)
+            where TValue : IVersionedValue<TValue>
+        {
+        }
+
+        public void OnProposalCompleted<TValue>(
+            DateTimeOffset timestamp,
+            FastCasAddress proposer,
+            int requestId,
+            ProposeResponse<TValue> response)
+            where TValue : IVersionedValue<TValue>
+        {
+        }
+
+        public void OnLearnCommittedValue<TValue>(
+            DateTimeOffset timestamp,
+            FastCasAddress sourceProposer,
+            FastCasAddress targetProposer,
+            Ballot acceptedBallot,
+            TValue value,
+            Ballot preparedBallot)
+            where TValue : IVersionedValue<TValue>
+        {
+            if (value is not TestValue typedValue)
+            {
+                throw new InvalidOperationException($"Unexpected learned value type '{typeof(TValue).Name}'.");
+            }
+
+            LearnEvents.Add(new LearnEvent(sourceProposer, targetProposer, acceptedBallot, typedValue, preparedBallot));
+        }
     }
 }
 

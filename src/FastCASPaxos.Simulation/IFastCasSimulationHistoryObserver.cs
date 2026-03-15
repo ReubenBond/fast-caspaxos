@@ -18,4 +18,13 @@ public interface IFastCasSimulationHistoryObserver
         int requestId,
         ProposeResponse<TValue> response)
         where TValue : Contracts.IVersionedValue<TValue>;
+
+    void OnLearnCommittedValue<TValue>(
+        DateTimeOffset timestamp,
+        FastCasAddress sourceProposer,
+        FastCasAddress targetProposer,
+        Ballot acceptedBallot,
+        TValue value,
+        Ballot preparedBallot)
+        where TValue : Contracts.IVersionedValue<TValue>;
 }

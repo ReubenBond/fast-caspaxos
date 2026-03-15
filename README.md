@@ -265,7 +265,9 @@ run the dedicated script, which executes the simulator and then runs the Go chec
 
 The `benchmark-workload` scenario runs a sustained workload and emits per-proposal latency data as CSV, suitable for graphing.
 
-When `agreement-mode=true`, the workload models one benchmark client per proposer geography. Fast mode fans a logical request to all proposers, classic mode targets the nearest healthy proposer, and leader mode targets the current leader and updates that choice after failover. After each agreement round, untouched healthy proposers learn the committed ballot/value so the next round starts from shared state.
+By default, the workload issues one synthetic request stream per proposer. Set `client-ordinal` to drive the workload from a single explicit benchmark client at that topology ordinal; non-leader modes target the nearest healthy proposer while leader mode still targets the current distinguished primary. Proposers that commit broadcast the accepted ballot, accepted value, and prepared ballot to peer proposers so later requests can start from shared state.
+
+When `agreement-mode=true`, the workload models one benchmark client per proposer geography. Fast mode fans a logical request to all proposers, classic mode targets the nearest healthy proposer, and leader mode targets the current leader and updates that choice after failover.
 
 ### Quick start
 
@@ -317,6 +319,7 @@ Charts are written to `artifacts/benchmark/charts/` as PNG (matplotlib) and inte
 | `fast` | false | Enable fast (leaderless) commit |
 | `leader` | false | Enable distinguished leader mode |
 | `agreement-mode` | false | Simulate everywhere agreement on the next value across geo-aware benchmark clients |
+| `client-ordinal` | auto | Use one explicit benchmark client at this topology ordinal instead of the default synthetic per-proposer workload |
 | `base-delay-ms` | 1 | Global base message delay |
 | `max-jitter-ms` | 1 | Global max random jitter |
 | `link-latency-profile` | lan | Topology: `lan`, `us3region`, `geo5region` |

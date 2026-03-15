@@ -56,6 +56,11 @@ internal readonly record struct AgreementRequestResult(
     IReadOnlySet<FastCasAddress> ContactedProposers,
     FastCasAddress CurrentLeader);
 
+internal readonly record struct ExplicitClientRequestResult(
+    RoutedProposeResponse<StringValue, FastCasAddress> Response,
+    int FailoverCount,
+    FastCasAddress CurrentLeader);
+
 public sealed record SimulationRunResult(
     string ScenarioName,
     int Round,
@@ -235,6 +240,25 @@ public sealed class SimulationRunRecorder : IFastCasSimulationHistoryObserver
             requestId,
             response);
 
+    public void OnLearnCommittedValue<TValue>(
+        DateTimeOffset timestamp,
+        FastCasAddress sourceProposer,
+        FastCasAddress targetProposer,
+        Ballot acceptedBallot,
+        TValue value,
+        Ballot preparedBallot)
+        where TValue : FastCASPaxos.Simulation.Contracts.IVersionedValue<TValue>
+    {
+        _ = sourceProposer;
+        Increment("runner.learns");
+        RecordTrace(
+            timestamp,
+            "learn",
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"{targetProposer}|ballot={acceptedBallot}|prepared={preparedBallot}|{value}"));
+    }
+
     public PorcupineHistoryArtifact? CreatePorcupineHistory(string scenarioName, int round, int seed)
     {
         var history = _porcupineHistory.CreateArtifact(scenarioName, round, seed);
@@ -390,6 +414,22 @@ public sealed class SimulationObservabilitySession :
 
         _forwardHistoryObserver?.OnProposalCompleted(timestamp, proposer, requestId, response);
     }
+
+    public void OnLearnCommittedValue<TValue>(
+        DateTimeOffset timestamp,
+        FastCasAddress sourceProposer,
+        FastCasAddress targetProposer,
+        Ballot acceptedBallot,
+        TValue value,
+        Ballot preparedBallot)
+        where TValue : FastCASPaxos.Simulation.Contracts.IVersionedValue<TValue> =>
+        _forwardHistoryObserver?.OnLearnCommittedValue(
+            timestamp,
+            sourceProposer,
+            targetProposer,
+            acceptedBallot,
+            value,
+            preparedBallot);
 
     public void OnAcceptorStateObserved<TValue>(
         DateTimeOffset timestamp,
@@ -640,6 +680,31 @@ public sealed class SimulationObservabilitySession :
         {
             _left.OnProposalCompleted(timestamp, proposer, requestId, response);
             _right.OnProposalCompleted(timestamp, proposer, requestId, response);
+        }
+
+        public void OnLearnCommittedValue<TValue>(
+            DateTimeOffset timestamp,
+            FastCasAddress sourceProposer,
+            FastCasAddress targetProposer,
+            Ballot acceptedBallot,
+            TValue value,
+            Ballot preparedBallot)
+            where TValue : FastCASPaxos.Simulation.Contracts.IVersionedValue<TValue>
+        {
+            _left.OnLearnCommittedValue(
+                timestamp,
+                sourceProposer,
+                targetProposer,
+                acceptedBallot,
+                value,
+                preparedBallot);
+            _right.OnLearnCommittedValue(
+                timestamp,
+                sourceProposer,
+                targetProposer,
+                acceptedBallot,
+                value,
+                preparedBallot);
         }
     }
 
@@ -1497,6 +1562,9 @@ public static class SimulationScenarioCatalog
         cluster.CreateConfiguration(
             proposerCount: benchmarkOptions.ProposerCount,
             acceptorCount: benchmarkOptions.AcceptorCount);
+        FastCasAddress? explicitClient = benchmarkOptions.UsesExplicitClient
+            ? RegisterExplicitClient(cluster, benchmarkOptions)
+            : null;
         var agreementClients = benchmarkOptions.AgreementMode
             ? RegisterAgreementClients(cluster, benchmarkOptions)
             : [];
@@ -1518,6 +1586,18 @@ public static class SimulationScenarioCatalog
                 proposers,
                 proposerNodesByAddress,
                 agreementClients);
+        }
+
+        if (explicitClient is { } benchmarkClient)
+        {
+            return RunExplicitClientBenchmarkWorkload(
+                benchmarkOptions,
+                cluster,
+                recorder,
+                proposerTiming,
+                proposers,
+                proposerNodesByAddress,
+                benchmarkClient);
         }
 
         var clientRoutes = proposers.ToArray();
@@ -1754,6 +1834,237 @@ public static class SimulationScenarioCatalog
                 $"{cluster.GetReproductionHint(BenchmarkWorkloadOptions.ScenarioName)} params: {string.Join(", ", reproductionParameters.Select(p => $"{p.Key}={p.Value}"))}"));
     }
 
+    private static FastCasAddress RegisterExplicitClient(
+        FastCasSimulationCluster<StringValue> cluster,
+        BenchmarkWorkloadOptions benchmarkOptions)
+    {
+        var clientOrdinal = benchmarkOptions.ClientOrdinal
+            ?? throw new InvalidOperationException("benchmark-workload expected an explicit client ordinal.");
+        return cluster.RegisterClient(clientOrdinal);
+    }
+
+    private static SimulationScenarioCompletion RunExplicitClientBenchmarkWorkload(
+        BenchmarkWorkloadOptions benchmarkOptions,
+        FastCasSimulationCluster<StringValue> cluster,
+        SimulationRunRecorder recorder,
+        FastCasSimulationProposerTimingSnapshot proposerTiming,
+        IReadOnlyList<FastCasAddress> proposers,
+        IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
+        FastCasAddress client)
+    {
+        var proposalCount = benchmarkOptions.ProposalCount;
+        var nextRequestId = 100_000;
+        var clientTimeoutEnabled = benchmarkOptions.ClientTimeoutMs > 0;
+        var clientTimeout = TimeSpan.FromMilliseconds(benchmarkOptions.ClientTimeoutMs);
+        var writeInterval = TimeSpan.FromMilliseconds(benchmarkOptions.WriteIntervalMs);
+
+        var version = 0;
+        var completedProposals = 0;
+        var currentLeader = proposers[0];
+        while (completedProposals < proposalCount)
+        {
+            benchmarkOptions.ApplyFaultAtProposal(cluster, completedProposals, recorder);
+
+            version++;
+            var operation = StringScenarioOperations.AppendCharacter(
+                (char)('A' + ((version - 1) % 26)));
+            var result = CompleteExplicitClientRequest(
+                benchmarkOptions,
+                cluster,
+                recorder,
+                proposers,
+                proposerNodesByAddress,
+                client,
+                operation,
+                nextRequestId++,
+                clientTimeoutEnabled,
+                clientTimeout,
+                currentLeader);
+
+            currentLeader = result.CurrentLeader;
+            recorder.RecordProposal(cluster, result.Response.Proposer, operation, result.Response.Response);
+            completedProposals++;
+
+            if (writeInterval > TimeSpan.Zero && completedProposals < proposalCount)
+            {
+                cluster.RunForDuration(writeInterval);
+            }
+        }
+
+        benchmarkOptions.ApplyFaultAtProposal(cluster, completedProposals, recorder);
+        cluster.AssertSafetyInvariants();
+
+        recorder.SetDetail("completed-proposals", completedProposals);
+        recorder.SetDetail("final-version", version);
+
+        var elapsed = cluster.TimeProvider.GetUtcNow() - DateTimeOffset.UnixEpoch;
+        var throughput = completedProposals / elapsed.TotalSeconds;
+        recorder.SetDetail("elapsed-ms", elapsed.TotalMilliseconds);
+        recorder.SetDetail("throughput-proposals-per-sec", throughput);
+
+        var reproductionParameters = benchmarkOptions
+            .DescribeParameters()
+            .Concat(DescribeProposerTimingParameters(proposerTiming))
+            .ToArray();
+
+        return new(
+            Summary: string.Create(
+                CultureInfo.InvariantCulture,
+                $"mode={benchmarkOptions.ModeName} topology={benchmarkOptions.Topology} proposals={completedProposals} elapsed={elapsed.TotalMilliseconds:F1}ms throughput={throughput:F1}/s"),
+            ReproductionHint: string.Create(
+                CultureInfo.InvariantCulture,
+                $"{cluster.GetReproductionHint(BenchmarkWorkloadOptions.ScenarioName)} params: {string.Join(", ", reproductionParameters.Select(p => $"{p.Key}={p.Value}"))}"));
+    }
+
+    private static ExplicitClientRequestResult CompleteExplicitClientRequest(
+        BenchmarkWorkloadOptions benchmarkOptions,
+        FastCasSimulationCluster<StringValue> cluster,
+        SimulationRunRecorder recorder,
+        IReadOnlyList<FastCasAddress> proposers,
+        IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
+        FastCasAddress client,
+        IOperation<StringValue> operation,
+        int requestId,
+        bool clientTimeoutEnabled,
+        TimeSpan clientTimeout,
+        FastCasAddress currentLeader)
+    {
+        var maxIterations = 50_000 * Math.Max(1, proposers.Count);
+        var failoverCount = 0;
+        var target = GetExplicitClientInitialTarget(
+            benchmarkOptions,
+            client,
+            proposers,
+            proposerNodesByAddress,
+            currentLeader);
+        if (target is not { } initialTarget)
+        {
+            throw new InvalidOperationException(
+                $"Expected a healthy proposer target for explicit benchmark client '{client}'.");
+        }
+
+        var currentTarget = initialTarget;
+
+        SendExplicitClientRequestAttempt(cluster, recorder, client, currentTarget, operation, requestId);
+        while (true)
+        {
+            if (cluster.TryGetRoutedResponse(requestId, out var routedResponse))
+            {
+                var leader = benchmarkOptions.EnableDistinguishedLeader
+                    ? routedResponse.Proposer
+                    : currentLeader;
+                return new ExplicitClientRequestResult(
+                    routedResponse,
+                    failoverCount,
+                    leader);
+            }
+
+            if (!clientTimeoutEnabled)
+            {
+                Ensure(
+                    cluster.RunUntil(() => cluster.TryGetRoutedResponse(requestId, out _), maxIterations),
+                    $"Expected explicit benchmark request {requestId} from {client} to complete. " +
+                    cluster.GetFailureDiagnostics($"explicit-client-{client.Ordinal}-request-{requestId}"));
+                continue;
+            }
+
+            var timeoutDeadline = cluster.TimeProvider.GetUtcNow() + clientTimeout;
+            _ = cluster.RunUntil(
+                () => cluster.TryGetRoutedResponse(requestId, out _)
+                      || cluster.TimeProvider.GetUtcNow() >= timeoutDeadline,
+                maxIterations: maxIterations);
+            if (cluster.TryGetRoutedResponse(requestId, out _))
+            {
+                continue;
+            }
+
+            Ensure(
+                failoverCount < benchmarkOptions.ClientMaxRetries,
+                $"Explicit benchmark request {requestId} from {client} exhausted client retries. " +
+                cluster.GetFailureDiagnostics($"explicit-client-{client.Ordinal}-request-{requestId}"));
+
+            failoverCount++;
+            target = GetExplicitClientRetryTarget(
+                benchmarkOptions,
+                client,
+                proposers,
+                proposerNodesByAddress,
+                currentLeader,
+                currentTarget);
+            if (target is not { } retryTarget)
+            {
+                throw new InvalidOperationException(
+                    $"Expected a failover target for explicit benchmark request {requestId} from {client}.");
+            }
+
+            if (benchmarkOptions.EnableDistinguishedLeader)
+            {
+                currentLeader = retryTarget;
+            }
+
+            currentTarget = retryTarget;
+            SendExplicitClientRequestAttempt(cluster, recorder, client, currentTarget, operation, requestId);
+        }
+    }
+
+    private static void SendExplicitClientRequestAttempt(
+        FastCasSimulationCluster<StringValue> cluster,
+        SimulationRunRecorder recorder,
+        FastCasAddress client,
+        FastCasAddress target,
+        IOperation<StringValue> operation,
+        int requestId)
+    {
+        _ = cluster.SendProposal(target, operation, requestId, client);
+        recorder.RecordSend(cluster, target, operation, requestId);
+    }
+
+    private static FastCasAddress? GetExplicitClientInitialTarget(
+        BenchmarkWorkloadOptions benchmarkOptions,
+        FastCasAddress client,
+        IReadOnlyList<FastCasAddress> proposers,
+        IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
+        FastCasAddress currentLeader)
+    {
+        if (benchmarkOptions.EnableDistinguishedLeader)
+        {
+            if (IsHealthyProposer(proposerNodesByAddress[currentLeader]))
+            {
+                return currentLeader;
+            }
+
+            return FindPreferredHealthyProposer(proposers, proposerNodesByAddress, currentLeader);
+        }
+
+        return FindNearestHealthyClientProposer(
+            benchmarkOptions,
+            client,
+            proposers,
+            proposerNodesByAddress,
+            excluded: null);
+    }
+
+    private static FastCasAddress? GetExplicitClientRetryTarget(
+        BenchmarkWorkloadOptions benchmarkOptions,
+        FastCasAddress client,
+        IReadOnlyList<FastCasAddress> proposers,
+        IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
+        FastCasAddress currentLeader,
+        FastCasAddress currentTarget)
+    {
+        if (benchmarkOptions.EnableDistinguishedLeader)
+        {
+            return FindPreferredHealthyProposer(proposers, proposerNodesByAddress, currentLeader);
+        }
+
+        return FindNearestHealthyClientProposer(
+            benchmarkOptions,
+            client,
+            proposers,
+            proposerNodesByAddress,
+            excluded: new HashSet<FastCasAddress> { currentTarget });
+    }
+
     private static FastCasAddress[] RegisterAgreementClients(
         FastCasSimulationCluster<StringValue> cluster,
         BenchmarkWorkloadOptions benchmarkOptions)
@@ -1793,11 +2104,8 @@ public static class SimulationScenarioCatalog
             var roundSegment = ((char)('A' + ((agreementRound - 1) % 26))).ToString();
             var roundOperation = StringScenarioOperations.AppendAtVersion(agreementRound, roundSegment);
             var roundSize = Math.Min(clients.Count, proposalCount - completedProposals);
-            HashSet<FastCasAddress> roundContactedProposers = [];
-            Ballot? roundCommittedBallot = null;
-            Ballot? roundPreparedBallot = null;
-            FastCasAddress? roundLearningSource = null;
             var roundCommittedValue = default(StringValue);
+            var observedCommittedValue = false;
 
             for (var clientIndex = 0; clientIndex < roundSize; clientIndex++)
             {
@@ -1815,63 +2123,24 @@ public static class SimulationScenarioCatalog
                     currentLeader);
 
                 currentLeader = result.CurrentLeader;
-                foreach (var contactedProposer in result.ContactedProposers)
-                {
-                    roundContactedProposers.Add(contactedProposer);
-                }
-
                 recorder.RecordProposal(cluster, result.Response.Proposer, roundOperation, result.Response.Response);
                 Ensure(
                     result.Response.Response.CommittedValue.Version == agreementRound,
                     $"Expected everywhere-agreement round {agreementRound} to commit version {agreementRound}.");
 
-                var proposerBallot = cluster.GetProposerBallot(result.Response.Proposer);
-                var proposerPreparedBallot = cluster.GetProposerPreparedBallot(result.Response.Proposer);
-
-                if (roundCommittedBallot is null)
+                if (!observedCommittedValue)
                 {
-                    roundCommittedBallot = proposerBallot;
-                    roundPreparedBallot = proposerPreparedBallot;
-                    roundLearningSource = result.Response.Proposer;
                     roundCommittedValue = result.Response.Response.CommittedValue;
+                    observedCommittedValue = true;
                 }
                 else
                 {
                     Ensure(
                         EqualityComparer<StringValue>.Default.Equals(roundCommittedValue, result.Response.Response.CommittedValue),
                         "Expected everywhere-agreement clients to observe the same committed value.");
-
-                    if (proposerBallot > roundCommittedBallot.Value)
-                    {
-                        roundCommittedBallot = proposerBallot;
-                        roundPreparedBallot = proposerPreparedBallot;
-                        roundLearningSource = result.Response.Proposer;
-                    }
-                    else if (proposerBallot == roundCommittedBallot.Value
-                             && proposerPreparedBallot is { } reusablePreparedBallot
-                             && (roundPreparedBallot is null || reusablePreparedBallot > roundPreparedBallot.Value))
-                    {
-                        roundPreparedBallot = reusablePreparedBallot;
-                        roundLearningSource = result.Response.Proposer;
-                    }
                 }
 
                 completedProposals++;
-            }
-
-            if (roundCommittedBallot is { } committedBallot
-                && roundLearningSource is { } learningSource)
-            {
-                PropagateLearnedAgreementValue(
-                    cluster,
-                    recorder,
-                    proposers,
-                    proposerNodesByAddress,
-                    roundContactedProposers,
-                    learningSource,
-                    committedBallot,
-                    roundCommittedValue,
-                    roundPreparedBallot ?? Ballot.Zero);
             }
 
             if (writeInterval > TimeSpan.Zero && completedProposals < proposalCount)
@@ -2044,7 +2313,7 @@ public static class SimulationScenarioCatalog
             return [];
         }
 
-        if (FindNearestHealthyAgreementProposer(
+        if (FindNearestHealthyClientProposer(
             benchmarkOptions,
             client,
             proposers,
@@ -2085,7 +2354,7 @@ public static class SimulationScenarioCatalog
             return [];
         }
 
-        if (FindNearestHealthyAgreementProposer(
+        if (FindNearestHealthyClientProposer(
             benchmarkOptions,
             client,
             proposers,
@@ -2098,7 +2367,7 @@ public static class SimulationScenarioCatalog
         return [];
     }
 
-    private static FastCasAddress? FindNearestHealthyAgreementProposer(
+    private static FastCasAddress? FindNearestHealthyClientProposer(
         BenchmarkWorkloadOptions benchmarkOptions,
         FastCasAddress client,
         IReadOnlyList<FastCasAddress> proposers,
@@ -2106,7 +2375,7 @@ public static class SimulationScenarioCatalog
         IReadOnlySet<FastCasAddress>? excluded)
     {
         foreach (var proposer in proposers
-                     .OrderBy(proposer => GetExpectedAgreementOneWayLatency(benchmarkOptions, client, proposer))
+                     .OrderBy(proposer => GetExpectedClientOneWayLatency(benchmarkOptions, client, proposer))
                      .ThenBy(proposer => Math.Abs(proposer.Ordinal - Math.Max(1, client.Ordinal)))
                      .ThenBy(proposer => proposer.Ordinal))
         {
@@ -2134,7 +2403,7 @@ public static class SimulationScenarioCatalog
     private static bool IsHealthyProposer(FastCasSimulationNode<StringValue> proposerNode) =>
         proposerNode.IsRunning && !proposerNode.IsSuspended;
 
-    private static TimeSpan GetExpectedAgreementOneWayLatency(
+    private static TimeSpan GetExpectedClientOneWayLatency(
         BenchmarkWorkloadOptions benchmarkOptions,
         FastCasAddress client,
         FastCasAddress proposer)
@@ -2168,42 +2437,6 @@ public static class SimulationScenarioCatalog
                 () => runningTargets.All(target => !cluster.ProposerHasPendingClientRequests(target)),
                 maxIterations: maxIterations * runningTargets.Length),
             $"Expected agreement targets to quiesce. {cluster.GetFailureDiagnostics(nameof(WaitForAgreementTargetsToQuiesce))}");
-    }
-
-    private static void PropagateLearnedAgreementValue(
-        FastCasSimulationCluster<StringValue> cluster,
-        SimulationRunRecorder recorder,
-        IReadOnlyList<FastCasAddress> proposers,
-        IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
-        IReadOnlySet<FastCasAddress> contactedProposers,
-        FastCasAddress sourceProposer,
-        Ballot acceptedBallot,
-        StringValue committedValue,
-        Ballot preparedNextBallot)
-    {
-        foreach (var proposer in proposers)
-        {
-            if (contactedProposers.Contains(proposer))
-            {
-                continue;
-            }
-
-            if (!IsHealthyProposer(proposerNodesByAddress[proposer]))
-            {
-                continue;
-            }
-
-            if (cluster.SendLearnCommittedValue(sourceProposer, proposer, acceptedBallot, committedValue, preparedNextBallot)
-                == DeliveryStatus.Success)
-            {
-                recorder.RecordClusterTrace(
-                    cluster,
-                    "learn",
-                    string.Create(
-                        CultureInfo.InvariantCulture,
-                        $"{proposer}|ballot={acceptedBallot}|{committedValue}"));
-            }
-        }
     }
 
     private static void RecordProposerTimingDetails(

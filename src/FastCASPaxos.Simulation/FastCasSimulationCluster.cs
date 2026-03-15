@@ -128,6 +128,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
 
         RegisterNode(node);
         _proposerNodes.Add(node);
+        RefreshCommittedValueBroadcasters();
         return node;
     }
 
@@ -205,7 +206,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         FastCasAddress proposer,
         Ballot acceptedBallot,
         TValue value,
-        Ballot preparedNextBallot = default)
+        Ballot preparedBallot = default)
     {
         if (sourceProposer.Role != FastCasParticipantRole.Proposer)
         {
@@ -217,12 +218,24 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
             throw new ArgumentException($"Address '{proposer}' is not a proposer endpoint.", nameof(proposer));
         }
 
-        return Transport.Send(new FastCasLearnCommittedValueMessage<TValue>(
+        var deliveryStatus = Transport.Send(new FastCasLearnCommittedValueMessage<TValue>(
             sourceProposer,
             proposer,
             acceptedBallot,
             value,
-            preparedNextBallot));
+            preparedBallot));
+        if (deliveryStatus == DeliveryStatus.Success)
+        {
+            Options.HistoryObserver?.OnLearnCommittedValue(
+                TimeProvider.GetUtcNow(),
+                sourceProposer,
+                proposer,
+                acceptedBallot,
+                value,
+                preparedBallot);
+        }
+
+        return deliveryStatus;
     }
 
     public bool TryGetRoutedResponse(
@@ -324,6 +337,42 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         if (address.Role == FastCasParticipantRole.Client)
         {
             RegisterClientEndpoint(address);
+        }
+    }
+
+    private void RefreshCommittedValueBroadcasters()
+    {
+        foreach (var proposerNode in _proposerNodes)
+        {
+            if (proposerNode.Host is FastCasProposerHost<TValue> proposerHost)
+            {
+                proposerHost.ConfigureCommittedValueBroadcaster(BroadcastCommittedValueToPeerProposers);
+            }
+        }
+    }
+
+    private void BroadcastCommittedValueToPeerProposers(
+        FastCasAddress sourceProposer,
+        Ballot acceptedBallot,
+        TValue value,
+        Ballot preparedBallot)
+    {
+        foreach (var proposerNode in _proposerNodes)
+        {
+            var targetProposer = proposerNode.Host.Address;
+            if (targetProposer == sourceProposer
+                || !proposerNode.IsRunning
+                || proposerNode.IsSuspended)
+            {
+                continue;
+            }
+
+            _ = SendLearnCommittedValue(
+                sourceProposer,
+                targetProposer,
+                acceptedBallot,
+                value,
+                preparedBallot);
         }
     }
 

@@ -113,7 +113,7 @@ public abstract class ProposerEngine<TValue, TRoute>
         }
     }
 
-    public void LearnCommittedValue(Ballot acceptedBallot, TValue value, Ballot preparedNextBallot = default)
+    public void LearnCommittedValue(Ballot acceptedBallot, TValue value, Ballot preparedBallot = default)
     {
         if (acceptedBallot.IsZero)
         {
@@ -136,15 +136,10 @@ public abstract class ProposerEngine<TValue, TRoute>
         ClearAcceptState();
         Ballot = acceptedBallot;
         SetCachedValue(value);
-        Ballot? nextPreparedBallot = PreparedBallot is { } existingPreparedBallot && existingPreparedBallot > Ballot
-            ? existingPreparedBallot
-            : null;
-        if (preparedNextBallot > Ballot)
-        {
-            nextPreparedBallot = preparedNextBallot;
-        }
-
-        PreparedBallot = nextPreparedBallot;
+        var nextPreparedBallot = PreparedBallot is { } existingPreparedBallot
+            ? Ballot.Max(existingPreparedBallot, preparedBallot)
+            : preparedBallot;
+        PreparedBallot = nextPreparedBallot > Ballot ? nextPreparedBallot : null;
     }
 
     public void HandlePreparePromised(PreparePromise<TValue, TRoute> message)
@@ -376,7 +371,8 @@ public abstract class ProposerEngine<TValue, TRoute>
             PreparedBallot = null;
         }
 
-        if (PreparedBallot is { } reusableBallot)
+        if (PreparedBallot is { } reusableBallot
+            && (reusableBallot.IsFastRoundBallot || reusableBallot.Proposer == ProposerId))
         {
             // Reuse the piggybacked promise exactly once, jumping straight into operation execution
             // as if a standalone prepare for that ballot had already succeeded.
