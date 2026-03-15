@@ -30,15 +30,16 @@ public sealed class FastCasSimulationProposerRetryBackoffOptionsTests
             StartAfterFailures = 2,
             BaseDelay = TimeSpan.FromMilliseconds(4),
             MaxDelay = TimeSpan.FromMilliseconds(20),
+            JitterRatio = 0.5,
         };
 
         var thirdRetry = options.GetRetryDelay(3, new SimulationRandom(99));
         var fourthRetry = options.GetRetryDelay(4, new SimulationRandom(99));
         var cappedRetry = options.GetRetryDelay(20, new SimulationRandom(99));
 
-        Assert.InRange(thirdRetry, TimeSpan.FromMilliseconds(4), TimeSpan.FromMilliseconds(8));
-        Assert.InRange(fourthRetry, TimeSpan.FromMilliseconds(8), TimeSpan.FromMilliseconds(16));
-        Assert.InRange(cappedRetry, TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(20));
+        Assert.InRange(thirdRetry, TimeSpan.FromMilliseconds(2), TimeSpan.FromMilliseconds(4));
+        Assert.InRange(fourthRetry, TimeSpan.FromMilliseconds(4), TimeSpan.FromMilliseconds(8));
+        Assert.InRange(cappedRetry, TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(20));
         Assert.Equal(thirdRetry, options.GetRetryDelay(3, new SimulationRandom(99)));
         Assert.Equal(fourthRetry, options.GetRetryDelay(4, new SimulationRandom(99)));
     }

@@ -2,9 +2,11 @@ param(
     [int]$Seed = 42,
     [int]$Rounds = 1,
     [int]$ProposalCount = 1000,
+    [ValidateRange(5, [int]::MaxValue)]
+    [int]$AcceptorCount = 5,
     [string]$Output = "artifacts\benchmark",
     [string[]]$Mode = @("classic", "fast", "leader", "fast+leader"),
-    [string[]]$Topology = @("lan", "uscrossregion", "geo3region"),
+    [string[]]$Topology = @("lan", "us3region", "geo5region"),
     [string[]]$Fault = @("none", "suspend:acceptor:3:at:333:until:666"),
     [int[]]$ProposerCount = @(1, 3),
     [switch]$ContinueOnFailure,
@@ -27,9 +29,11 @@ function Get-ModeParams {
 function Get-TopologyParams {
     param([string]$topology)
     switch ($topology) {
-        "lan"            { return @("link-latency-profile=lan",            "base-delay-ms=1", "max-jitter-ms=1") }
-        "uscrossregion"  { return @("link-latency-profile=uscrossregion",  "base-delay-ms=1", "max-jitter-ms=1") }
-        "geo3region"     { return @("link-latency-profile=geo3region",     "base-delay-ms=1", "max-jitter-ms=1") }
+        "lan"            { return @("link-latency-profile=lan",        "base-delay-ms=1", "max-jitter-ms=1") }
+        "us3region"      { return @("link-latency-profile=us3region",  "base-delay-ms=1", "max-jitter-ms=1") }
+        "uscrossregion"  { return @("link-latency-profile=us3region",  "base-delay-ms=1", "max-jitter-ms=1") }
+        "geo5region"     { return @("link-latency-profile=geo5region", "base-delay-ms=1", "max-jitter-ms=1") }
+        "geo3region"     { return @("link-latency-profile=geo5region", "base-delay-ms=1", "max-jitter-ms=1") }
         default          { throw "Unknown topology: $topology" }
     }
 }
@@ -55,6 +59,7 @@ Write-Host "  Modes:     $($Mode -join ', ')"
 Write-Host "  Topologies: $($Topology -join ', ')"
 Write-Host "  Faults:    $($Fault -join ', ')"
 Write-Host "  Proposers: $($ProposerCount -join ', ')"
+Write-Host "  Acceptors: $AcceptorCount"
 Write-Host "  Proposals: $ProposalCount per run, $Rounds round(s), seed=$Seed"
 Write-Host ""
 
@@ -82,6 +87,7 @@ foreach ($mode in $Mode) {
                 foreach ($p in $modeParams)  { $arguments += @("--param", $p) }
                 foreach ($p in $topoParams)  { $arguments += @("--param", $p) }
                 $arguments += @("--param", "proposer-count=$pCount")
+                $arguments += @("--param", "acceptor-count=$AcceptorCount")
                 $arguments += @("--param", "proposal-count=$ProposalCount")
 
                 if ($fault -ne "none") {
@@ -122,6 +128,7 @@ foreach ($mode in $Mode) {
                     OutputDir = Resolve-PathString $outputDir
                     Seed = $Seed
                     Rounds = $Rounds
+                    AcceptorCount = $AcceptorCount
                     ProposalCount = $ProposalCount
                 }
             }

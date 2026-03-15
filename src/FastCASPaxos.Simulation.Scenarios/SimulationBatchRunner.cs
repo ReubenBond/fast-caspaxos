@@ -5,6 +5,7 @@ using Clockwork;
 using FastCASPaxos.Diagnostics;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
+using FastCASPaxos.Protocol;
 using FastCASPaxos.Simulation.Invariants;
 using FastCASPaxos.Simulation.Hosts;
 using FastCASPaxos.Simulation.Nodes;
@@ -48,6 +49,12 @@ public readonly record struct ProposalLatencySample(
     double LatencyMs,
     int RoundTrips,
     int FailoverCount);
+
+internal readonly record struct AgreementRequestResult(
+    RoutedProposeResponse<StringValue, FastCasAddress> Response,
+    int FailoverCount,
+    IReadOnlySet<FastCasAddress> ContactedProposers,
+    FastCasAddress CurrentLeader);
 
 public sealed record SimulationRunResult(
     string ScenarioName,
@@ -342,13 +349,12 @@ public sealed class SimulationObservabilitySession :
         IOperation<TValue> operation)
         where TValue : FastCASPaxos.Simulation.Contracts.IVersionedValue<TValue>
     {
-        // The simulation only keeps one in-flight client request per proposer, so proposer ordinal
-        // is enough to associate later phase counters with the request kind.
         var kind = GetProposalKind(operation);
         _activeProposalRoundTrips[proposer.Ordinal] =
             new ActiveProposalRoundTrip(kind, 0);
-        _pendingProposalLatencies[requestId] =
-            new PendingProposalLatency(proposer.ToString(), kind, timestamp);
+        _pendingProposalLatencies.TryAdd(
+            requestId,
+            new PendingProposalLatency(kind, timestamp));
         _forwardHistoryObserver?.OnProposalSent(timestamp, proposer, requestId, operation);
     }
 
@@ -371,7 +377,7 @@ public sealed class SimulationObservabilitySession :
                 roundTrips = 0;
             _completedProposalLatencySamples.Add(new ProposalLatencySample(
                 requestId,
-                pending.Proposer,
+                proposer.ToString(),
                 pending.Kind,
                 SentMs: (pending.Sent - _simulationEpoch).TotalMilliseconds,
                 CompletedMs: (timestamp - _simulationEpoch).TotalMilliseconds,
@@ -601,7 +607,6 @@ public sealed class SimulationObservabilitySession :
         int RoundTrips);
 
     private readonly record struct PendingProposalLatency(
-        string Proposer,
         SimulationProposalKind Kind,
         DateTimeOffset Sent);
 
@@ -1340,16 +1345,7 @@ public static class SimulationScenarioCatalog
         cluster.CreateConfiguration(proposerCount: proposerCount, acceptorCount: acceptorCount);
         cluster.ConfigureMessageDelays(baseDelay, maxJitter);
         recorder.RecordFault(cluster, $"delays base={baseDelay} jitter={maxJitter}");
-        recorder.SetDetail("parameter.retry-backoff", "exponential-deterministic-jitter");
-        recorder.SetDetail(
-            "parameter.retry-backoff-start-after-failures",
-            options.ProposerRetryBackoff.StartAfterFailures);
-        recorder.SetDetail(
-            "parameter.retry-backoff-base-ms",
-            options.ProposerRetryBackoff.BaseDelay.TotalMilliseconds);
-        recorder.SetDetail(
-            "parameter.retry-backoff-max-ms",
-            options.ProposerRetryBackoff.MaxDelay.TotalMilliseconds);
+        RecordProposerTimingDetails(recorder, cluster.Options.GetProposerTimingSnapshot());
 
         const string charset = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
         var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
@@ -1493,15 +1489,34 @@ public static class SimulationScenarioCatalog
                 EnableFastCommit = benchmarkOptions.EnableFastCommit,
                 EnableDistinguishedLeader = benchmarkOptions.EnableDistinguishedLeader,
             });
+        benchmarkOptions.ApplyProposerTimingOverrides(options);
         await using var cluster = CreateStringCluster(seed, options, cancellationToken);
         cluster.CreateConfiguration(
             proposerCount: benchmarkOptions.ProposerCount,
             acceptorCount: benchmarkOptions.AcceptorCount);
+        var agreementClients = benchmarkOptions.AgreementMode
+            ? RegisterAgreementClients(cluster, benchmarkOptions)
+            : [];
         benchmarkOptions.ApplyTopology(cluster);
         recorder.RecordFault(cluster, $"topology {benchmarkOptions.Topology}");
+        var proposerTiming = cluster.Options.GetProposerTimingSnapshot();
+        RecordProposerTimingDetails(recorder, proposerTiming);
 
         var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
         var proposerNodesByAddress = cluster.ProposerNodes.ToDictionary(node => node.Host.Address);
+        if (benchmarkOptions.AgreementMode)
+        {
+            recorder.SetDetail("parameter.agreement-model", "everywhere");
+            return RunEverywhereAgreementBenchmarkWorkload(
+                benchmarkOptions,
+                cluster,
+                recorder,
+                proposerTiming,
+                proposers,
+                proposerNodesByAddress,
+                agreementClients);
+        }
+
         var clientRoutes = proposers.ToArray();
         var proposalCount = benchmarkOptions.ProposalCount;
         var requestId = 100_000;
@@ -1722,14 +1737,467 @@ public static class SimulationScenarioCatalog
         recorder.SetDetail("elapsed-ms", elapsed.TotalMilliseconds);
         recorder.SetDetail("throughput-proposals-per-sec", throughput);
 
+        var reproductionParameters = benchmarkOptions
+            .DescribeParameters()
+            .Concat(DescribeProposerTimingParameters(proposerTiming))
+            .ToArray();
+
         return new(
             Summary: string.Create(
                 CultureInfo.InvariantCulture,
                 $"mode={benchmarkOptions.ModeName} topology={benchmarkOptions.Topology} proposals={completedProposals} elapsed={elapsed.TotalMilliseconds:F1}ms throughput={throughput:F1}/s"),
             ReproductionHint: string.Create(
                 CultureInfo.InvariantCulture,
-                $"{cluster.GetReproductionHint(BenchmarkWorkloadOptions.ScenarioName)} params: {string.Join(", ", benchmarkOptions.DescribeParameters().Select(p => $"{p.Key}={p.Value}"))}"));
+                $"{cluster.GetReproductionHint(BenchmarkWorkloadOptions.ScenarioName)} params: {string.Join(", ", reproductionParameters.Select(p => $"{p.Key}={p.Value}"))}"));
     }
+
+    private static FastCasAddress[] RegisterAgreementClients(
+        FastCasSimulationCluster<StringValue> cluster,
+        BenchmarkWorkloadOptions benchmarkOptions)
+    {
+        List<FastCasAddress> clients = [];
+        for (var ordinal = 1; ordinal <= benchmarkOptions.GetAgreementClientCount(); ordinal++)
+        {
+            clients.Add(cluster.RegisterClient(ordinal));
+        }
+
+        return [.. clients];
+    }
+
+    private static SimulationScenarioCompletion RunEverywhereAgreementBenchmarkWorkload(
+        BenchmarkWorkloadOptions benchmarkOptions,
+        FastCasSimulationCluster<StringValue> cluster,
+        SimulationRunRecorder recorder,
+        FastCasSimulationProposerTimingSnapshot proposerTiming,
+        IReadOnlyList<FastCasAddress> proposers,
+        IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
+        IReadOnlyList<FastCasAddress> clients)
+    {
+        var proposalCount = benchmarkOptions.ProposalCount;
+        var nextRequestId = 100_000;
+        var clientTimeoutEnabled = benchmarkOptions.ClientTimeoutMs > 0;
+        var clientTimeout = TimeSpan.FromMilliseconds(benchmarkOptions.ClientTimeoutMs);
+        var writeInterval = TimeSpan.FromMilliseconds(benchmarkOptions.WriteIntervalMs);
+
+        var completedProposals = 0;
+        var agreementRound = 0;
+        var currentLeader = proposers[0];
+        while (completedProposals < proposalCount)
+        {
+            benchmarkOptions.ApplyFaultAtProposal(cluster, completedProposals, recorder);
+
+            agreementRound++;
+            var roundSegment = ((char)('A' + ((agreementRound - 1) % 26))).ToString();
+            var roundOperation = StringScenarioOperations.AppendAtVersion(agreementRound, roundSegment);
+            var roundSize = Math.Min(clients.Count, proposalCount - completedProposals);
+            HashSet<FastCasAddress> roundContactedProposers = [];
+            Ballot? roundCommittedBallot = null;
+            var roundCommittedValue = default(StringValue);
+
+            for (var clientIndex = 0; clientIndex < roundSize; clientIndex++)
+            {
+                var result = CompleteAgreementClientRequest(
+                    benchmarkOptions,
+                    cluster,
+                    recorder,
+                    proposers,
+                    proposerNodesByAddress,
+                    clients[clientIndex],
+                    roundOperation,
+                    nextRequestId++,
+                    clientTimeoutEnabled,
+                    clientTimeout,
+                    currentLeader);
+
+                currentLeader = result.CurrentLeader;
+                foreach (var contactedProposer in result.ContactedProposers)
+                {
+                    roundContactedProposers.Add(contactedProposer);
+                }
+
+                recorder.RecordProposal(cluster, result.Response.Proposer, roundOperation, result.Response.Response);
+                Ensure(
+                    result.Response.Response.CommittedValue.Version == agreementRound,
+                    $"Expected everywhere-agreement round {agreementRound} to commit version {agreementRound}.");
+
+                if (roundCommittedBallot is null)
+                {
+                    roundCommittedBallot = cluster.GetProposerBallot(result.Response.Proposer);
+                    roundCommittedValue = result.Response.Response.CommittedValue;
+                }
+                else
+                {
+                    Ensure(
+                        EqualityComparer<StringValue>.Default.Equals(roundCommittedValue, result.Response.Response.CommittedValue),
+                        "Expected everywhere-agreement clients to observe the same committed value.");
+                }
+
+                completedProposals++;
+            }
+
+            if (roundCommittedBallot is { } committedBallot)
+            {
+                PropagateLearnedAgreementValue(
+                    cluster,
+                    recorder,
+                    proposers,
+                    proposerNodesByAddress,
+                    roundContactedProposers,
+                    committedBallot,
+                    roundCommittedValue);
+            }
+
+            if (writeInterval > TimeSpan.Zero && completedProposals < proposalCount)
+            {
+                cluster.RunForDuration(writeInterval);
+            }
+        }
+
+        benchmarkOptions.ApplyFaultAtProposal(cluster, completedProposals, recorder);
+        cluster.AssertSafetyInvariants();
+
+        recorder.SetDetail("completed-proposals", completedProposals);
+        recorder.SetDetail("final-version", agreementRound);
+
+        var elapsed = cluster.TimeProvider.GetUtcNow() - DateTimeOffset.UnixEpoch;
+        var throughput = completedProposals / elapsed.TotalSeconds;
+        recorder.SetDetail("elapsed-ms", elapsed.TotalMilliseconds);
+        recorder.SetDetail("throughput-proposals-per-sec", throughput);
+
+        var reproductionParameters = benchmarkOptions
+            .DescribeParameters()
+            .Concat(DescribeProposerTimingParameters(proposerTiming))
+            .Append(new KeyValuePair<string, string>("agreement-model", "everywhere"))
+            .ToArray();
+
+        return new(
+            Summary: string.Create(
+                CultureInfo.InvariantCulture,
+                $"mode={benchmarkOptions.ModeName} topology={benchmarkOptions.Topology} proposals={completedProposals} elapsed={elapsed.TotalMilliseconds:F1}ms throughput={throughput:F1}/s"),
+            ReproductionHint: string.Create(
+                CultureInfo.InvariantCulture,
+                $"{cluster.GetReproductionHint(BenchmarkWorkloadOptions.ScenarioName)} params: {string.Join(", ", reproductionParameters.Select(p => $"{p.Key}={p.Value}"))}"));
+    }
+
+    private static AgreementRequestResult CompleteAgreementClientRequest(
+        BenchmarkWorkloadOptions benchmarkOptions,
+        FastCasSimulationCluster<StringValue> cluster,
+        SimulationRunRecorder recorder,
+        IReadOnlyList<FastCasAddress> proposers,
+        IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
+        FastCasAddress client,
+        IOperation<StringValue> operation,
+        int requestId,
+        bool clientTimeoutEnabled,
+        TimeSpan clientTimeout,
+        FastCasAddress currentLeader)
+    {
+        var maxIterations = 50_000 * Math.Max(1, proposers.Count);
+        HashSet<FastCasAddress> contactedProposers = [];
+        var failoverCount = 0;
+        var targets = GetAgreementInitialTargets(
+            benchmarkOptions,
+            client,
+            proposers,
+            proposerNodesByAddress,
+            currentLeader);
+        Ensure(
+            targets.Count > 0,
+            $"Expected at least one healthy proposer target for agreement client '{client}'.");
+
+        SendAgreementRequestAttempt(cluster, recorder, client, targets, operation, requestId);
+        foreach (var target in targets)
+        {
+            contactedProposers.Add(target);
+        }
+
+        while (true)
+        {
+            if (cluster.TryGetRoutedResponse(requestId, out var routedResponse))
+            {
+                WaitForAgreementTargetsToQuiesce(cluster, proposerNodesByAddress, contactedProposers, maxIterations);
+                var leader = benchmarkOptions.EnableDistinguishedLeader
+                    ? routedResponse.Proposer
+                    : currentLeader;
+                return new AgreementRequestResult(
+                    routedResponse,
+                    failoverCount,
+                    contactedProposers,
+                    leader);
+            }
+
+            if (!clientTimeoutEnabled)
+            {
+                Ensure(
+                    cluster.RunUntil(() => cluster.TryGetRoutedResponse(requestId, out _), maxIterations),
+                    $"Expected agreement request {requestId} from {client} to complete. " +
+                    cluster.GetFailureDiagnostics($"agreement-client-{client.Ordinal}-request-{requestId}"));
+                continue;
+            }
+
+            var timeoutDeadline = cluster.TimeProvider.GetUtcNow() + clientTimeout;
+            _ = cluster.RunUntil(
+                () => cluster.TryGetRoutedResponse(requestId, out _)
+                      || cluster.TimeProvider.GetUtcNow() >= timeoutDeadline,
+                maxIterations: maxIterations);
+            if (cluster.TryGetRoutedResponse(requestId, out _))
+            {
+                continue;
+            }
+
+            Ensure(
+                failoverCount < benchmarkOptions.ClientMaxRetries,
+                $"Agreement request {requestId} from {client} exhausted client retries. " +
+                cluster.GetFailureDiagnostics($"agreement-client-{client.Ordinal}-request-{requestId}"));
+
+            failoverCount++;
+            targets = GetAgreementRetryTargets(
+                benchmarkOptions,
+                client,
+                proposers,
+                proposerNodesByAddress,
+                currentLeader,
+                contactedProposers);
+            Ensure(
+                targets.Count > 0,
+                $"Expected a failover target for agreement request {requestId} from {client}.");
+
+            if (benchmarkOptions.EnableDistinguishedLeader && targets.Count == 1)
+            {
+                currentLeader = targets[0];
+            }
+
+            SendAgreementRequestAttempt(cluster, recorder, client, targets, operation, requestId);
+            foreach (var target in targets)
+            {
+                contactedProposers.Add(target);
+            }
+        }
+    }
+
+    private static void SendAgreementRequestAttempt(
+        FastCasSimulationCluster<StringValue> cluster,
+        SimulationRunRecorder recorder,
+        FastCasAddress client,
+        IReadOnlyList<FastCasAddress> targets,
+        IOperation<StringValue> operation,
+        int requestId)
+    {
+        foreach (var target in targets)
+        {
+            _ = cluster.SendProposal(target, operation, requestId, client);
+            recorder.RecordSend(cluster, target, operation, requestId);
+        }
+    }
+
+    private static IReadOnlyList<FastCasAddress> GetAgreementInitialTargets(
+        BenchmarkWorkloadOptions benchmarkOptions,
+        FastCasAddress client,
+        IReadOnlyList<FastCasAddress> proposers,
+        IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
+        FastCasAddress currentLeader)
+    {
+        if (benchmarkOptions.EnableFastCommit)
+        {
+            return GetHealthyAgreementProposers(proposers, proposerNodesByAddress);
+        }
+
+        if (benchmarkOptions.EnableDistinguishedLeader)
+        {
+            if (IsHealthyProposer(proposerNodesByAddress[currentLeader]))
+            {
+                return [currentLeader];
+            }
+
+            if (FindPreferredHealthyProposer(proposers, proposerNodesByAddress, currentLeader) is { } fallbackLeader)
+            {
+                return [fallbackLeader];
+            }
+
+            return [];
+        }
+
+        if (FindNearestHealthyAgreementProposer(
+            benchmarkOptions,
+            client,
+            proposers,
+            proposerNodesByAddress,
+            excluded: null) is { } nearestProposer)
+        {
+            return [nearestProposer];
+        }
+
+        return [];
+    }
+
+    private static IReadOnlyList<FastCasAddress> GetAgreementRetryTargets(
+        BenchmarkWorkloadOptions benchmarkOptions,
+        FastCasAddress client,
+        IReadOnlyList<FastCasAddress> proposers,
+        IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
+        FastCasAddress currentLeader,
+        IReadOnlySet<FastCasAddress> contactedProposers)
+    {
+        if (benchmarkOptions.EnableFastCommit)
+        {
+            var remainingHealthy = GetHealthyAgreementProposers(proposers, proposerNodesByAddress)
+                .Where(proposer => !contactedProposers.Contains(proposer))
+                .ToArray();
+            return remainingHealthy.Length > 0
+                ? remainingHealthy
+                : GetHealthyAgreementProposers(proposers, proposerNodesByAddress);
+        }
+
+        if (benchmarkOptions.EnableDistinguishedLeader)
+        {
+            if (FindPreferredHealthyProposer(proposers, proposerNodesByAddress, currentLeader) is { } fallbackLeader)
+            {
+                return [fallbackLeader];
+            }
+
+            return [];
+        }
+
+        if (FindNearestHealthyAgreementProposer(
+            benchmarkOptions,
+            client,
+            proposers,
+            proposerNodesByAddress,
+            contactedProposers) is { } fallbackProposer)
+        {
+            return [fallbackProposer];
+        }
+
+        return [];
+    }
+
+    private static FastCasAddress? FindNearestHealthyAgreementProposer(
+        BenchmarkWorkloadOptions benchmarkOptions,
+        FastCasAddress client,
+        IReadOnlyList<FastCasAddress> proposers,
+        IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
+        IReadOnlySet<FastCasAddress>? excluded)
+    {
+        foreach (var proposer in proposers
+                     .OrderBy(proposer => GetExpectedAgreementOneWayLatency(benchmarkOptions, client, proposer))
+                     .ThenBy(proposer => Math.Abs(proposer.Ordinal - Math.Max(1, client.Ordinal)))
+                     .ThenBy(proposer => proposer.Ordinal))
+        {
+            if (excluded is not null && excluded.Contains(proposer))
+            {
+                continue;
+            }
+
+            if (!IsHealthyProposer(proposerNodesByAddress[proposer]))
+            {
+                continue;
+            }
+
+            return proposer;
+        }
+
+        return null;
+    }
+
+    private static FastCasAddress[] GetHealthyAgreementProposers(
+        IReadOnlyList<FastCasAddress> proposers,
+        IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress) =>
+        [.. proposers.Where(proposer => IsHealthyProposer(proposerNodesByAddress[proposer]))];
+
+    private static bool IsHealthyProposer(FastCasSimulationNode<StringValue> proposerNode) =>
+        proposerNode.IsRunning && !proposerNode.IsSuspended;
+
+    private static TimeSpan GetExpectedAgreementOneWayLatency(
+        BenchmarkWorkloadOptions benchmarkOptions,
+        FastCasAddress client,
+        FastCasAddress proposer)
+    {
+        var sameRegionLatency = benchmarkOptions.BaseDelay + benchmarkOptions.MaxJitter;
+        var clientRegion = BenchmarkWorkloadOptions.GetTopologyOrdinalRegion(benchmarkOptions.Topology, client.Ordinal);
+        var proposerRegion = BenchmarkWorkloadOptions.GetTopologyOrdinalRegion(benchmarkOptions.Topology, proposer.Ordinal);
+        return BenchmarkWorkloadOptions.GetExpectedOneWayLatency(
+            benchmarkOptions.Topology,
+            clientRegion,
+            proposerRegion,
+            sameRegionLatency);
+    }
+
+    private static void WaitForAgreementTargetsToQuiesce(
+        FastCasSimulationCluster<StringValue> cluster,
+        IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
+        IReadOnlySet<FastCasAddress> contactedProposers,
+        int maxIterations)
+    {
+        var runningTargets = contactedProposers
+            .Where(proposer => proposerNodesByAddress.TryGetValue(proposer, out var node) && IsHealthyProposer(node))
+            .ToArray();
+        if (runningTargets.Length == 0)
+        {
+            return;
+        }
+
+        Ensure(
+            cluster.RunUntil(
+                () => runningTargets.All(target => !cluster.ProposerHasPendingClientRequests(target)),
+                maxIterations: maxIterations * runningTargets.Length),
+            $"Expected agreement targets to quiesce. {cluster.GetFailureDiagnostics(nameof(WaitForAgreementTargetsToQuiesce))}");
+    }
+
+    private static void PropagateLearnedAgreementValue(
+        FastCasSimulationCluster<StringValue> cluster,
+        SimulationRunRecorder recorder,
+        IReadOnlyList<FastCasAddress> proposers,
+        IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
+        IReadOnlySet<FastCasAddress> contactedProposers,
+        Ballot acceptedBallot,
+        StringValue committedValue)
+    {
+        foreach (var proposer in proposers)
+        {
+            if (contactedProposers.Contains(proposer))
+            {
+                continue;
+            }
+
+            if (!IsHealthyProposer(proposerNodesByAddress[proposer]))
+            {
+                continue;
+            }
+
+            cluster.LearnCommittedValue(proposer, acceptedBallot, committedValue);
+            recorder.RecordClusterTrace(
+                cluster,
+                "learn",
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"{proposer}|ballot={acceptedBallot}|{committedValue}"));
+        }
+    }
+
+    private static void RecordProposerTimingDetails(
+        SimulationRunRecorder recorder,
+        FastCasSimulationProposerTimingSnapshot timing)
+    {
+        foreach (var parameter in DescribeProposerTimingParameters(timing))
+        {
+            recorder.SetDetail($"parameter.{parameter.Key}", parameter.Value);
+        }
+    }
+
+    private static IReadOnlyList<KeyValuePair<string, string>> DescribeProposerTimingParameters(
+        FastCasSimulationProposerTimingSnapshot timing) =>
+    [
+        new("retry-backoff", timing.PolicyName),
+        new("retry-backoff-source", timing.Source),
+        new("retry-backoff-enabled", timing.RetryBackoffEnabled.ToString().ToLowerInvariant()),
+        new("retry-backoff-start-after-failures", timing.RetryStartAfterFailures.ToString(CultureInfo.InvariantCulture)),
+        new("retry-backoff-base-ms", timing.RetryBaseDelay.TotalMilliseconds.ToString("0.###", CultureInfo.InvariantCulture)),
+        new("retry-backoff-max-ms", timing.RetryMaxDelay.TotalMilliseconds.ToString("0.###", CultureInfo.InvariantCulture)),
+        new("retry-backoff-jitter-ratio", timing.RetryJitterRatio.ToString("0.###", CultureInfo.InvariantCulture)),
+        new("proposer-response-timeout-ms", timing.ResponseTimeout.TotalMilliseconds.ToString("0.###", CultureInfo.InvariantCulture)),
+        new("proposer-expected-one-way-latency-ms", timing.ExpectedOneWayLatency.TotalMilliseconds.ToString("0.###", CultureInfo.InvariantCulture)),
+        new("proposer-expected-rtt-ms", timing.ExpectedRoundTripLatency.TotalMilliseconds.ToString("0.###", CultureInfo.InvariantCulture)),
+    ];
 
     private static FastCasAddress? FindAvailableFailoverProposer(
         IReadOnlyList<FastCasAddress> proposers,
@@ -2298,17 +2766,68 @@ public static class SimulationBatchRunner
         var mode = details.TryGetValue("parameter.mode", out var m) ? m : "";
         var topology = details.TryGetValue("parameter.topology", out var t) ? t : "";
         var faultLabel = details.TryGetValue("parameter.fault-label", out var f) ? f : "";
+        var proposerCount = details.TryGetValue("parameter.proposer-count", out var proposerCountValue)
+            ? proposerCountValue
+            : "";
+        var acceptorCount = details.TryGetValue("parameter.acceptor-count", out var acceptorCountValue)
+            ? acceptorCountValue
+            : "";
+        var agreementMode = details.TryGetValue("parameter.agreement-mode", out var agreementModeValue)
+            ? agreementModeValue
+            : "";
+        var registerInitMode = details.TryGetValue("parameter.register-init-mode", out var registerInitModeValue)
+            ? registerInitModeValue
+            : "";
+        var writeIntervalMs = details.TryGetValue("parameter.write-interval-ms", out var writeIntervalMsValue)
+            ? writeIntervalMsValue
+            : "";
+        var clientTimeoutMs = details.TryGetValue("parameter.client-timeout-ms", out var clientTimeoutMsValue)
+            ? clientTimeoutMsValue
+            : "";
+        var clientMaxRetries = details.TryGetValue("parameter.client-max-retries", out var clientMaxRetriesValue)
+            ? clientMaxRetriesValue
+            : "";
+        var proposerTimingSource = details.TryGetValue("parameter.retry-backoff-source", out var proposerTimingSourceValue)
+            ? proposerTimingSourceValue
+            : "";
+        var proposerExpectedOneWayLatencyMs = details.TryGetValue("parameter.proposer-expected-one-way-latency-ms", out var proposerExpectedOneWayLatencyMsValue)
+            ? proposerExpectedOneWayLatencyMsValue
+            : "";
+        var proposerExpectedRttMs = details.TryGetValue("parameter.proposer-expected-rtt-ms", out var proposerExpectedRttMsValue)
+            ? proposerExpectedRttMsValue
+            : "";
+        var proposerRetryBackoffPolicy = details.TryGetValue("parameter.retry-backoff", out var proposerRetryBackoffPolicyValue)
+            ? proposerRetryBackoffPolicyValue
+            : "";
+        var proposerRetryBackoffEnabled = details.TryGetValue("parameter.retry-backoff-enabled", out var proposerRetryBackoffEnabledValue)
+            ? proposerRetryBackoffEnabledValue
+            : "";
+        var proposerRetryBackoffStartAfterFailures = details.TryGetValue("parameter.retry-backoff-start-after-failures", out var proposerRetryBackoffStartAfterFailuresValue)
+            ? proposerRetryBackoffStartAfterFailuresValue
+            : "";
+        var proposerRetryBackoffBaseMs = details.TryGetValue("parameter.retry-backoff-base-ms", out var proposerRetryBackoffBaseMsValue)
+            ? proposerRetryBackoffBaseMsValue
+            : "";
+        var proposerRetryBackoffMaxMs = details.TryGetValue("parameter.retry-backoff-max-ms", out var proposerRetryBackoffMaxMsValue)
+            ? proposerRetryBackoffMaxMsValue
+            : "";
+        var proposerRetryBackoffJitterRatio = details.TryGetValue("parameter.retry-backoff-jitter-ratio", out var proposerRetryBackoffJitterRatioValue)
+            ? proposerRetryBackoffJitterRatioValue
+            : "";
+        var proposerResponseTimeoutMs = details.TryGetValue("parameter.proposer-response-timeout-ms", out var proposerResponseTimeoutMsValue)
+            ? proposerResponseTimeoutMsValue
+            : "";
 
         var lines = new List<string>(samples.Count + 1)
         {
-            "request_id,proposer,kind,sent_ms,completed_ms,latency_ms,round_trips,mode,topology,fault_label,failover_count",
+            "request_id,proposer,kind,sent_ms,completed_ms,latency_ms,round_trips,mode,topology,fault_label,failover_count,proposer_count,acceptor_count,agreement_mode,register_init_mode,write_interval_ms,client_timeout_ms,client_max_retries,proposer_timing_source,proposer_expected_one_way_latency_ms,proposer_expected_rtt_ms,proposer_retry_backoff_policy,proposer_retry_backoff_enabled,proposer_retry_backoff_start_after_failures,proposer_retry_backoff_base_ms,proposer_retry_backoff_max_ms,proposer_retry_backoff_jitter_ratio,proposer_response_timeout_ms",
         };
 
         foreach (var sample in samples)
         {
             lines.Add(string.Create(
                 CultureInfo.InvariantCulture,
-                $"{sample.RequestId},{sample.Proposer},{sample.Kind},{sample.SentMs:F4},{sample.CompletedMs:F4},{sample.LatencyMs:F4},{sample.RoundTrips},{mode},{topology},{faultLabel},{sample.FailoverCount}"));
+                $"{sample.RequestId},{sample.Proposer},{sample.Kind},{sample.SentMs:F4},{sample.CompletedMs:F4},{sample.LatencyMs:F4},{sample.RoundTrips},{mode},{topology},{faultLabel},{sample.FailoverCount},{proposerCount},{acceptorCount},{agreementMode},{registerInitMode},{writeIntervalMs},{clientTimeoutMs},{clientMaxRetries},{proposerTimingSource},{proposerExpectedOneWayLatencyMs},{proposerExpectedRttMs},{proposerRetryBackoffPolicy},{proposerRetryBackoffEnabled},{proposerRetryBackoffStartAfterFailures},{proposerRetryBackoffBaseMs},{proposerRetryBackoffMaxMs},{proposerRetryBackoffJitterRatio},{proposerResponseTimeoutMs}"));
         }
 
         await File.WriteAllLinesAsync(path, lines, cancellationToken);

@@ -524,11 +524,12 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
                     Assert.Equal("true", run.Details["parameter.fast"]);
                     Assert.Equal("true", run.Details["parameter.leader"]);
                     Assert.Equal(
-                        "exponential-deterministic-jitter",
+                        "exponential-proportional-jitter",
                         run.Details["parameter.retry-backoff"]);
                     Assert.Equal(
-                        "2",
+                        "0",
                         run.Details["parameter.retry-backoff-start-after-failures"]);
+                    Assert.Equal("0.5", run.Details["parameter.retry-backoff-jitter-ratio"]);
                     Assert.True(run.CreateStatisticsSummary().WriteAcceptorRoundTripsRecorded > 0);
                 });
         }
@@ -565,11 +566,12 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
             var run = Assert.Single(batchResult.Runs);
             Assert.True(run.Success);
             Assert.Equal(
-                "exponential-deterministic-jitter",
+                "exponential-proportional-jitter",
                 run.Details["parameter.retry-backoff"]);
             Assert.Equal(
-                "2",
+                "0",
                 run.Details["parameter.retry-backoff-start-after-failures"]);
+            Assert.Equal("0.5", run.Details["parameter.retry-backoff-jitter-ratio"]);
             Assert.True(run.CreateStatisticsSummary().WriteAcceptorRoundTripsMax >= 4);
         }
         finally

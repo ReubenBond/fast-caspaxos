@@ -4,6 +4,8 @@ param(
     [string]$Output = "artifacts\comparative",
     [string[]]$Scenario = @("all"),
     [int]$ProposalCount = 500,
+    [ValidateRange(5, [int]::MaxValue)]
+    [int]$AcceptorCount = 5,
     [switch]$ContinueOnFailure,
     [switch]$DryRun,
     [switch]$SkipCharts,
@@ -34,13 +36,13 @@ function Get-TopologyParams {
         # effects — fast saves exactly 1 RTT of ~85ms vs classic's 2 RTTs. This is the clearest
         # topology for demonstrating the 1-vs-2 RTT advantage.
         "symmetric40"    { return @("link-latency-profile=lan", "base-delay-ms=40", "max-jitter-ms=5") }
-        # US cross-region: US-East (P1-2, A1-3) + US-West (P3, A4-5), 15ms cross-region.
-        # Classic quorum (3/5) fits entirely in US-East → ~1ms. Fast quorum (4/5) needs
-        # cross-region → ~30ms. Shows the quorum-size cost of fast mode.
-        "uscrossregion"  { return @("link-latency-profile=uscrossregion",  "base-delay-ms=1", "max-jitter-ms=1") }
-        # 3-region geo: US-East (P1, A1-2), EU-West (P2, A3-4), AP-SE (P3, A5).
-        # Both quorums need EU acceptors → same ~85ms bottleneck. Fast saves 1 RTT = ~85ms.
-        "geo3region"     { return @("link-latency-profile=geo3region",     "base-delay-ms=1", "max-jitter-ms=1") }
+        # 3-region US: East US 2 / West US / West US 3 with Azure-backed RTTs of 20-66ms.
+        "us3region"      { return @("link-latency-profile=us3region",      "base-delay-ms=1", "max-jitter-ms=1") }
+        "uscrossregion"  { return @("link-latency-profile=us3region",      "base-delay-ms=1", "max-jitter-ms=1") }
+        # 5-region GEO: East US 2 / France Central / Southeast Asia / Brazil South / Australia Southeast.
+        # Cross-region RTTs now span 85-332ms using the Azure P50 medians for that region set.
+        "geo5region"     { return @("link-latency-profile=geo5region",     "base-delay-ms=1", "max-jitter-ms=1") }
+        "geo3region"     { return @("link-latency-profile=geo5region",     "base-delay-ms=1", "max-jitter-ms=1") }
         default          { throw "Unknown topology: $topology" }
     }
 }
@@ -81,7 +83,7 @@ $scenarios = [ordered]@{
         Combinations = @()
     }
     "S2-agreement-consensus" = @{
-        Description  = "Almost-everywhere agreement: concurrent proposers propose the same value, fast rounds succeed without conflict."
+        Description  = "Everywhere agreement: geo-aware clients and proposers converge on the same next value, so fast rounds avoid conflict."
         Combinations = @()
     }
     "S3-register-init-burst" = @{
@@ -112,14 +114,14 @@ $scenarios = [ordered]@{
 
 # --- S1: geo-low-contention ---
 # Primary showcase: symmetric40 (all links equal, 1-vs-2 RTT is the only signal).
-# Also LAN (small absolute difference) and geo3region (real-world asymmetric).
-foreach ($topo in @("symmetric40", "lan", "geo3region")) {
+# Also LAN (small absolute difference) and geo5region (real-world asymmetric).
+foreach ($topo in @("symmetric40", "lan", "geo5region")) {
     foreach ($mode in $allModes) {
         $modeParams = Get-ModeParams $mode
         $topoParams = Get-TopologyParams $topo
         $params = $modeParams + $topoParams + @(
             "proposer-count=1",
-            "acceptor-count=5",
+            "acceptor-count=$AcceptorCount",
             "proposal-count=1000"
         )
         $scenarios["S1-geo-low-contention"].Combinations += New-Combination `
@@ -130,7 +132,7 @@ foreach ($topo in @("symmetric40", "lan", "geo3region")) {
 }
 
 # --- S2: agreement-consensus ---
-# Symmetric40 shows the RTT advantage clearly; agreement=true vs false shows value-agreement effect.
+# Symmetric40 shows the RTT advantage clearly; agreement=true vs false shows everywhere-agreement routing and learning.
 foreach ($pCount in @(3, 5)) {
     foreach ($mode in $allModes) {
         foreach ($agreement in @("true", "false")) {
@@ -138,7 +140,7 @@ foreach ($pCount in @(3, 5)) {
             $topoParams = Get-TopologyParams "symmetric40"
             $params = $modeParams + $topoParams + @(
                 "proposer-count=$pCount",
-                "acceptor-count=5",
+                "acceptor-count=$AcceptorCount",
                 "proposal-count=1000",
                 "agreement-mode=$agreement"
             )
@@ -160,7 +162,7 @@ foreach ($topo in @("symmetric40", "lan")) {
             $topoParams = Get-TopologyParams $topo
             $params = $modeParams + $topoParams + @(
                 "proposer-count=$pCount",
-                "acceptor-count=5",
+                "acceptor-count=$AcceptorCount",
                 "proposal-count=200",
                 "register-init-mode=true"
             )
@@ -180,7 +182,7 @@ foreach ($interval in @(0, 10, 50, 200)) {
         $topoParams = Get-TopologyParams "symmetric40"
         $params = $modeParams + $topoParams + @(
             "proposer-count=3",
-            "acceptor-count=5",
+            "acceptor-count=$AcceptorCount",
             "proposal-count=100",
             "write-interval-ms=$interval"
         )
@@ -200,7 +202,7 @@ foreach ($topo in @("lan", "symmetric40")) {
         $topoParams = Get-TopologyParams $topo
         $params = $modeParams + $topoParams + @(
             "proposer-count=1",
-            "acceptor-count=5",
+            "acceptor-count=$AcceptorCount",
             "proposal-count=2000"
         )
         $scenarios["S5-high-throughput-stream"].Combinations += New-Combination `
@@ -218,7 +220,7 @@ foreach ($pCount in @(1, 2, 3, 5, 7)) {
         $topoParams = Get-TopologyParams "symmetric40"
         $params = $modeParams + $topoParams + @(
             "proposer-count=$pCount",
-            "acceptor-count=5",
+            "acceptor-count=$AcceptorCount",
             "proposal-count=$ProposalCount"
         )
         $scenarios["S6-contention-spectrum"].Combinations += New-Combination `
@@ -237,7 +239,7 @@ foreach ($mode in @("fast", "leader")) {
     $topoParams = Get-TopologyParams "symmetric40"
     $params = $modeParams + $topoParams + @(
         "proposer-count=3",
-        "acceptor-count=5",
+        "acceptor-count=$AcceptorCount",
         "proposal-count=600",
         "fault-schedule=$grayFault"
     )
@@ -258,7 +260,7 @@ foreach ($mode in @("fast", "leader")) {
     $topoParams = Get-TopologyParams "symmetric40"
     $params = $modeParams + $topoParams + @(
         "proposer-count=3",
-        "acceptor-count=5",
+        "acceptor-count=$AcceptorCount",
         "proposal-count=90",
         "fault-schedule=$crashFault",
         "client-timeout-ms=300",
@@ -300,6 +302,7 @@ Write-Host "Rounds per combination: $Rounds (for statistical averaging)"
 Write-Host "Base seed:              $BaseSeed"
 Write-Host "Output:                 $Output"
 Write-Host "Scenarios:              $($selectedScenarios -join ', ')"
+Write-Host "Acceptors per scenario: $AcceptorCount"
 Write-Host "Total combinations:     $totalCombinations"
 Write-Host ""
 
@@ -386,6 +389,7 @@ foreach ($scenarioName in $selectedScenarios) {
             Params        = ($combo.Params -join "; ")
             Rounds        = $Rounds
             BaseSeed      = $BaseSeed
+            AcceptorCount = $AcceptorCount
         }
     }
 }

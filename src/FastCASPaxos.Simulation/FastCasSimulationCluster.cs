@@ -21,7 +21,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
     where TValue : Contracts.IVersionedValue<TValue>
 {
     private readonly Dictionary<int, RoutedProposeResponse<TValue, FastCasAddress>> _clientResponses = [];
-    private readonly Dictionary<FastCasAddress, int> _pendingProposerRequests = [];
+    private readonly HashSet<FastCasAddress> _clientAddresses = [];
     private readonly List<FastCasSimulationNode<TValue>> _proposerNodes = [];
     private readonly List<FastCasSimulationNode<TValue>> _acceptorNodes = [];
     private readonly List<string> _faultHistory = [];
@@ -44,12 +44,9 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         }
 
         ClientAddress = FastCasAddress.Client();
-
-        Transport.RegisterEndpoint(new FastCasTransportEndpointRegistration<TValue>(
-            ClientAddress,
-            TaskQueue,
-            OnClientMessage));
+        RegisterClientEndpoint(ClientAddress);
         AcceptorSafetyMonitor = new FastCasAcceptorSafetyMonitor<TValue>();
+        RefreshLatencyAwareProposerTiming();
     }
 
     public FastCasSimulationOptions Options { get; }
@@ -61,6 +58,8 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
     public FastCasAcceptorSafetyMonitor<TValue> AcceptorSafetyMonitor { get; }
 
     public FastCasAddress ClientAddress { get; }
+
+    public IReadOnlyCollection<FastCasAddress> ClientAddresses => _clientAddresses;
 
     public IReadOnlyDictionary<int, RoutedProposeResponse<TValue, FastCasAddress>> ClientResponses => _clientResponses;
 
@@ -148,6 +147,14 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         }
     }
 
+    public FastCasAddress RegisterClient(int ordinal)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(ordinal, 0);
+        var address = FastCasAddress.Client(ordinal);
+        RegisterClientEndpoint(address);
+        return address;
+    }
+
     /// <summary>
     /// Sends a client proposal into the simulated cluster without waiting for completion.
     /// </summary>
@@ -170,7 +177,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
 
         var effectiveCaller = caller ?? routedCaller ?? ClientAddress;
         var effectiveRequestId = requestId ?? ++_nextClientRequestId;
-        _pendingProposerRequests[proposer] = effectiveRequestId;
+        EnsureClientEndpointRegistered(effectiveCaller);
         _clientResponses.Remove(effectiveRequestId);
         Options.HistoryObserver?.OnProposalSent(
             TimeProvider.GetUtcNow(),
@@ -180,10 +187,24 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         _ = Transport.Send(new FastCasProposeRequestMessage<TValue>(
             effectiveCaller,
             proposer,
+            effectiveRequestId,
             operation));
 
         return effectiveRequestId;
     }
+
+    public Ballot GetProposerBallot(FastCasAddress proposer) => GetProposerHost(proposer).Ballot;
+
+    public bool ProposerHasPendingClientRequests(FastCasAddress proposer) =>
+        GetProposerHost(proposer).HasPendingClientRequests;
+
+    public void LearnCommittedValue(FastCasAddress proposer, Ballot acceptedBallot, TValue value) =>
+        GetProposerHost(proposer).LearnCommittedValue(acceptedBallot, value);
+
+    public bool TryGetRoutedResponse(
+        int requestId,
+        out RoutedProposeResponse<TValue, FastCasAddress> response) =>
+        _clientResponses.TryGetValue(requestId, out response);
 
     public bool TryGetResponse(int requestId, out ProposeResponse<TValue> response)
     {
@@ -216,6 +237,78 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
     }
 
     public string GetReproductionHint(string scenarioName) => $"{scenarioName} (seed: {Seed})";
+
+    protected override ValueTask DisposeAsyncCore()
+    {
+        foreach (var node in Nodes)
+        {
+            node.Unregister();
+        }
+
+        foreach (var clientAddress in _clientAddresses)
+        {
+            _ = Transport.UnregisterEndpoint(clientAddress);
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
+    private void OnClientMessage(IFastCasTransportMessage<TValue> message)
+    {
+        switch (message)
+        {
+            case FastCasProposeResponseMessage<TValue> proposeResponse:
+                if (_clientResponses.ContainsKey(proposeResponse.RequestId))
+                {
+                    break;
+                }
+
+                _clientResponses[proposeResponse.RequestId] = new RoutedProposeResponse<TValue, FastCasAddress>(
+                    proposeResponse.From,
+                    proposeResponse.Payload);
+                Options.HistoryObserver?.OnProposalCompleted(
+                    TimeProvider.GetUtcNow(),
+                    proposeResponse.From,
+                    proposeResponse.RequestId,
+                    proposeResponse.Payload);
+                break;
+            default:
+                throw new InvalidOperationException($"Unexpected client-directed simulation message type '{message.GetType().Name}'.");
+        }
+    }
+
+    private void RegisterClientEndpoint(FastCasAddress address)
+    {
+        if (address.Role != FastCasParticipantRole.Client)
+        {
+            throw new ArgumentException($"Address '{address}' is not a client endpoint.", nameof(address));
+        }
+
+        if (!_clientAddresses.Add(address))
+        {
+            return;
+        }
+
+        Transport.RegisterEndpoint(new FastCasTransportEndpointRegistration<TValue>(
+            address,
+            TaskQueue,
+            OnClientMessage));
+    }
+
+    private void EnsureClientEndpointRegistered(FastCasAddress address)
+    {
+        if (address.Role == FastCasParticipantRole.Client)
+        {
+            RegisterClientEndpoint(address);
+        }
+    }
+
+    private FastCasProposerHost<TValue> GetProposerHost(FastCasAddress proposer)
+    {
+        var node = GetNode(proposer);
+        return node.Host as FastCasProposerHost<TValue>
+            ?? throw new InvalidOperationException($"Expected proposer host type for '{proposer}'.");
+    }
 
     /// <summary>
     /// Describes the current simulated cluster state, including reachability, queued work, node-local state, and recent faults.
@@ -399,6 +492,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         Network.EnableDelays = baseDelay > TimeSpan.Zero || maxJitter > TimeSpan.Zero;
         Network.BaseMessageDelay = baseDelay;
         Network.MaxJitter = maxJitter;
+        RefreshLatencyAwareProposerTiming();
         RecordFault($"delays base={baseDelay} jitter={maxJitter}");
     }
 
@@ -406,6 +500,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
     {
         Network.EnableDelays = true;
         Network.SetLinkLatency(source.NetworkAddress, target.NetworkAddress, baseDelay, maxJitter);
+        RefreshLatencyAwareProposerTiming();
         RecordFault($"link-latency {source} -> {target} base={baseDelay} jitter={maxJitter}");
     }
 
@@ -413,6 +508,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
     {
         Network.EnableDelays = true;
         Network.SetBidirectionalLinkLatency(node1.NetworkAddress, node2.NetworkAddress, baseDelay, maxJitter);
+        RefreshLatencyAwareProposerTiming();
         RecordFault($"link-latency {node1} <-> {node2} base={baseDelay} jitter={maxJitter}");
     }
 
@@ -420,12 +516,32 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
     {
         Network.ClearLinkLatency(node1.NetworkAddress, node2.NetworkAddress);
         Network.ClearLinkLatency(node2.NetworkAddress, node1.NetworkAddress);
+        RefreshLatencyAwareProposerTiming();
     }
 
     public void ClearLinkLatencies()
     {
         Network.ClearAllLinkLatencies();
+        RefreshLatencyAwareProposerTiming();
         RecordFault("link-latencies cleared");
+    }
+
+    private void RefreshLatencyAwareProposerTiming()
+    {
+        var expectedOneWayLatency = Network.EnableDelays
+            ? Network.BaseMessageDelay + Network.MaxJitter
+            : TimeSpan.Zero;
+
+        foreach (var latency in Network.GetAllLinkLatencies().Values)
+        {
+            var candidate = latency.BaseDelay + latency.MaxJitter;
+            if (candidate > expectedOneWayLatency)
+            {
+                expectedOneWayLatency = candidate;
+            }
+        }
+
+        Options.ApplyLatencyAwareProposerTiming(expectedOneWayLatency);
     }
 
     public void CrashNode(FastCasAddress address)
@@ -454,41 +570,6 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         var node = GetNode(address);
         node.Resume();
         RecordFault($"resume {address}");
-    }
-
-    protected override ValueTask DisposeAsyncCore()
-    {
-        foreach (var node in Nodes)
-        {
-            node.Unregister();
-        }
-
-        _ = Transport.UnregisterEndpoint(ClientAddress);
-        return ValueTask.CompletedTask;
-    }
-
-    private void OnClientMessage(IFastCasTransportMessage<TValue> message)
-    {
-        switch (message)
-        {
-            case FastCasProposeResponseMessage<TValue> proposeResponse:
-                // Map the response back to the client's requestId via the proposer address
-                var proposer = proposeResponse.From;
-                if (_pendingProposerRequests.TryGetValue(proposer, out var clientRequestId))
-                {
-                    _clientResponses[clientRequestId] = new RoutedProposeResponse<TValue, FastCasAddress>(
-                        proposer,
-                        proposeResponse.Payload);
-                    Options.HistoryObserver?.OnProposalCompleted(
-                        TimeProvider.GetUtcNow(),
-                        proposer,
-                        clientRequestId,
-                        proposeResponse.Payload);
-                }
-                break;
-            default:
-                throw new InvalidOperationException($"Unexpected client-directed simulation message type '{message.GetType().Name}'.");
-        }
     }
 
     private FastCasSimulationNode<TValue> GetNode(FastCasAddress address)

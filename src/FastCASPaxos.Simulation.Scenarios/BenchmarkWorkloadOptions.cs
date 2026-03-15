@@ -6,8 +6,8 @@ namespace FastCASPaxos.Simulation.Scenarios;
 public enum LinkLatencyProfile
 {
     Lan,
-    UsCrossRegion,
-    Geo3Region,
+    Us3Region,
+    Geo5Region,
 }
 
 public sealed record FaultScheduleEntry(
@@ -43,9 +43,15 @@ internal sealed record BenchmarkWorkloadOptions(
     bool RegisterInitMode,
     int WriteIntervalMs,
     int ClientTimeoutMs,
-    int ClientMaxRetries)
+    int ClientMaxRetries,
+    int? ProposerRetryStartAfterFailuresOverride,
+    TimeSpan? ProposerRetryBaseDelayOverride,
+    TimeSpan? ProposerRetryMaxDelayOverride,
+    double? ProposerRetryJitterRatioOverride,
+    TimeSpan? ProposerResponseTimeoutOverride)
 {
     public const string ScenarioName = "benchmark-workload";
+    public const int MinimumAcceptorCount = 5;
 
     private static readonly HashSet<string> AllowedParameters =
     [
@@ -63,6 +69,11 @@ internal sealed record BenchmarkWorkloadOptions(
         "write-interval-ms",
         "client-timeout-ms",
         "client-max-retries",
+        "proposer-retry-start-after-failures",
+        "proposer-retry-base-ms",
+        "proposer-retry-max-ms",
+        "proposer-retry-jitter-ratio",
+        "proposer-response-timeout-ms",
     ];
 
     public string ModeName =>
@@ -86,13 +97,23 @@ internal sealed record BenchmarkWorkloadOptions(
         ValidateKnownParameters(parameters);
 
         var proposerCount = GetPositiveInt(parameters, "proposer-count", defaultValue: 3);
-        var acceptorCount = GetPositiveInt(parameters, "acceptor-count", defaultValue: 5);
+        var acceptorCount = GetPositiveInt(
+            parameters,
+            "acceptor-count",
+            defaultValue: MinimumAcceptorCount);
+        if (acceptorCount < MinimumAcceptorCount)
+        {
+            throw new ArgumentOutOfRangeException(
+                "acceptor-count",
+                acceptorCount,
+                $"benchmark-workload requires at least {MinimumAcceptorCount} acceptors.");
+        }
         var proposalCount = GetPositiveInt(parameters, "proposal-count", defaultValue: 1000);
         var enableFastCommit = GetBool(parameters, "fast", defaultValue: false);
         var enableDistinguishedLeader = GetBool(parameters, "leader", defaultValue: false);
         var baseDelayMs = GetDouble(parameters, "base-delay-ms", defaultValue: 1, minValue: 0, maxValue: 10000);
         var maxJitterMs = GetDouble(parameters, "max-jitter-ms", defaultValue: 1, minValue: 0, maxValue: 10000);
-        var topology = GetEnum<LinkLatencyProfile>(parameters, "link-latency-profile", defaultValue: LinkLatencyProfile.Lan);
+        var topology = GetTopology(parameters, "link-latency-profile", defaultValue: LinkLatencyProfile.Lan);
         var faultSchedule = ParseFaultSchedule(
             parameters.TryGetValue("fault-schedule", out var fs) ? fs : string.Empty);
         var agreementMode = GetBool(parameters, "agreement-mode", defaultValue: false);
@@ -100,6 +121,29 @@ internal sealed record BenchmarkWorkloadOptions(
         var writeIntervalMs = GetPositiveIntOrZero(parameters, "write-interval-ms", defaultValue: 0);
         var clientTimeoutMs = GetPositiveIntOrZero(parameters, "client-timeout-ms", defaultValue: 0);
         var clientMaxRetries = GetPositiveIntOrZero(parameters, "client-max-retries", defaultValue: 2);
+        var proposerRetryStartAfterFailuresOverride = GetOptionalPositiveIntOrZero(
+            parameters,
+            "proposer-retry-start-after-failures");
+        var proposerRetryBaseDelayOverride = GetOptionalMilliseconds(
+            parameters,
+            "proposer-retry-base-ms",
+            minValue: 0,
+            maxValue: 100000);
+        var proposerRetryMaxDelayOverride = GetOptionalMilliseconds(
+            parameters,
+            "proposer-retry-max-ms",
+            minValue: 0,
+            maxValue: 100000);
+        var proposerRetryJitterRatioOverride = GetOptionalDouble(
+            parameters,
+            "proposer-retry-jitter-ratio",
+            minValue: 0,
+            maxValue: 1);
+        var proposerResponseTimeoutOverride = GetOptionalMilliseconds(
+            parameters,
+            "proposer-response-timeout-ms",
+            minValue: 0,
+            maxValue: 100000);
 
         return new(
             proposerCount,
@@ -115,7 +159,12 @@ internal sealed record BenchmarkWorkloadOptions(
             registerInitMode,
             writeIntervalMs,
             clientTimeoutMs,
-            clientMaxRetries);
+            clientMaxRetries,
+            proposerRetryStartAfterFailuresOverride,
+            proposerRetryBaseDelayOverride,
+            proposerRetryMaxDelayOverride,
+            proposerRetryJitterRatioOverride,
+            proposerResponseTimeoutOverride);
     }
 
     public IReadOnlyList<KeyValuePair<string, string>> DescribeParameters() =>
@@ -134,10 +183,47 @@ internal sealed record BenchmarkWorkloadOptions(
         new("write-interval-ms", WriteIntervalMs.ToString(CultureInfo.InvariantCulture)),
         new("client-timeout-ms", ClientTimeoutMs.ToString(CultureInfo.InvariantCulture)),
         new("client-max-retries", ClientMaxRetries.ToString(CultureInfo.InvariantCulture)),
+        new("proposer-retry-start-after-failures", FormatOptionalInt(ProposerRetryStartAfterFailuresOverride)),
+        new("proposer-retry-base-ms", FormatOptionalMilliseconds(ProposerRetryBaseDelayOverride)),
+        new("proposer-retry-max-ms", FormatOptionalMilliseconds(ProposerRetryMaxDelayOverride)),
+        new("proposer-retry-jitter-ratio", FormatOptionalDouble(ProposerRetryJitterRatioOverride)),
+        new("proposer-response-timeout-ms", FormatOptionalMilliseconds(ProposerResponseTimeoutOverride)),
         new("mode", ModeName),
         new("topology", Topology.ToString().ToLowerInvariant()),
         new("fault-label", FaultLabel),
     ];
+
+    internal int GetAgreementClientCount() => Math.Max(ProposerCount, GetTopologyRegionCount(Topology));
+
+    public void ApplyProposerTimingOverrides(FastCasSimulationOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        var hasRetryBackoffOverride =
+            ProposerRetryStartAfterFailuresOverride is not null
+            || ProposerRetryBaseDelayOverride is not null
+            || ProposerRetryMaxDelayOverride is not null
+            || ProposerRetryJitterRatioOverride is not null;
+        if (hasRetryBackoffOverride)
+        {
+            var current = options.ProposerRetryBackoff;
+            var retryBackoff = new FastCasSimulationProposerRetryBackoffOptions
+            {
+                Enabled = current.Enabled,
+                StartAfterFailures = ProposerRetryStartAfterFailuresOverride ?? current.StartAfterFailures,
+                BaseDelay = ProposerRetryBaseDelayOverride ?? current.BaseDelay,
+                MaxDelay = ProposerRetryMaxDelayOverride ?? current.MaxDelay,
+                JitterRatio = ProposerRetryJitterRatioOverride ?? current.JitterRatio,
+            };
+            retryBackoff.Validate();
+            options.ProposerRetryBackoff = retryBackoff;
+        }
+
+        if (ProposerResponseTimeoutOverride is { } timeout)
+        {
+            options.ProposerResponseTimeout = timeout;
+        }
+    }
 
     public void ApplyTopology<TValue>(FastCasSimulationCluster<TValue> cluster)
         where TValue : FastCASPaxos.Simulation.Contracts.IVersionedValue<TValue>
@@ -149,12 +235,12 @@ internal sealed record BenchmarkWorkloadOptions(
             case LinkLatencyProfile.Lan:
                 break;
 
-            case LinkLatencyProfile.UsCrossRegion:
-                ApplyUsCrossRegionTopology(cluster);
+            case LinkLatencyProfile.Us3Region:
+                ApplyUs3RegionTopology(cluster);
                 break;
 
-            case LinkLatencyProfile.Geo3Region:
-                ApplyGeo3RegionTopology(cluster);
+            case LinkLatencyProfile.Geo5Region:
+                ApplyGeo5RegionTopology(cluster);
                 break;
 
             default:
@@ -163,98 +249,164 @@ internal sealed record BenchmarkWorkloadOptions(
     }
 
     /// <summary>
-    /// US-East + US-West: proposers 1-2 and acceptors 1-3 in US-East, proposer 3 and acceptors 4-5 in US-West.
-    /// Cross-region links: base=15ms, jitter=5ms (~30ms RTT).
+    /// 3-region US topology: East US 2 (region 0), West US (region 1), West US 3 (region 2).
+    /// Cross-region RTTs: East US 2↔West US = 66ms, East US 2↔West US 3 = 53ms, West US↔West US 3 = 20ms.
     /// </summary>
-    private static void ApplyUsCrossRegionTopology<TValue>(FastCasSimulationCluster<TValue> cluster)
+    private static void ApplyUs3RegionTopology<TValue>(FastCasSimulationCluster<TValue> cluster)
         where TValue : FastCASPaxos.Simulation.Contracts.IVersionedValue<TValue>
     {
-        var crossDelay = TimeSpan.FromMilliseconds(15);
-        var crossJitter = TimeSpan.FromMilliseconds(5);
-
-        var usEast = new List<FastCasAddress>();
-        var usWest = new List<FastCasAddress>();
-
-        // Proposers: 1-2 East, 3+ West
-        foreach (var p in cluster.ProposerNodes)
-        {
-            if (p.Host.Address.Ordinal <= 2)
-                usEast.Add(p.Host.Address);
-            else
-                usWest.Add(p.Host.Address);
-        }
-
-        // Acceptors: 1-3 East, 4+ West
-        foreach (var a in cluster.AcceptorNodes)
-        {
-            if (a.Host.Address.Ordinal <= 3)
-                usEast.Add(a.Host.Address);
-            else
-                usWest.Add(a.Host.Address);
-        }
-
-        // Also include the client address in East
-        usEast.Add(cluster.ClientAddress);
-
-        foreach (var east in usEast)
-        {
-            foreach (var west in usWest)
-            {
-                cluster.ConfigureBidirectionalLinkLatency(east, west, crossDelay, crossJitter);
-            }
-        }
+        var regions = CreateTopologyRegions(cluster, LinkLatencyProfile.Us3Region);
+        ApplyCrossRegionLatency(cluster, regions[0], regions[1], medianRttMs: 66);
+        ApplyCrossRegionLatency(cluster, regions[0], regions[2], medianRttMs: 53);
+        ApplyCrossRegionLatency(cluster, regions[1], regions[2], medianRttMs: 20);
     }
 
     /// <summary>
-    /// 3-region: US-East (P1+A1-2), EU-West (P2+A3-4), AP-Southeast (P3+A5).
-    /// US↔EU: 40ms+5ms, US↔AP: 80ms+10ms, EU↔AP: 60ms+8ms.
+    /// 5-region GEO topology: East US 2, France Central, Southeast Asia, Brazil South, Australia Southeast.
+    /// Cross-region RTTs follow the confirmed Azure P50 medians for the chosen region set.
     /// </summary>
-    private static void ApplyGeo3RegionTopology<TValue>(FastCasSimulationCluster<TValue> cluster)
+    private static void ApplyGeo5RegionTopology<TValue>(FastCasSimulationCluster<TValue> cluster)
         where TValue : FastCASPaxos.Simulation.Contracts.IVersionedValue<TValue>
     {
-        var usNodes = new List<FastCasAddress> { cluster.ClientAddress };
-        var euNodes = new List<FastCasAddress>();
-        var apNodes = new List<FastCasAddress>();
-
-        foreach (var p in cluster.ProposerNodes)
-        {
-            var region = GetRegion(p.Host.Address.Ordinal, 3);
-            GetRegionList(region, usNodes, euNodes, apNodes).Add(p.Host.Address);
-        }
-
-        foreach (var a in cluster.AcceptorNodes)
-        {
-            var region = GetAcceptorRegion(a.Host.Address.Ordinal);
-            GetRegionList(region, usNodes, euNodes, apNodes).Add(a.Host.Address);
-        }
-
-        ApplyCrossRegionLatency(cluster, usNodes, euNodes, TimeSpan.FromMilliseconds(40), TimeSpan.FromMilliseconds(5));
-        ApplyCrossRegionLatency(cluster, usNodes, apNodes, TimeSpan.FromMilliseconds(80), TimeSpan.FromMilliseconds(10));
-        ApplyCrossRegionLatency(cluster, euNodes, apNodes, TimeSpan.FromMilliseconds(60), TimeSpan.FromMilliseconds(8));
+        var regions = CreateTopologyRegions(cluster, LinkLatencyProfile.Geo5Region);
+        ApplyCrossRegionLatency(cluster, regions[0], regions[1], medianRttMs: 85);
+        ApplyCrossRegionLatency(cluster, regions[0], regions[2], medianRttMs: 228);
+        ApplyCrossRegionLatency(cluster, regions[0], regions[3], medianRttMs: 116);
+        ApplyCrossRegionLatency(cluster, regions[0], regions[4], medianRttMs: 204);
+        ApplyCrossRegionLatency(cluster, regions[1], regions[2], medianRttMs: 148);
+        ApplyCrossRegionLatency(cluster, regions[1], regions[3], medianRttMs: 190);
+        ApplyCrossRegionLatency(cluster, regions[1], regions[4], medianRttMs: 236);
+        ApplyCrossRegionLatency(cluster, regions[2], regions[3], medianRttMs: 332);
+        ApplyCrossRegionLatency(cluster, regions[2], regions[4], medianRttMs: 88);
+        ApplyCrossRegionLatency(cluster, regions[3], regions[4], medianRttMs: 311);
     }
 
     private static int GetRegion(int ordinal, int regionCount) =>
         ((ordinal - 1) % regionCount);
 
-    private static int GetAcceptorRegion(int ordinal) =>
-        ordinal switch
+    internal static int GetClientRegion(int ordinal, int regionCount) =>
+        ordinal <= 0
+            ? 0
+            : GetRegion(ordinal, regionCount);
+
+    internal static int GetTopologyRegionCount(LinkLatencyProfile topology) =>
+        topology switch
         {
-            <= 2 => 0, // US-East
-            <= 4 => 1, // EU-West
-            _ => 2,    // AP-Southeast
+            LinkLatencyProfile.Lan => 1,
+            LinkLatencyProfile.Us3Region => 3,
+            LinkLatencyProfile.Geo5Region => 5,
+            _ => throw new ArgumentOutOfRangeException(nameof(topology), topology, null),
         };
 
-    private static List<FastCasAddress> GetRegionList(
-        int region,
-        List<FastCasAddress> us,
-        List<FastCasAddress> eu,
-        List<FastCasAddress> ap) =>
-        region switch
+    internal static int GetTopologyOrdinalRegion(LinkLatencyProfile topology, int ordinal) =>
+        topology switch
         {
-            0 => us,
-            1 => eu,
-            _ => ap,
+            LinkLatencyProfile.Lan => 0,
+            LinkLatencyProfile.Us3Region => GetClientRegion(ordinal, 3),
+            LinkLatencyProfile.Geo5Region => GetClientRegion(ordinal, 5),
+            _ => throw new ArgumentOutOfRangeException(nameof(topology), topology, null),
         };
+
+    internal static TimeSpan GetExpectedOneWayLatency(
+        LinkLatencyProfile topology,
+        int sourceRegion,
+        int targetRegion,
+        TimeSpan sameRegionLatency)
+    {
+        if (topology == LinkLatencyProfile.Lan || sourceRegion == targetRegion)
+        {
+            return sameRegionLatency;
+        }
+
+        var latency = GetCrossRegionLatency(topology, sourceRegion, targetRegion);
+        return latency.BaseDelay + latency.MaxJitter;
+    }
+
+    private static List<FastCasAddress>[] CreateTopologyRegions<TValue>(
+        FastCasSimulationCluster<TValue> cluster,
+        LinkLatencyProfile topology)
+        where TValue : FastCASPaxos.Simulation.Contracts.IVersionedValue<TValue>
+    {
+        var regions = new List<FastCasAddress>[GetTopologyRegionCount(topology)];
+        for (var index = 0; index < regions.Length; index++)
+        {
+            regions[index] = [];
+        }
+
+        foreach (var client in cluster.ClientAddresses)
+        {
+            regions[GetTopologyOrdinalRegion(topology, client.Ordinal)].Add(client);
+        }
+
+        foreach (var proposer in cluster.ProposerNodes)
+        {
+            regions[GetTopologyOrdinalRegion(topology, proposer.Host.Address.Ordinal)].Add(proposer.Host.Address);
+        }
+
+        foreach (var acceptor in cluster.AcceptorNodes)
+        {
+            regions[GetTopologyOrdinalRegion(topology, acceptor.Host.Address.Ordinal)].Add(acceptor.Host.Address);
+        }
+
+        return regions;
+    }
+
+    private static (TimeSpan BaseDelay, TimeSpan MaxJitter) GetCrossRegionLatency(
+        LinkLatencyProfile topology,
+        int region1,
+        int region2)
+    {
+        var normalizedPair = region1 <= region2 ? (region1, region2) : (region2, region1);
+        return topology switch
+        {
+            LinkLatencyProfile.Us3Region => normalizedPair switch
+            {
+                (0, 1) => CreateLatencyFromMedianRtt(66),
+                (0, 2) => CreateLatencyFromMedianRtt(53),
+                (1, 2) => CreateLatencyFromMedianRtt(20),
+                _ => throw new ArgumentOutOfRangeException(nameof(region1), $"Unsupported {topology} region pair {normalizedPair}."),
+            },
+            LinkLatencyProfile.Geo5Region => normalizedPair switch
+            {
+                (0, 1) => CreateLatencyFromMedianRtt(85),
+                (0, 2) => CreateLatencyFromMedianRtt(228),
+                (0, 3) => CreateLatencyFromMedianRtt(116),
+                (0, 4) => CreateLatencyFromMedianRtt(204),
+                (1, 2) => CreateLatencyFromMedianRtt(148),
+                (1, 3) => CreateLatencyFromMedianRtt(190),
+                (1, 4) => CreateLatencyFromMedianRtt(236),
+                (2, 3) => CreateLatencyFromMedianRtt(332),
+                (2, 4) => CreateLatencyFromMedianRtt(88),
+                (3, 4) => CreateLatencyFromMedianRtt(311),
+                _ => throw new ArgumentOutOfRangeException(nameof(region1), $"Unsupported {topology} region pair {normalizedPair}."),
+            },
+            _ => throw new ArgumentOutOfRangeException(nameof(topology), topology, null),
+        };
+    }
+
+    private static (TimeSpan BaseDelay, TimeSpan MaxJitter) CreateLatencyFromMedianRtt(int medianRttMs)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(medianRttMs, 0);
+        if (medianRttMs == 0)
+        {
+            return (TimeSpan.Zero, TimeSpan.Zero);
+        }
+
+        var jitterMs = medianRttMs > 1 && medianRttMs % 2 == 0 ? 2 : 1;
+        var baseDelayMs = (medianRttMs - jitterMs) / 2;
+        return (TimeSpan.FromMilliseconds(baseDelayMs), TimeSpan.FromMilliseconds(jitterMs));
+    }
+
+    private static void ApplyCrossRegionLatency<TValue>(
+        FastCasSimulationCluster<TValue> cluster,
+        List<FastCasAddress> region1,
+        List<FastCasAddress> region2,
+        int medianRttMs)
+        where TValue : FastCASPaxos.Simulation.Contracts.IVersionedValue<TValue>
+    {
+        var latency = CreateLatencyFromMedianRtt(medianRttMs);
+        ApplyCrossRegionLatency(cluster, region1, region2, latency.BaseDelay, latency.MaxJitter);
+    }
 
     private static void ApplyCrossRegionLatency<TValue>(
         FastCasSimulationCluster<TValue> cluster,
@@ -331,7 +483,10 @@ internal sealed record BenchmarkWorkloadOptions(
                     if (acceptorNode.Host.Address != target)
                         cluster.ConfigureBidirectionalLinkLatency(target, acceptorNode.Host.Address, slowDelay, slowJitter);
                 }
-                cluster.ConfigureBidirectionalLinkLatency(target, cluster.ClientAddress, slowDelay, slowJitter);
+                foreach (var client in cluster.ClientAddresses)
+                {
+                    cluster.ConfigureBidirectionalLinkLatency(target, client, slowDelay, slowJitter);
+                }
                 recorder.RecordFault(cluster, $"slow-link {target} delay={fault.SlowLinkDelayMs}ms jitter={fault.SlowLinkJitterMs}ms");
                 break;
         }
@@ -371,7 +526,10 @@ internal sealed record BenchmarkWorkloadOptions(
                     if (acceptorNode.Host.Address != target)
                         cluster.ClearBidirectionalLinkLatency(target, acceptorNode.Host.Address);
                 }
-                cluster.ClearBidirectionalLinkLatency(target, cluster.ClientAddress);
+                foreach (var client in cluster.ClientAddresses)
+                {
+                    cluster.ClearBidirectionalLinkLatency(target, client);
+                }
                 recorder.RecordFault(cluster, $"heal-slow-link {target}");
                 break;
         }
@@ -576,4 +734,82 @@ internal sealed record BenchmarkWorkloadOptions(
             throw new ArgumentException($"Scenario '{ScenarioName}' expects '{name}' to be one of: {string.Join(", ", Enum.GetNames<TEnum>())}.");
         return parsed;
     }
+
+    private static LinkLatencyProfile GetTopology(
+        IReadOnlyDictionary<string, string> parameters,
+        string name,
+        LinkLatencyProfile defaultValue)
+    {
+        if (!parameters.TryGetValue(name, out var value))
+        {
+            return defaultValue;
+        }
+
+        if (string.Equals(value, "uscrossregion", StringComparison.OrdinalIgnoreCase))
+        {
+            return LinkLatencyProfile.Us3Region;
+        }
+
+        if (string.Equals(value, "geo3region", StringComparison.OrdinalIgnoreCase))
+        {
+            return LinkLatencyProfile.Geo5Region;
+        }
+
+        if (!Enum.TryParse<LinkLatencyProfile>(value, ignoreCase: true, out var parsed))
+        {
+            throw new ArgumentException(
+                $"Scenario '{ScenarioName}' expects '{name}' to be one of: lan, us3region, geo5region (legacy aliases: uscrossregion, geo3region).");
+        }
+
+        return parsed;
+    }
+
+    private static int? GetOptionalPositiveIntOrZero(
+        IReadOnlyDictionary<string, string> parameters,
+        string name)
+    {
+        if (!parameters.TryGetValue(name, out var value))
+            return null;
+        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) || parsed < 0)
+            throw new ArgumentException($"Scenario '{ScenarioName}' expects '{name}' to be a non-negative integer.");
+        return parsed;
+    }
+
+    private static double? GetOptionalDouble(
+        IReadOnlyDictionary<string, string> parameters,
+        string name,
+        double minValue,
+        double maxValue)
+    {
+        if (!parameters.TryGetValue(name, out var value))
+            return null;
+        if (!double.TryParse(value, NumberStyles.Float | NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var parsed))
+            throw new ArgumentException($"Scenario '{ScenarioName}' expects '{name}' to be a floating-point value.");
+        if (parsed < minValue || parsed > maxValue)
+            throw new ArgumentException($"Scenario '{ScenarioName}' expects '{name}' between {minValue} and {maxValue}.");
+        return parsed;
+    }
+
+    private static TimeSpan? GetOptionalMilliseconds(
+        IReadOnlyDictionary<string, string> parameters,
+        string name,
+        double minValue,
+        double maxValue)
+    {
+        var value = GetOptionalDouble(parameters, name, minValue, maxValue);
+        return value is { } parsed
+            ? TimeSpan.FromMilliseconds(parsed)
+            : null;
+    }
+
+    private static string FormatOptionalInt(int? value) =>
+        value?.ToString(CultureInfo.InvariantCulture) ?? "auto";
+
+    private static string FormatOptionalDouble(double? value) =>
+        value?.ToString("0.###", CultureInfo.InvariantCulture) ?? "auto";
+
+    private static string FormatOptionalMilliseconds(TimeSpan? value) =>
+        value is { } timeSpan
+            ? timeSpan.TotalMilliseconds.ToString("0.###", CultureInfo.InvariantCulture)
+            : "auto";
 }

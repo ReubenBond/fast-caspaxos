@@ -13,6 +13,7 @@ public interface IFastCasTransportMessage<TValue>
 public sealed record FastCasProposeRequestMessage<TValue>(
     FastCasAddress From,
     FastCasAddress To,
+    int RequestId,
     IOperation<TValue> Payload)
     : IFastCasTransportMessage<TValue>;
 
@@ -55,5 +56,6 @@ public sealed record FastCasAcceptRejectedMessage<TValue>(
 public sealed record FastCasProposeResponseMessage<TValue>(
     FastCasAddress From,
     FastCasAddress To,
+    int RequestId,
     ProposeResponse<TValue> Payload)
     : IFastCasTransportMessage<TValue>;

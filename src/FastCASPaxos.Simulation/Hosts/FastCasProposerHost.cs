@@ -19,6 +19,7 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
     private readonly FastCasSimulationOptions _options;
     private HostProposerEngine _engine;
     private SimulationNodeContext? _simulationContext;
+    private int? _activeRequestId;
     private int _proposalGeneration;
     private int _prepareSendCount;
     private bool _sentAcceptBeforeFirstPrepare;
@@ -54,7 +55,13 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
 
     public bool IsRunning { get; private set; } = true;
 
+    public Ballot Ballot => _engine.Ballot;
+
     public TValue CachedValue => _engine.CachedValue;
+
+    public bool HasPendingClientRequests =>
+        _activeRequestId is not null
+        || _engine.HasPendingProposal;
 
     public void BindSimulationContext(SimulationNodeContext simulationContext)
     {
@@ -84,8 +91,7 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
         switch (message)
         {
             case FastCasProposeRequestMessage<TValue> proposeRequest:
-                StartNewProposal();
-                _engine.StartProposal(AttachCaller(proposeRequest.From, proposeRequest.Payload));
+                StartProposal(proposeRequest);
                 break;
             case FastCasPreparePromiseMessage<TValue> preparePromise:
                 _engine.HandlePreparePromised(preparePromise.Payload);
@@ -109,6 +115,7 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
     /// </summary>
     public void Crash()
     {
+        ClearPendingClientRequests();
         ResetPendingRetryState();
         IsRunning = false;
     }
@@ -118,9 +125,27 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
     /// </summary>
     public void Restart()
     {
+        ClearPendingClientRequests();
         ResetPendingRetryState();
         _engine = CreateEngine();
         IsRunning = true;
+    }
+
+    public void LearnCommittedValue(Ballot acceptedBallot, TValue value)
+    {
+        if (!IsRunning)
+        {
+            throw new InvalidOperationException(
+                $"Proposer host '{Address}' cannot learn committed state while it is not running.");
+        }
+
+        if (HasPendingClientRequests)
+        {
+            throw new InvalidOperationException(
+                $"Proposer host '{Address}' cannot learn committed state while requests are still pending.");
+        }
+
+        _engine.LearnCommittedValue(acceptedBallot, value);
     }
 
     private HostProposerEngine CreateEngine() =>
@@ -144,11 +169,28 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
         _sentAcceptBeforeFirstPrepare = false;
     }
 
+    private int ActiveRequestId =>
+        _activeRequestId
+        ?? throw new InvalidOperationException(
+            $"Proposer host '{Address}' has no active client request.");
+
     private void ResetPendingRetryState()
     {
         _proposalGeneration++;
         _prepareSendCount = 0;
         _sentAcceptBeforeFirstPrepare = false;
+    }
+
+    private void ClearPendingClientRequests()
+    {
+        _activeRequestId = null;
+    }
+
+    private void StartProposal(FastCasProposeRequestMessage<TValue> proposeRequest)
+    {
+        _activeRequestId = proposeRequest.RequestId;
+        StartNewProposal();
+        _engine.StartProposal(AttachCaller(proposeRequest.From, proposeRequest.Payload));
     }
 
     private void OnAcceptStarted()
@@ -159,7 +201,11 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
         }
     }
 
-    private void OnProposalCompleted() => ResetPendingRetryState();
+    private void OnProposalCompleted()
+    {
+        ResetPendingRetryState();
+        _activeRequestId = null;
+    }
 
     private void SendPrepare(
         HostProposerEngine engine,
@@ -313,7 +359,11 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
                     $"Proposer '{_proposer}' cannot route a completed proposal because CurrentOperation '{CurrentOperation}' does not expose a caller.");
             }
 
-            _host._transport.Send(new FastCasProposeResponseMessage<TValue>(_proposer, routedOperation.Caller, response));
+            _host._transport.Send(new FastCasProposeResponseMessage<TValue>(
+                _proposer,
+                routedOperation.Caller,
+                _host.ActiveRequestId,
+                response));
             _host.OnProposalCompleted();
         }
 

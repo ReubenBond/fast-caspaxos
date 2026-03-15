@@ -49,6 +49,8 @@ public abstract class ProposerEngine<TValue, TRoute>
 
     public bool EnableFastCommit => (_featureFlags & ProposerFeatureFlags.FastCommit) != 0;
 
+    public bool HasPendingProposal => CurrentOperation is not null;
+
     public Ballot Ballot { get; private set; }
 
     public Ballot? PreparedBallot
@@ -109,6 +111,32 @@ public abstract class ProposerEngine<TValue, TRoute>
         {
             BeginOperation();
         }
+    }
+
+    public void LearnCommittedValue(Ballot acceptedBallot, TValue value)
+    {
+        if (acceptedBallot.IsZero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(acceptedBallot),
+                acceptedBallot,
+                "A learned committed value must include a non-zero accepted ballot.");
+        }
+
+        if (CurrentOperation is not null)
+        {
+            throw new InvalidOperationException(
+                $"Proposer '{ProposerId}' cannot learn a committed value while a request is still in flight.");
+        }
+
+        ClearAcceptState();
+        PreparedBallot = null;
+        if (acceptedBallot > Ballot)
+        {
+            Ballot = acceptedBallot;
+        }
+
+        SetCachedValue(value);
     }
 
     public void HandlePreparePromised(PreparePromise<TValue, TRoute> message)
@@ -464,10 +492,7 @@ public abstract class ProposerEngine<TValue, TRoute>
         if (!EqualityComparer<TValue>.Default.Equals(value, default)
             && !EqualityComparer<TValue>.Default.Equals(ReadCachedValueOrDefault("compare recovered values"), value))
         {
-            CurrentValue = value;
-            CurrentValueStatus = ProposerValueStatus.Cached;
-            OnCachedValueChanged(value);
-            _runtime.Diagnostics.OnValueAdopted(this, value!, ProposerId);
+            SetCachedValue(value);
         }
     }
 
@@ -672,6 +697,14 @@ public abstract class ProposerEngine<TValue, TRoute>
             _ => throw new InvalidOperationException(
                 $"Proposer '{ProposerId}' is in an unknown value state '{CurrentValueStatus}'."),
         };
+
+    private void SetCachedValue(TValue value)
+    {
+        CurrentValue = value;
+        CurrentValueStatus = ProposerValueStatus.Cached;
+        OnCachedValueChanged(value);
+        _runtime.Diagnostics.OnValueAdopted(this, value!, ProposerId);
+    }
 
     private void ClearAcceptState()
     {

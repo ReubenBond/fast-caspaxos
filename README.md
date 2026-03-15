@@ -61,7 +61,7 @@ That is why fast rounds need a supermajority: not because the fast proposer need
 
 - **Geo-distributed, low-conflict deployments.** When network latency is high, leaderless 1 RTT commits are particularly attractive, but the penalty of contention is more pronounced.
 - **Infrequent writes.** When writes are infrequent and proposers have a chance to learn the latest committed value without going through consensus, fast rounds allow 1 RTT commits at any proposer.
-- **Almost-everywhere agreement.** When concurrent proposers are proposing the same value anyway, shared fast rounds let them proceed without dueling. The [Rapid cluster membership algorithm](https://www.usenix.org/conference/atc18/presentation/suresh) uses Fast Paxos for exactly this property: Rapid's cut detector produces proposals based on observer alerts and delays action until churn stabilizes into the same multi-process cut, resulting in very low conflict rates among proposers, allowing them to commit in 1 RTT most of the time without going through a leader.
+- **Everywhere agreement.** When every client and proposer is trying to advance the register to the same next value, shared fast rounds let them proceed without dueling. The [Rapid cluster membership algorithm](https://www.usenix.org/conference/atc18/presentation/suresh) uses Fast Paxos for exactly this property: Rapid's cut detector produces proposals based on observer alerts and delays action until churn stabilizes into the same multi-process cut, resulting in very low conflict rates among proposers, allowing them to commit in 1 RTT most of the time without going through a leader.
 - **Register initialization.** The initial fast ballot is implicitly prepared, so the first write can skip `prepare` entirely and go straight to `accept`. That makes 1 RTT initialization especially attractive when a system creates many lightweight registers which may only be written once.
 
 ## When it's not clear-cut
@@ -265,6 +265,8 @@ run the dedicated script, which executes the simulator and then runs the Go chec
 
 The `benchmark-workload` scenario runs a sustained workload and emits per-proposal latency data as CSV, suitable for graphing.
 
+When `agreement-mode=true`, the workload models one benchmark client per proposer geography. Fast mode fans a logical request to all proposers, classic mode targets the nearest healthy proposer, and leader mode targets the current leader and updates that choice after failover. After each agreement round, untouched healthy proposers learn the committed ballot/value so the next round starts from shared state.
+
 ### Quick start
 
 Run a single benchmark:
@@ -283,7 +285,7 @@ Run a single benchmark:
 .\run_benchmark_suite.ps1 -ProposalCount 1000
 
 # Smaller sweep
-.\run_benchmark_suite.ps1 -Mode classic,fast -Topology lan,geo3region -ProposerCount 1 -ProposalCount 200
+.\run_benchmark_suite.ps1 -Mode classic,fast -Topology lan,geo5region -ProposerCount 1 -ProposalCount 200
 
 # Dry run to see what would execute
 .\run_benchmark_suite.ps1 -DryRun
@@ -310,20 +312,22 @@ Charts are written to `artifacts/benchmark/charts/` as PNG (matplotlib) and inte
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `proposer-count` | 3 | Number of proposers |
-| `acceptor-count` | 5 | Number of acceptors |
+| `acceptor-count` | 5 | Number of acceptors (minimum 5 for `benchmark-workload`) |
 | `proposal-count` | 1000 | Total proposals to run |
 | `fast` | false | Enable fast (leaderless) commit |
 | `leader` | false | Enable distinguished leader mode |
+| `agreement-mode` | false | Simulate everywhere agreement on the next value across geo-aware benchmark clients |
 | `base-delay-ms` | 1 | Global base message delay |
 | `max-jitter-ms` | 1 | Global max random jitter |
-| `link-latency-profile` | lan | Topology: `lan`, `uscrossregion`, `geo3region` |
+| `link-latency-profile` | lan | Topology: `lan`, `us3region`, `geo5region` |
 | `fault-schedule` | none | Fault injection DSL (see below) |
 
 ### Topology profiles
 
 - **`lan`** — Same datacenter, 1ms base + 1ms jitter
-- **`uscrossregion`** — US-East + US-West, ~30ms RTT cross-region
-- **`geo3region`** — US/EU/AP regions, 80-160ms cross-region RTT
+- **`us3region`** — `East US 2`, `West US`, `West US 3`, with 20-66ms RTT between regions
+- **`geo5region`** — `East US 2`, `France Central`, `Southeast Asia`, `Brazil South`, `Australia Southeast`, with 85-332ms RTT between regions
+- Legacy aliases `uscrossregion` and `geo3region` still parse for compatibility
 
 ### Fault schedule DSL
 
