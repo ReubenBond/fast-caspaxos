@@ -80,6 +80,7 @@ COMPARATIVE_CONFIG_FIELDS = (
     "agreement_mode",
     "register_init_mode",
     "write_interval_ms",
+    "serial_round_robin",
     "client_timeout_ms",
     "client_max_retries",
     "proposer_timing_source",
@@ -191,6 +192,7 @@ def load_csv(path: Path, round_id: str = "") -> list[dict]:
                 "agreement_mode": parse_bool("agreement_mode"),
                 "register_init_mode": parse_bool("register_init_mode"),
                 "write_interval_ms": parse_int("write_interval_ms"),
+                "serial_round_robin": parse_bool("serial_round_robin"),
                 "client_timeout_ms": parse_int("client_timeout_ms"),
                 "client_max_retries": parse_int("client_max_retries", default=2),
                 "proposer_timing_source": row.get("proposer_timing_source", ""),
@@ -1704,16 +1706,20 @@ show the missing prepare phase for Fast commits.
 
     "S4": r"""## S4 - Infrequent Writes
 
-**What this tests:** Increasing gaps between write bursts (0, 10, 50, 200 ms).
-Leader mode relies on prepared-ballot reuse, so larger gaps reduce the amount of
-work amortized by each prepare.
+**What this tests:** Serial round-robin proposals across 3 proposers with 1 s
+gaps between writes. After each commit, the committed value and prepared ballot
+are broadcast to all peer proposers. The 1 s interval ensures these learn
+messages arrive before the next proposal starts.
 
-**Setup:** 3 proposers, 5 acceptors, 100 proposals on `lan`, sweeping
-`write-interval-ms=0,10,50,200`. Only fast and leader are included.
+**Setup:** 3 proposers, 5 acceptors, 100 proposals on `lan` with
+`serial-round-robin=true` and `write-interval-ms=1000`. All three modes
+(classic, fast, leader) are included. Each proposer has a collocated client
+(zero-latency link between client _i_ and proposer _i_).
 
-**Client routing:** The default synthetic workload keeps one request stream per
-proposer. With no agreement mode enabled, each proposer competes on normal write
-traffic while the interval sweep controls how bursty the workload feels.
+**Client routing:** Proposals cycle through collocated clients C1→C2→C3→C1→…
+For fast and classic, each client sends to its collocated proposer. For leader,
+every client sends to the distinguished leader (P1), so 1/3 of requests are
+collocated and 2/3 traverse a standard LAN hop.
 
 | Parameter | Value |
 |-----------|-------|
@@ -1721,12 +1727,22 @@ traffic while the interval sweep controls how bursty the workload feels.
 | Acceptors | 5 |
 | Proposals | 100 |
 | Topology | LAN |
-| Write intervals | 0, 10, 50, 200 ms |
-| Modes | Fast, Leader only |
+| Write interval | 1000 ms |
+| Serial round-robin | Yes (collocated clients) |
+| Modes | Classic, Fast, Leader |
 | Faults | None |
 
-**What to look for:** At 0 ms, leader can hide most of its prepare cost. As the
-write interval grows, that reuse fades and fast should reclaim the latency lead.
+**What to look for:**
+
+- **Fast ≈ 1 acceptor RTT.** Each proposer reuses the learned prepared fast
+  ballot from the previous commit. The fast ballot is shared (proposer-id = 0),
+  so any proposer can skip prepare.
+- **Classic ≈ 2 acceptor RTTs.** Classic mode does not piggyback a prepared
+  ballot, so every proposal must prepare before accepting.
+- **Leader ≈ slightly under 2 acceptor RTTs on average.** All proposals go to
+  the leader who reuses its own piggybacked classic ballot (1 protocol RTT).
+  When the originating client is remote from the leader (2/3 of the time),
+  the forwarding hop adds ~1 RTT of wall-clock latency.
 """,
 
     "S5": r"""## S5 - High-Throughput Sustained Stream
@@ -1867,7 +1883,7 @@ _SCENARIO_SUMMARY_SECTION = r"""## Current Comparative Suite
 | S1 | Geo 5-Region | Explicit client at ordinal 5 (Australia SE) | Non-primary client routing with no contention |
 | S2 | LAN | Proposers `5`, `agreement-mode=true` | Agreement routing plus proposer learning |
 | S3 | LAN | Proposers `1/3` | First-write latency with `register-init-mode=true` |
-| S4 | LAN | `write-interval-ms=0/10/50/200` | Prepared-ballot amortization under burst gaps |
+| S4 | LAN | `serial-round-robin=true`, 1 s interval | Learn-propagated ballot reuse across proposers |
 | S5 | LAN | Single proposer stream | Sustained throughput with no contention |
 | S6 | LAN | Proposers `1/2/3/5` | Contention crossover between fast and leader |
 | S7 | LAN | Slow-link fault on proposer 1 | Gray-failure isolation vs leader bottleneck |

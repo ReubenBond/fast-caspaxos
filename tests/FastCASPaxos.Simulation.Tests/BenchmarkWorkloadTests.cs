@@ -80,11 +80,11 @@ public sealed class BenchmarkWorkloadTests
             var lines = await File.ReadAllLinesAsync(csvFiles[0]);
             Assert.True(lines.Length > 1, "Expected CSV header + data rows");
             Assert.StartsWith(
-                "request_id,proposer,kind,sent_ms,completed_ms,latency_ms,round_trips,mode,topology,fault_label,failover_count,proposer_count,acceptor_count,agreement_mode,register_init_mode,write_interval_ms,client_timeout_ms,client_max_retries,proposer_timing_source,proposer_expected_one_way_latency_ms,proposer_expected_rtt_ms,proposer_retry_backoff_policy,proposer_retry_backoff_enabled,proposer_retry_backoff_start_after_failures,proposer_retry_backoff_base_ms,proposer_retry_backoff_max_ms,proposer_retry_backoff_jitter_ratio,proposer_response_timeout_ms",
+                "request_id,proposer,kind,sent_ms,completed_ms,latency_ms,round_trips,mode,topology,fault_label,failover_count,proposer_count,acceptor_count,agreement_mode,register_init_mode,write_interval_ms,serial_round_robin,client_timeout_ms,client_max_retries,proposer_timing_source,proposer_expected_one_way_latency_ms,proposer_expected_rtt_ms,proposer_retry_backoff_policy,proposer_retry_backoff_enabled,proposer_retry_backoff_start_after_failures,proposer_retry_backoff_base_ms,proposer_retry_backoff_max_ms,proposer_retry_backoff_jitter_ratio,proposer_response_timeout_ms",
                 lines[0]);
 
             var fields = lines[1].Split(',');
-            Assert.Equal(28, fields.Length);
+            Assert.Equal(29, fields.Length);
             Assert.True(double.TryParse(fields[3], out _), "sent_ms should be a number");
             Assert.True(double.TryParse(fields[5], out _), "latency_ms should be a number");
             Assert.Equal("leader", fields[7]);
@@ -93,15 +93,16 @@ public sealed class BenchmarkWorkloadTests
             Assert.Equal("5", fields[12]);
             Assert.Equal("false", fields[13]);
             Assert.Equal("false", fields[14]);
-            Assert.Equal("latency-aware-derived", fields[18]);
-            Assert.Equal("4", fields[20]);
-            Assert.Equal("exponential-proportional-jitter", fields[21]);
-            Assert.Equal("true", fields[22]);
-            Assert.Equal("0", fields[23]);
-            Assert.Equal("12", fields[24]);
-            Assert.Equal("80", fields[25]);
-            Assert.Equal("0.5", fields[26]);
-            Assert.Equal("16", fields[27]);
+            Assert.Equal("false", fields[16]);
+            Assert.Equal("latency-aware-derived", fields[19]);
+            Assert.Equal("4", fields[21]);
+            Assert.Equal("exponential-proportional-jitter", fields[22]);
+            Assert.Equal("true", fields[23]);
+            Assert.Equal("0", fields[24]);
+            Assert.Equal("12", fields[25]);
+            Assert.Equal("80", fields[26]);
+            Assert.Equal("0.5", fields[27]);
+            Assert.Equal("16", fields[28]);
         }
         finally
         {

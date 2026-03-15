@@ -101,7 +101,7 @@ $scenarios = [ordered]@{
         Combinations = @()
     }
     "S4-infrequent-writes" = @{
-        Description  = "Infrequent writes: gaps between proposals prevent leader's prepare amortization."
+        Description  = "Infrequent writes: serial round-robin across proposers with learn propagation between commits."
         Combinations = @()
     }
     "S5-high-throughput-stream" = @{
@@ -182,22 +182,24 @@ foreach ($topo in @("lan")) {
 }
 
 # --- S4: infrequent-writes ---
-# LAN is the merged single-region baseline; write-interval is the sweep variable.
-foreach ($interval in @(0, 10, 50, 200)) {
-    foreach ($mode in @("fast", "leader")) {
-        $modeParams = Get-ModeParams $mode
-        $topoParams = Get-TopologyParams "lan"
-        $clusterParams = Get-ClusterSizeParams -ScenarioName "S4-infrequent-writes" -ProposerCount 3 -AcceptorCount $AcceptorCount
-        $params = $modeParams + $topoParams + $clusterParams + @(
-            "proposal-count=100",
-            "write-interval-ms=$interval"
-        )
-        $slug = "interval-$interval"
-        $scenarios["S4-infrequent-writes"].Combinations += New-Combination `
-            -Params $params `
-            -Label "topo=lan mode=$mode proposers=3 interval=${interval}ms" `
-            -OutputSubpath "lan\$mode\p3\$slug"
-    }
+# Serial round-robin across 3 proposers with collocated clients. 1s write interval
+# ensures learn broadcasts propagate the committed ballot to all peers before the
+# next proposal. Fast reuses the learned fast ballot (1 RTT); classic cannot (2 RTT);
+# leader always goes to P1 who reuses its piggybacked ballot (slightly under 2 RTT
+# on average due to remote client forwarding).
+foreach ($mode in $allModes) {
+    $modeParams = Get-ModeParams $mode
+    $topoParams = Get-TopologyParams "lan"
+    $clusterParams = Get-ClusterSizeParams -ScenarioName "S4-infrequent-writes" -ProposerCount 3 -AcceptorCount $AcceptorCount
+    $params = $modeParams + $topoParams + $clusterParams + @(
+        "proposal-count=100",
+        "write-interval-ms=1000",
+        "serial-round-robin=true"
+    )
+    $scenarios["S4-infrequent-writes"].Combinations += New-Combination `
+        -Params $params `
+        -Label "topo=lan mode=$mode proposers=3 serial-rr=true interval=1000ms" `
+        -OutputSubpath "lan\$mode\p3\serial-rr"
 }
 
 # --- S5: high-throughput-stream ---

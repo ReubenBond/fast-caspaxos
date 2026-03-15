@@ -1603,6 +1603,18 @@ public static class SimulationScenarioCatalog
                 agreementClients);
         }
 
+        if (benchmarkOptions.SerialRoundRobin)
+        {
+            var roundRobinClients = RegisterSerialRoundRobinClients(cluster, benchmarkOptions);
+            return RunSerialRoundRobinBenchmarkWorkload(
+                benchmarkOptions,
+                cluster,
+                recorder,
+                proposerTiming,
+                proposers,
+                roundRobinClients);
+        }
+
         if (explicitClient is { } benchmarkClient)
         {
             return RunExplicitClientBenchmarkWorkload(
@@ -2116,6 +2128,107 @@ public static class SimulationScenarioCatalog
         }
 
         return [.. clients];
+    }
+
+    private static FastCasAddress[] RegisterSerialRoundRobinClients(
+        FastCasSimulationCluster<StringValue> cluster,
+        BenchmarkWorkloadOptions benchmarkOptions)
+    {
+        List<FastCasAddress> clients = [];
+        for (var ordinal = 1; ordinal <= benchmarkOptions.ProposerCount; ordinal++)
+        {
+            var client = cluster.RegisterClient(ordinal);
+            clients.Add(client);
+
+            // Collocate each client with its same-ordinal proposer (0 latency)
+            var proposerAddress = FastCasAddress.Proposer(ordinal);
+            cluster.Network.SetBidirectionalLinkLatency(
+                client.NetworkAddress,
+                proposerAddress.NetworkAddress,
+                TimeSpan.Zero,
+                TimeSpan.Zero);
+        }
+
+        return [.. clients];
+    }
+
+    private static SimulationScenarioCompletion RunSerialRoundRobinBenchmarkWorkload(
+        BenchmarkWorkloadOptions benchmarkOptions,
+        FastCasSimulationCluster<StringValue> cluster,
+        SimulationRunRecorder recorder,
+        FastCasSimulationProposerTimingSnapshot proposerTiming,
+        IReadOnlyList<FastCasAddress> proposers,
+        IReadOnlyList<FastCasAddress> clients)
+    {
+        recorder.SetDetail("parameter.serial-round-robin-model", "collocated-clients");
+        var proposalCount = benchmarkOptions.ProposalCount;
+        var nextRequestId = 100_000;
+        var writeInterval = TimeSpan.FromMilliseconds(benchmarkOptions.WriteIntervalMs);
+        var leader = proposers[0];
+
+        var version = 0;
+        var completedProposals = 0;
+        while (completedProposals < proposalCount)
+        {
+            var clientIndex = completedProposals % clients.Count;
+            var client = clients[clientIndex];
+
+            // Fast and classic: send to the collocated proposer.
+            // Leader: all proposals route to the distinguished leader.
+            var targetProposer = benchmarkOptions.EnableDistinguishedLeader
+                ? leader
+                : proposers[clientIndex];
+
+            version++;
+            var operation = StringScenarioOperations.AppendCharacter(
+                (char)('A' + ((version - 1) % 26)));
+            var requestId = nextRequestId++;
+            _ = cluster.SendProposal(targetProposer, operation, requestId, client);
+            recorder.RecordSend(cluster, targetProposer, operation, requestId);
+
+            var maxIterations = 50_000;
+            Ensure(
+                cluster.RunUntil(
+                    () => cluster.TryGetRoutedResponse(requestId, out _),
+                    maxIterations: maxIterations),
+                $"Expected serial round-robin proposal {completedProposals + 1} to complete. " +
+                cluster.GetFailureDiagnostics($"serial-round-robin-{completedProposals + 1}"));
+
+            Ensure(
+                cluster.TryGetRoutedResponse(requestId, out var routedResponse),
+                $"Expected serial round-robin proposal {completedProposals + 1} to have a response.");
+            recorder.RecordProposal(cluster, routedResponse.Proposer, operation, routedResponse.Response);
+            completedProposals++;
+
+            // Write interval: advance simulation clock so learn broadcasts propagate
+            if (writeInterval > TimeSpan.Zero && completedProposals < proposalCount)
+            {
+                cluster.RunForDuration(writeInterval);
+            }
+        }
+
+        cluster.AssertSafetyInvariants();
+
+        recorder.SetDetail("completed-proposals", completedProposals);
+        recorder.SetDetail("final-version", version);
+
+        var elapsed = cluster.TimeProvider.GetUtcNow() - DateTimeOffset.UnixEpoch;
+        var throughput = completedProposals / elapsed.TotalSeconds;
+        recorder.SetDetail("elapsed-ms", elapsed.TotalMilliseconds);
+        recorder.SetDetail("throughput-proposals-per-sec", throughput);
+
+        var reproductionParameters = benchmarkOptions
+            .DescribeParameters()
+            .Concat(DescribeProposerTimingParameters(proposerTiming))
+            .ToArray();
+
+        return new(
+            Summary: string.Create(
+                CultureInfo.InvariantCulture,
+                $"mode={benchmarkOptions.ModeName} topology={benchmarkOptions.Topology} proposals={completedProposals} elapsed={elapsed.TotalMilliseconds:F1}ms throughput={throughput:F1}/s"),
+            ReproductionHint: string.Create(
+                CultureInfo.InvariantCulture,
+                $"{cluster.GetReproductionHint(BenchmarkWorkloadOptions.ScenarioName)} params: {string.Join(", ", reproductionParameters.Select(p => $"{p.Key}={p.Value}"))}"));
     }
 
     private static SimulationScenarioCompletion RunSimultaneousAgreementBenchmarkWorkload(
@@ -3194,6 +3307,9 @@ public static class SimulationBatchRunner
         var writeIntervalMs = details.TryGetValue("parameter.write-interval-ms", out var writeIntervalMsValue)
             ? writeIntervalMsValue
             : "";
+        var serialRoundRobin = details.TryGetValue("parameter.serial-round-robin", out var serialRoundRobinValue)
+            ? serialRoundRobinValue
+            : "";
         var clientTimeoutMs = details.TryGetValue("parameter.client-timeout-ms", out var clientTimeoutMsValue)
             ? clientTimeoutMsValue
             : "";
@@ -3233,14 +3349,14 @@ public static class SimulationBatchRunner
 
         var lines = new List<string>(samples.Count + 1)
         {
-            "request_id,proposer,kind,sent_ms,completed_ms,latency_ms,round_trips,mode,topology,fault_label,failover_count,proposer_count,acceptor_count,agreement_mode,register_init_mode,write_interval_ms,client_timeout_ms,client_max_retries,proposer_timing_source,proposer_expected_one_way_latency_ms,proposer_expected_rtt_ms,proposer_retry_backoff_policy,proposer_retry_backoff_enabled,proposer_retry_backoff_start_after_failures,proposer_retry_backoff_base_ms,proposer_retry_backoff_max_ms,proposer_retry_backoff_jitter_ratio,proposer_response_timeout_ms",
+            "request_id,proposer,kind,sent_ms,completed_ms,latency_ms,round_trips,mode,topology,fault_label,failover_count,proposer_count,acceptor_count,agreement_mode,register_init_mode,write_interval_ms,serial_round_robin,client_timeout_ms,client_max_retries,proposer_timing_source,proposer_expected_one_way_latency_ms,proposer_expected_rtt_ms,proposer_retry_backoff_policy,proposer_retry_backoff_enabled,proposer_retry_backoff_start_after_failures,proposer_retry_backoff_base_ms,proposer_retry_backoff_max_ms,proposer_retry_backoff_jitter_ratio,proposer_response_timeout_ms",
         };
 
         foreach (var sample in samples)
         {
             lines.Add(string.Create(
                 CultureInfo.InvariantCulture,
-                $"{sample.RequestId},{sample.Proposer},{sample.Kind},{sample.SentMs:F4},{sample.CompletedMs:F4},{sample.LatencyMs:F4},{sample.RoundTrips},{mode},{topology},{faultLabel},{sample.FailoverCount},{proposerCount},{acceptorCount},{agreementMode},{registerInitMode},{writeIntervalMs},{clientTimeoutMs},{clientMaxRetries},{proposerTimingSource},{proposerExpectedOneWayLatencyMs},{proposerExpectedRttMs},{proposerRetryBackoffPolicy},{proposerRetryBackoffEnabled},{proposerRetryBackoffStartAfterFailures},{proposerRetryBackoffBaseMs},{proposerRetryBackoffMaxMs},{proposerRetryBackoffJitterRatio},{proposerResponseTimeoutMs}"));
+                $"{sample.RequestId},{sample.Proposer},{sample.Kind},{sample.SentMs:F4},{sample.CompletedMs:F4},{sample.LatencyMs:F4},{sample.RoundTrips},{mode},{topology},{faultLabel},{sample.FailoverCount},{proposerCount},{acceptorCount},{agreementMode},{registerInitMode},{writeIntervalMs},{serialRoundRobin},{clientTimeoutMs},{clientMaxRetries},{proposerTimingSource},{proposerExpectedOneWayLatencyMs},{proposerExpectedRttMs},{proposerRetryBackoffPolicy},{proposerRetryBackoffEnabled},{proposerRetryBackoffStartAfterFailures},{proposerRetryBackoffBaseMs},{proposerRetryBackoffMaxMs},{proposerRetryBackoffJitterRatio},{proposerResponseTimeoutMs}"));
         }
 
         await File.WriteAllLinesAsync(path, lines, cancellationToken);
