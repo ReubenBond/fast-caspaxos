@@ -81,7 +81,7 @@ COMPARATIVE_CONFIG_FIELDS = (
     "agreement_mode",
     "register_init_mode",
     "write_interval_ms",
-    "serial_round_robin",
+    "serial_random_proposer",
     "client_timeout_ms",
     "client_max_retries",
     "proposer_timing_source",
@@ -193,7 +193,7 @@ def load_csv(path: Path, round_id: str = "") -> list[dict]:
                 "agreement_mode": parse_bool("agreement_mode"),
                 "register_init_mode": parse_bool("register_init_mode"),
                 "write_interval_ms": parse_int("write_interval_ms"),
-                "serial_round_robin": parse_bool("serial_round_robin"),
+                "serial_random_proposer": parse_bool("serial_random_proposer"),
                 "client_timeout_ms": parse_int("client_timeout_ms"),
                 "client_max_retries": parse_int("client_max_retries", default=2),
                 "proposer_timing_source": row.get("proposer_timing_source", ""),
@@ -1820,19 +1820,19 @@ show the missing prepare phase for Fast commits.
 
     "S4": r"""## S4 - Infrequent Writes
 
-**What this tests:** Serial round-robin proposals across 3 proposers with 1 s
+**What this tests:** Serial random-proposer proposals across 3 proposers with 1 s
 gaps between writes. After each commit, the committed value and prepared ballot
 are broadcast to all peer proposers. The 1 s interval ensures these learn
 messages arrive before the next proposal starts.
 
 **Setup:** 3 proposers, 5 acceptors, 100 proposals on `lan` with
-`serial-round-robin=true` and `write-interval-ms=1000`. All three modes
+`serial-random-proposer=true` and `write-interval-ms=1000`. All three modes
 (classic, fast, leader) are included. Each proposer has a collocated client
 (zero-latency link between client _i_ and proposer _i_).
 
-**Client routing:** Proposals cycle through collocated clients C1→C2→C3→C1→…
+**Client routing:** Proposals select a collocated client uniformly at random.
 For fast and classic, each client sends to its collocated proposer. For leader,
-every client sends to the distinguished leader (P1), so 1/3 of requests are
+every client sends to the distinguished leader (P1), so roughly 1/3 of requests are
 collocated and 2/3 traverse a standard LAN hop.
 
 | Parameter | Value |
@@ -1842,7 +1842,7 @@ collocated and 2/3 traverse a standard LAN hop.
 | Proposals | 100 |
 | Topology | LAN |
 | Write interval | 1000 ms |
-| Serial round-robin | Yes (collocated clients) |
+| Serial random-proposer | Yes (collocated clients) |
 | Modes | Classic, Fast, Leader |
 | Faults | None |
 
@@ -1997,7 +1997,7 @@ _SCENARIO_SUMMARY_SECTION = r"""## Current Comparative Suite
 | S1 | Geo 5-Region | Explicit client at ordinal 5 (Australia SE) | Non-primary client routing with no contention |
 | S2 | LAN | Proposers `5`, `agreement-mode=true` | Agreement routing plus proposer learning |
 | S3 | LAN | Proposers `1/3` | First-write latency with `register-init-mode=true` |
-| S4 | LAN | `serial-round-robin=true`, 1 s interval | Learn-propagated ballot reuse across proposers |
+| S4 | LAN | `serial-random-proposer=true`, 1 s interval | Learn-propagated ballot reuse across proposers |
 | S5 | LAN | Single proposer stream | Sustained throughput with no contention |
 | S6 | LAN | Proposers `1/2/3/5` | Contention crossover between fast and leader |
 | S7 | LAN | Slow-link fault on proposer 1 | Gray-failure isolation vs leader bottleneck |

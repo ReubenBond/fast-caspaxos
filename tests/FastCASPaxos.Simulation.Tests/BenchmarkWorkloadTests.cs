@@ -80,7 +80,7 @@ public sealed class BenchmarkWorkloadTests
             var lines = await File.ReadAllLinesAsync(csvFiles[0]);
             Assert.True(lines.Length > 1, "Expected CSV header + data rows");
             Assert.StartsWith(
-                "request_id,proposer,kind,sent_ms,completed_ms,latency_ms,round_trips,mode,topology,fault_label,failover_count,proposer_count,acceptor_count,agreement_mode,register_init_mode,write_interval_ms,serial_round_robin,client_timeout_ms,client_max_retries,proposer_timing_source,proposer_expected_one_way_latency_ms,proposer_expected_rtt_ms,proposer_retry_backoff_policy,proposer_retry_backoff_enabled,proposer_retry_backoff_start_after_failures,proposer_retry_backoff_base_ms,proposer_retry_backoff_max_ms,proposer_retry_backoff_jitter_ratio,proposer_response_timeout_ms",
+                "request_id,proposer,kind,sent_ms,completed_ms,latency_ms,round_trips,mode,topology,fault_label,failover_count,proposer_count,acceptor_count,agreement_mode,register_init_mode,write_interval_ms,serial_random_proposer,client_timeout_ms,client_max_retries,proposer_timing_source,proposer_expected_one_way_latency_ms,proposer_expected_rtt_ms,proposer_retry_backoff_policy,proposer_retry_backoff_enabled,proposer_retry_backoff_start_after_failures,proposer_retry_backoff_base_ms,proposer_retry_backoff_max_ms,proposer_retry_backoff_jitter_ratio,proposer_response_timeout_ms",
                 lines[0]);
 
             var fields = lines[1].Split(',');

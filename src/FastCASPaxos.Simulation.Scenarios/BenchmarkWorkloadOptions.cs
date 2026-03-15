@@ -43,7 +43,7 @@ internal sealed record BenchmarkWorkloadOptions(
     bool AgreementConcurrentProposers,
     bool RegisterInitMode,
     int WriteIntervalMs,
-    bool SerialRoundRobin,
+    bool SerialRandomProposer,
     int ClientTimeoutMs,
     int ClientMaxRetries,
     int? ClientOrdinal,
@@ -72,7 +72,7 @@ internal sealed record BenchmarkWorkloadOptions(
         "agreement-concurrent-proposers",
         "register-init-mode",
         "write-interval-ms",
-        "serial-round-robin",
+        "serial-random-proposer",
         "client-timeout-ms",
         "client-max-retries",
         "client-ordinal",
@@ -128,7 +128,7 @@ internal sealed record BenchmarkWorkloadOptions(
         var agreementConcurrentProposers = GetBool(parameters, "agreement-concurrent-proposers", defaultValue: false);
         var registerInitMode = GetBool(parameters, "register-init-mode", defaultValue: false);
         var writeIntervalMs = GetPositiveIntOrZero(parameters, "write-interval-ms", defaultValue: 0);
-        var serialRoundRobin = GetBool(parameters, "serial-round-robin", defaultValue: false);
+        var serialRandomProposer = GetBool(parameters, "serial-random-proposer", defaultValue: false);
         var clientTimeoutMs = GetPositiveIntOrZero(parameters, "client-timeout-ms", defaultValue: 0);
         var clientMaxRetries = GetPositiveIntOrZero(parameters, "client-max-retries", defaultValue: 2);
         var clientOrdinal = GetOptionalPositiveIntOrZero(parameters, "client-ordinal");
@@ -146,15 +146,15 @@ internal sealed record BenchmarkWorkloadOptions(
             throw new ArgumentException(
                 $"Scenario '{ScenarioName}' does not support 'agreement-concurrent-proposers=true' when 'agreement-mode=false'.");
         }
-        if (serialRoundRobin && agreementMode)
+        if (serialRandomProposer && agreementMode)
         {
             throw new ArgumentException(
-                $"Scenario '{ScenarioName}' does not support 'serial-round-robin=true' when 'agreement-mode=true'.");
+                $"Scenario '{ScenarioName}' does not support 'serial-random-proposer=true' when 'agreement-mode=true'.");
         }
-        if (serialRoundRobin && clientOrdinal is not null)
+        if (serialRandomProposer && clientOrdinal is not null)
         {
             throw new ArgumentException(
-                $"Scenario '{ScenarioName}' does not support 'serial-round-robin=true' with an explicit 'client-ordinal'.");
+                $"Scenario '{ScenarioName}' does not support 'serial-random-proposer=true' with an explicit 'client-ordinal'.");
         }
         var leaderOrdinal = GetOptionalPositiveIntOrZero(parameters, "leader-ordinal");
         if (leaderOrdinal is <= 0)
@@ -206,7 +206,7 @@ internal sealed record BenchmarkWorkloadOptions(
             agreementConcurrentProposers,
             registerInitMode,
             writeIntervalMs,
-            serialRoundRobin,
+            serialRandomProposer,
             clientTimeoutMs,
             clientMaxRetries,
             clientOrdinal,
@@ -233,7 +233,7 @@ internal sealed record BenchmarkWorkloadOptions(
         new("agreement-concurrent-proposers", AgreementConcurrentProposers.ToString().ToLowerInvariant()),
         new("register-init-mode", RegisterInitMode.ToString().ToLowerInvariant()),
         new("write-interval-ms", WriteIntervalMs.ToString(CultureInfo.InvariantCulture)),
-        new("serial-round-robin", SerialRoundRobin.ToString().ToLowerInvariant()),
+        new("serial-random-proposer", SerialRandomProposer.ToString().ToLowerInvariant()),
         new("client-timeout-ms", ClientTimeoutMs.ToString(CultureInfo.InvariantCulture)),
         new("client-max-retries", ClientMaxRetries.ToString(CultureInfo.InvariantCulture)),
         new("client-ordinal", FormatOptionalInt(ClientOrdinal)),

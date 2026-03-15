@@ -1603,16 +1603,17 @@ public static class SimulationScenarioCatalog
                 agreementClients);
         }
 
-        if (benchmarkOptions.SerialRoundRobin)
+        if (benchmarkOptions.SerialRandomProposer)
         {
-            var roundRobinClients = RegisterSerialRoundRobinClients(cluster, benchmarkOptions);
-            return RunSerialRoundRobinBenchmarkWorkload(
+            var randomProposerClients = RegisterSerialRandomProposerClients(cluster, benchmarkOptions);
+            return RunSerialRandomProposerBenchmarkWorkload(
                 benchmarkOptions,
+                seed,
                 cluster,
                 recorder,
                 proposerTiming,
                 proposers,
-                roundRobinClients);
+                randomProposerClients);
         }
 
         if (explicitClient is { } benchmarkClient)
@@ -2130,7 +2131,7 @@ public static class SimulationScenarioCatalog
         return [.. clients];
     }
 
-    private static FastCasAddress[] RegisterSerialRoundRobinClients(
+    private static FastCasAddress[] RegisterSerialRandomProposerClients(
         FastCasSimulationCluster<StringValue> cluster,
         BenchmarkWorkloadOptions benchmarkOptions)
     {
@@ -2152,25 +2153,27 @@ public static class SimulationScenarioCatalog
         return [.. clients];
     }
 
-    private static SimulationScenarioCompletion RunSerialRoundRobinBenchmarkWorkload(
+    private static SimulationScenarioCompletion RunSerialRandomProposerBenchmarkWorkload(
         BenchmarkWorkloadOptions benchmarkOptions,
+        int seed,
         FastCasSimulationCluster<StringValue> cluster,
         SimulationRunRecorder recorder,
         FastCasSimulationProposerTimingSnapshot proposerTiming,
         IReadOnlyList<FastCasAddress> proposers,
         IReadOnlyList<FastCasAddress> clients)
     {
-        recorder.SetDetail("parameter.serial-round-robin-model", "collocated-clients");
+        recorder.SetDetail("parameter.serial-random-proposer-model", "collocated-clients");
         var proposalCount = benchmarkOptions.ProposalCount;
         var nextRequestId = 100_000;
         var writeInterval = TimeSpan.FromMilliseconds(benchmarkOptions.WriteIntervalMs);
         var leader = benchmarkOptions.GetInitialLeader(proposers);
+        var clientRandom = new Random(seed + 300);
 
         var version = 0;
         var completedProposals = 0;
         while (completedProposals < proposalCount)
         {
-            var clientIndex = completedProposals % clients.Count;
+            var clientIndex = clientRandom.Next(clients.Count);
             var client = clients[clientIndex];
 
             // Fast and classic: send to the collocated proposer.
@@ -2191,12 +2194,12 @@ public static class SimulationScenarioCatalog
                 cluster.RunUntil(
                     () => cluster.TryGetRoutedResponse(requestId, out _),
                     maxIterations: maxIterations),
-                $"Expected serial round-robin proposal {completedProposals + 1} to complete. " +
-                cluster.GetFailureDiagnostics($"serial-round-robin-{completedProposals + 1}"));
+                $"Expected serial random-proposer proposal {completedProposals + 1} to complete. " +
+                cluster.GetFailureDiagnostics($"serial-random-proposer-{completedProposals + 1}"));
 
             Ensure(
                 cluster.TryGetRoutedResponse(requestId, out var routedResponse),
-                $"Expected serial round-robin proposal {completedProposals + 1} to have a response.");
+                $"Expected serial random-proposer proposal {completedProposals + 1} to have a response.");
             recorder.RecordProposal(cluster, routedResponse.Proposer, operation, routedResponse.Response);
             completedProposals++;
 
@@ -3307,8 +3310,8 @@ public static class SimulationBatchRunner
         var writeIntervalMs = details.TryGetValue("parameter.write-interval-ms", out var writeIntervalMsValue)
             ? writeIntervalMsValue
             : "";
-        var serialRoundRobin = details.TryGetValue("parameter.serial-round-robin", out var serialRoundRobinValue)
-            ? serialRoundRobinValue
+        var serialRandomProposer = details.TryGetValue("parameter.serial-random-proposer", out var serialRandomProposerValue)
+            ? serialRandomProposerValue
             : "";
         var clientTimeoutMs = details.TryGetValue("parameter.client-timeout-ms", out var clientTimeoutMsValue)
             ? clientTimeoutMsValue
@@ -3349,14 +3352,14 @@ public static class SimulationBatchRunner
 
         var lines = new List<string>(samples.Count + 1)
         {
-            "request_id,proposer,kind,sent_ms,completed_ms,latency_ms,round_trips,mode,topology,fault_label,failover_count,proposer_count,acceptor_count,agreement_mode,register_init_mode,write_interval_ms,serial_round_robin,client_timeout_ms,client_max_retries,proposer_timing_source,proposer_expected_one_way_latency_ms,proposer_expected_rtt_ms,proposer_retry_backoff_policy,proposer_retry_backoff_enabled,proposer_retry_backoff_start_after_failures,proposer_retry_backoff_base_ms,proposer_retry_backoff_max_ms,proposer_retry_backoff_jitter_ratio,proposer_response_timeout_ms",
+            "request_id,proposer,kind,sent_ms,completed_ms,latency_ms,round_trips,mode,topology,fault_label,failover_count,proposer_count,acceptor_count,agreement_mode,register_init_mode,write_interval_ms,serial_random_proposer,client_timeout_ms,client_max_retries,proposer_timing_source,proposer_expected_one_way_latency_ms,proposer_expected_rtt_ms,proposer_retry_backoff_policy,proposer_retry_backoff_enabled,proposer_retry_backoff_start_after_failures,proposer_retry_backoff_base_ms,proposer_retry_backoff_max_ms,proposer_retry_backoff_jitter_ratio,proposer_response_timeout_ms",
         };
 
         foreach (var sample in samples)
         {
             lines.Add(string.Create(
                 CultureInfo.InvariantCulture,
-                $"{sample.RequestId},{sample.Proposer},{sample.Kind},{sample.SentMs:F4},{sample.CompletedMs:F4},{sample.LatencyMs:F4},{sample.RoundTrips},{mode},{topology},{faultLabel},{sample.FailoverCount},{proposerCount},{acceptorCount},{agreementMode},{registerInitMode},{writeIntervalMs},{serialRoundRobin},{clientTimeoutMs},{clientMaxRetries},{proposerTimingSource},{proposerExpectedOneWayLatencyMs},{proposerExpectedRttMs},{proposerRetryBackoffPolicy},{proposerRetryBackoffEnabled},{proposerRetryBackoffStartAfterFailures},{proposerRetryBackoffBaseMs},{proposerRetryBackoffMaxMs},{proposerRetryBackoffJitterRatio},{proposerResponseTimeoutMs}"));
+                $"{sample.RequestId},{sample.Proposer},{sample.Kind},{sample.SentMs:F4},{sample.CompletedMs:F4},{sample.LatencyMs:F4},{sample.RoundTrips},{mode},{topology},{faultLabel},{sample.FailoverCount},{proposerCount},{acceptorCount},{agreementMode},{registerInitMode},{writeIntervalMs},{serialRandomProposer},{clientTimeoutMs},{clientMaxRetries},{proposerTimingSource},{proposerExpectedOneWayLatencyMs},{proposerExpectedRttMs},{proposerRetryBackoffPolicy},{proposerRetryBackoffEnabled},{proposerRetryBackoffStartAfterFailures},{proposerRetryBackoffBaseMs},{proposerRetryBackoffMaxMs},{proposerRetryBackoffJitterRatio},{proposerResponseTimeoutMs}"));
         }
 
         await File.WriteAllLinesAsync(path, lines, cancellationToken);
