@@ -1469,6 +1469,457 @@ def plot_plotly(all_rows: list[dict], output_dir: str):
 
 
 # ---------------------------------------------------------------------------
+# RESULTS.md generation (comparative mode)
+# ---------------------------------------------------------------------------
+
+_TOPOLOGY_SECTION = r"""## Topologies
+
+### LAN
+
+All nodes co-located in a single data-centre. Uniform 1 ms links.
+
+```mermaid
+graph LR
+  subgraph Data Centre
+    P1([P1]) ---|1 ms| A1([A1])
+    P1 ---|1 ms| A2([A2])
+    P1 ---|1 ms| A3([A3])
+    P1 ---|1 ms| A4([A4])
+    P1 ---|1 ms| A5([A5])
+  end
+```
+
+| Link | One-way latency | RTT |
+|------|-----------------|-----|
+| Any ↔ Any | 1 ms ± 1 ms | ~2 ms |
+
+**Quorum analysis (5 acceptors):**
+Classic/Leader need 3/5 — all local, 2 RTT ≈ 4 ms.
+Fast needs 4/5 — all local, 1 RTT ≈ 2 ms. Pure RTT ratio advantage (1:2) with negligible absolute difference.
+
+---
+
+### Symmetric 40 ms
+
+All nodes see identical 40 ms one-way latency. No regional structure —
+isolates the 1-vs-2 RTT signal without quorum-placement noise.
+
+```mermaid
+graph LR
+  P1([P1]) ---|40 ms| A1([A1])
+  P1 ---|40 ms| A2([A2])
+  P1 ---|40 ms| A3([A3])
+  P1 ---|40 ms| A4([A4])
+  P1 ---|40 ms| A5([A5])
+  P2([P2]) ---|40 ms| A1
+  P3([P3]) ---|40 ms| A1
+```
+
+| Link | One-way latency | RTT |
+|------|-----------------|-----|
+| Any ↔ Any | 40 ms ± 5 ms | ~80–90 ms |
+
+**Quorum analysis:**
+Classic/Leader 3/5, 2 RTT ≈ 160–180 ms. Fast 4/5, 1 RTT ≈ 80–90 ms — **fast saves ~80 ms** (clearest comparison topology).
+
+---
+
+### US Cross-Region
+
+Two US regions (East and West) with 15 ms cross-region links.
+Demonstrates the **quorum-size cost** of fast mode: needing 4/5 acceptors forces
+cross-region traffic when regions are unevenly populated.
+
+```mermaid
+graph LR
+  subgraph US-East
+    P1([P1])
+    P2([P2])
+    A1([A1])
+    A2([A2])
+    A3([A3])
+    P1 ---|1 ms| A1
+    P1 ---|1 ms| A2
+    P1 ---|1 ms| A3
+  end
+  subgraph US-West
+    P3([P3])
+    A4([A4])
+    A5([A5])
+    P3 ---|1 ms| A4
+    P3 ---|1 ms| A5
+  end
+  P1 ---|15 ms| A4
+  P1 ---|15 ms| A5
+  P3 ---|15 ms| A1
+```
+
+| Link | One-way latency | RTT |
+|------|-----------------|-----|
+| Intra-region | 1 ms ± 1 ms | ~2 ms |
+| Cross-region (East ↔ West) | 15 ms ± 5 ms | ~30 ms |
+
+**Node placement:** P1, P2, A1–A3 in East; P3, A4–A5 in West.
+
+**Quorum analysis (East proposer P1):**
+Classic 3/5 — A1, A2, A3 all in East → 2 RTT ≈ 4 ms.
+Fast 4/5 — must reach A4 or A5 in West → 1 RTT ≈ 30 ms.
+Fast's 1-RTT advantage is **negated** by the cross-region hop needed for the larger quorum.
+
+---
+
+### Geo 3-Region
+
+Three global regions (US-East, EU-West, AP-Southeast) with realistic
+intercontinental latencies. All quorum paths must cross at least one ocean link.
+
+```mermaid
+graph TB
+  subgraph US-East
+    P1([P1])
+    A1([A1])
+    A2([A2])
+  end
+  subgraph EU-West
+    P2([P2])
+    A3([A3])
+    A4([A4])
+  end
+  subgraph AP-Southeast
+    P3([P3])
+    A5([A5])
+  end
+  US-East ---|"40 ms ± 5 ms"| EU-West
+  US-East ---|"80 ms ± 10 ms"| AP-Southeast
+  EU-West ---|"60 ms ± 8 ms"| AP-Southeast
+```
+
+| Route | One-way latency | RTT |
+|-------|-----------------|-----|
+| US ↔ EU | 40 ms ± 5 ms | ~80–90 ms |
+| US ↔ AP | 80 ms ± 10 ms | ~160–180 ms |
+| EU ↔ AP | 60 ms ± 8 ms | ~120–136 ms |
+| Intra-region | 1 ms ± 1 ms | ~2 ms |
+
+**Node placement:** P1, A1–A2 in US; P2, A3–A4 in EU; P3, A5 in AP.
+Acceptor distribution: 2-2-1.
+
+**Quorum analysis (US proposer P1):**
+Classic 3/5 — A1, A2 (US) + A3 (EU) → bottleneck is US↔EU = 40 ms, 2 RTT ≈ 160 ms.
+Fast 4/5 — A1, A2 (US) + A3, A4 (EU) → same bottleneck (US↔EU), 1 RTT ≈ 80 ms.
+Fast saves one RTT (~80 ms) because the 4th acceptor (A4) is in the same region as the 3rd (EU).
+"""
+
+_SCENARIO_DESCRIPTIONS: dict[str, str] = {
+    "S1": r"""## S1 — Geo-Distributed, Low Contention
+
+**What this tests:** A single proposer writing to 5 acceptors with no contention,
+across different topologies. This is the cleanest possible comparison of the
+1-RTT (fast) vs 2-RTT (classic/leader) cost, free from contention noise.
+
+**Setup:** 1 proposer, 5 acceptors, 1000 proposals sent serially (each waits
+for the previous to complete). No faults. Each topology is tested separately.
+
+**Client routing:** Single client sends all proposals to the sole proposer (P1).
+
+| Parameter | Value |
+|-----------|-------|
+| Proposers | 1 |
+| Acceptors | 5 |
+| Proposals | 1 000 |
+| Topologies | LAN, Symmetric-40, US Cross-Region, Geo 3-Region |
+| Faults | None |
+
+**What to look for:** Fast should complete in ~1 RTT, classic in ~2 RTT.
+The absolute gap grows with link latency (negligible on LAN, ~80 ms on Symmetric-40).
+Leader amortizes prepare across ballots but still pays the initial cost.
+""",
+
+    "S2": r"""## S2 — Agreement Consensus
+
+**What this tests:** Multiple proposers sending the *same* value concurrently,
+with agreement-mode routing. Clients learn committed values and propagate them
+to other proposers, avoiding future conflicts.
+
+**Setup:** 3 (or 5) proposers, 5 acceptors, 1000 proposals on Symmetric-40.
+Agreement mode enabled — all proposers in each batch propose the same character.
+
+**Client routing:**
+- *Fast mode:* client sends to **all** healthy proposers simultaneously.
+- *Leader mode:* client sends to the current leader only.
+- *Classic mode:* client sends to the **nearest** healthy proposer
+  (ordered by ascending one-way latency, then ordinal distance).
+
+After receiving a response, the client propagates the committed value to
+all other healthy proposers via `LearnCommittedValue()`.
+
+| Parameter | Value |
+|-----------|-------|
+| Proposers | 3 or 5 |
+| Acceptors | 5 |
+| Proposals | 1 000 |
+| Topology | Symmetric-40 |
+| Agreement mode | ✅ |
+| Faults | None |
+
+**What to look for:** Because all proposers agree on the same value, fast-round
+conflicts are rare. Fast mode's fan-out to all proposers adds bandwidth cost
+but avoids prepare phases entirely.
+""",
+
+    "S3": r"""## S3 — Register Initialization Burst
+
+**What this tests:** Many independent first-writes to previously uninitialized
+registers. Each proposal targets a unique register (A, B, C, …), so acceptors
+have no prior promised ballots.
+
+**Setup:** 1 or 3 proposers, 5 acceptors, 200 proposals per configuration.
+Register-init mode enabled. Tested on LAN and Geo 3-Region.
+
+**Client routing:** Non-agreement mode — each client slot maps 1:1 to a proposer.
+
+| Parameter | Value |
+|-----------|-------|
+| Proposers | 1 or 3 |
+| Acceptors | 5 |
+| Proposals | 200 |
+| Topologies | LAN, Geo 3-Region |
+| Register-init mode | ✅ |
+| Faults | None |
+
+**What to look for:** Fast mode's implicit ballot means it can commit on the
+very first write without a prepare phase (0 RTT for the prepare, 1 RTT for
+accept). Classic always needs 2 RTT. This scenario isolates that advantage.
+""",
+
+    "S4": r"""## S4 — Infrequent Writes (Write-Interval Sweep)
+
+**What this tests:** Increasing gaps between batches of proposals (0, 10, 50,
+200 ms). Leader mode amortizes its prepare cost across many fast rounds, but
+longer gaps mean fewer proposals per prepare cycle — eventually the
+amortization breaks down and fast mode wins.
+
+**Setup:** 3 proposers, 5 acceptors, 100 proposals on Symmetric-40.
+Write interval swept across 0 / 10 / 50 / 200 ms. Only fast and leader modes
+(classic omitted since it's always 2 RTT).
+
+**Client routing:** Non-agreement mode, 1:1 client-to-proposer mapping.
+
+| Parameter | Value |
+|-----------|-------|
+| Proposers | 3 |
+| Acceptors | 5 |
+| Proposals | 100 |
+| Topology | Symmetric-40 |
+| Write intervals | 0, 10, 50, 200 ms |
+| Modes | Fast, Leader only |
+| Faults | None |
+
+**What to look for:** At 0 ms interval, leader's amortized prepare wins.
+As the interval grows, the prepare expires between bursts and must be
+re-issued, eroding leader's advantage.
+""",
+
+    "S5": r"""## S5 — High-Throughput Sustained Stream
+
+**What this tests:** A single proposer streaming proposals as fast as possible
+with no inter-proposal gaps. Measures sustained throughput (proposals/sec) at
+the RTT-dominated limit.
+
+**Setup:** 1 proposer, 5 acceptors, 2000 proposals. Tested on LAN and
+US Cross-Region topologies.
+
+**Client routing:** Single client, single proposer (P1).
+
+| Parameter | Value |
+|-----------|-------|
+| Proposers | 1 |
+| Acceptors | 5 |
+| Proposals | 2 000 |
+| Topologies | LAN, US Cross-Region |
+| Faults | None |
+
+**What to look for:** On LAN, throughput is processor-limited (RTT is tiny).
+On US Cross-Region, throughput is RTT-limited: fast (1 RTT) should achieve
+roughly double the throughput of classic (2 RTT).
+""",
+
+    "S6": r"""## S6 — Contention Spectrum
+
+**What this tests:** Increasing proposer counts (1, 2, 3, 5, 7) to show how
+contention affects each protocol mode. At low contention fast's 1-RTT advantage
+dominates; at high contention leader's centralized coordination avoids conflicts.
+
+**Setup:** Variable proposers (1–7), 5 acceptors, 500 proposals on
+Symmetric-40. Each iteration sends one proposal per proposer in parallel.
+
+**Client routing:** Non-agreement mode, 1:1 client-to-proposer mapping.
+All N proposers compete for the same register.
+
+| Parameter | Value |
+|-----------|-------|
+| Proposers | 1, 2, 3, 5, 7 (sweep) |
+| Acceptors | 5 |
+| Proposals | 500 |
+| Topology | Symmetric-40 |
+| Faults | None |
+
+**What to look for:** The contention spectrum chart shows the crossover:
+fast wins at low P, leader wins at high P. Classic is always slowest.
+""",
+
+    "S7": r"""## S7 — Leader Gray Failure
+
+**What this tests:** A soft (gray) failure on the leader (proposer 1):
+200 ms extra delay ± 50 ms jitter injected on all links to/from P1 during
+proposals 200–400. Tests how each mode degrades under partial failure.
+
+**Setup:** 3 proposers, 5 acceptors, 600 proposals on Symmetric-40.
+Only fast and leader modes tested.
+
+**Client routing:** Non-agreement mode. Clients 1–3 map 1:1 to proposers P1–P3.
+
+**Fault:** `slow-link:proposer:1:at:200:until:400:delay:200:jitter:50`
+— P1's links to all other nodes get +200 ms ± 50 ms added latency.
+
+| Parameter | Value |
+|-----------|-------|
+| Proposers | 3 |
+| Acceptors | 5 |
+| Proposals | 600 |
+| Topology | Symmetric-40 |
+| Fault | Slow-link on P1, proposals 200–400 |
+| Modes | Fast, Leader only |
+
+**What to look for:** In leader mode, *all* traffic goes through P1 (the leader),
+so the entire cluster degrades. In fast mode, only P1's proposals slow down —
+P2 and P3 are unaffected, demonstrating fast's per-proposer isolation.
+""",
+
+    "S8": r"""## S8 — Leader Crash Failover
+
+**What this tests:** Hard failure — proposer 1 (the leader) crashes at proposal 30
+and restarts at proposal 60. Agreement mode is enabled so clients can fail over
+to alternative proposers.
+
+**Setup:** 3 proposers, 5 acceptors, 90 proposals on Symmetric-40.
+Client timeout set to 300 ms (3× baseline RTT) with 2 retries.
+
+**Client routing:** Agreement mode —
+- *Fast:* sends to all healthy proposers. When P1 crashes, clients immediately
+  route to P2/P3.
+- *Leader:* sends to leader (P1) only. When P1 crashes, clients wait for the
+  300 ms timeout, then fail over to P2 or P3.
+
+**Fault:** `crash:proposer:1:at:30:until:60` — P1 is network-isolated and
+suspended from proposal 30 to 60.
+
+| Parameter | Value |
+|-----------|-------|
+| Proposers | 3 |
+| Acceptors | 5 |
+| Proposals | 90 |
+| Topology | Symmetric-40 |
+| Agreement mode | ✅ |
+| Client timeout | 300 ms |
+| Fault | Crash P1, proposals 30–60 |
+| Modes | Fast, Leader only |
+
+**What to look for:** The failover timeline shows leader mode's availability
+gap (stutter while clients detect the crash) vs fast mode's smoother failover.
+Red × markers indicate proposals that triggered client failover.
+""",
+}
+
+_PROTOCOL_MODES_SECTION = r"""## Protocol Modes
+
+| Mode | RTT per commit | Quorum | Prepare phase | Key trade-off |
+|------|---------------|--------|---------------|---------------|
+| **Fast Paxos (Leaderless)** | 1 | 4 / 5 | None (implicit ballot) | Lowest latency, but larger quorum and vulnerable to conflicts |
+| **Distinguished Leader** | 1 (amortised) | 3 / 5 | Once per ballot (amortised) | Smaller quorum + amortised prepare, but leader is a single point of failure |
+| **Classic Paxos** | 2 | 3 / 5 | Every commit | Simplest, but always pays 2 RTT |
+
+- **Fast Paxos** skips the prepare phase entirely by using an implicit ballot
+  number that all acceptors recognise. Commits in a single RTT if ≥ 4/5
+  acceptors agree. Falls back to 2 RTT on conflict.
+- **Distinguished Leader** designates proposer 1 as leader. The leader issues
+  one prepare, then piggybacks subsequent accepts on the prepared ballot.
+  Achieves 1 RTT per commit (after the initial prepare) with only a 3/5 quorum,
+  but all traffic funnels through the leader.
+- **Classic Paxos** issues prepare + accept on every commit. Always 2 RTT,
+  3/5 quorum. The baseline.
+"""
+
+
+def generate_results_markdown(
+    root_dir: str,
+    charts_dir: str,
+    generated_charts: list[str],
+) -> None:
+    """Write RESULTS.md to root_dir with embedded chart images from charts_dir."""
+    # Determine relative path from root_dir to charts_dir
+    charts_rel = os.path.relpath(charts_dir, root_dir).replace("\\", "/")
+
+    # Group charts by scenario ID
+    from collections import OrderedDict
+    scenario_charts: dict[str, list[str]] = OrderedDict()
+    for fname in sorted(generated_charts):
+        sid = fname.split("-", 1)[0]  # e.g. "S1"
+        scenario_charts.setdefault(sid, []).append(fname)
+
+    lines: list[str] = []
+    lines.append("# Fast CASPaxos — Comparative Benchmark Results\n")
+    lines.append(_PROTOCOL_MODES_SECTION)
+    lines.append(_TOPOLOGY_SECTION)
+
+    # Per-scenario sections
+    for sid, charts in scenario_charts.items():
+        desc = _SCENARIO_DESCRIPTIONS.get(sid)
+        if desc:
+            lines.append(desc)
+        else:
+            lines.append(f"## {sid}\n")
+
+        # Group charts by sub-group prefix (everything before the chart-type suffix)
+        sub_groups: dict[str, list[str]] = OrderedDict()
+        for fname in charts:
+            # Strip extension
+            stem = fname.rsplit(".", 1)[0]
+            # Known chart-type suffixes
+            for suffix in (
+                "commit-latency", "rtt-histogram", "contention-spectrum",
+                "failover-timeline", "per-proposer-traces", "topology-mode-heatmap",
+            ):
+                if stem.endswith(suffix):
+                    prefix = stem[: -len(suffix)].rstrip("-")
+                    break
+            else:
+                prefix = stem
+            sub_groups.setdefault(prefix, []).append(fname)
+
+        # Sort sub-groups: those with a sub-label first (alphabetically), scenario-level last
+        sorted_prefixes = sorted(sub_groups.keys(), key=lambda p: ("" if p != sid else "~", p))
+
+        for prefix in sorted_prefixes:
+            group_charts = sub_groups[prefix]
+            # Extract sub-group label (portion after scenario ID)
+            sub_label = prefix[len(sid):].lstrip("-")
+            if sub_label:
+                lines.append(f"### {sub_label}\n")
+
+            for fname in group_charts:
+                alt = fname.rsplit(".", 1)[0].replace("-", " ").title()
+                lines.append(f"![{alt}]({charts_rel}/{fname})\n")
+
+        lines.append("---\n")
+
+    md_path = os.path.join(root_dir, "RESULTS.md")
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    print(f"RESULTS.md written to {md_path}")
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -1512,6 +1963,7 @@ def main():
         os.makedirs(charts_dir, exist_ok=True)
 
         all_scenario_rows: dict[str, list[dict]] = {}
+        generated_charts: list[str] = []
 
         for scenario_name, scenario_csvs in sorted(scenario_dirs.items()):
             rows: list[dict] = []
@@ -1541,11 +1993,15 @@ def main():
 
                 if args.format in ("png", "both"):
                     plot_latency_timeseries_aggregated(aggregated, charts_dir, chart_prefix)
+                    generated_charts.append(f"{chart_prefix}-commit-latency.png")
                     plot_rtt_distribution(sg_rows, charts_dir, chart_prefix)
+                    generated_charts.append(f"{chart_prefix}-rtt-histogram.png")
 
                     if "gray-failure" in scenario_name.lower() or "crash-failover" in scenario_name.lower():
                         plot_per_proposer_traces(sg_rows, charts_dir, chart_prefix)
+                        generated_charts.append(f"{chart_prefix}-per-proposer-traces.png")
                         plot_failover_timeline(sg_rows, charts_dir, chart_prefix)
+                        generated_charts.append(f"{chart_prefix}-failover-timeline.png")
 
                 if args.format in ("html", "both"):
                     plot_latency_timeseries_aggregated_plotly(aggregated, charts_dir, chart_prefix)
@@ -1559,6 +2015,7 @@ def main():
             if "contention-spectrum" in scenario_name.lower():
                 if args.format in ("png", "both"):
                     plot_contention_spectrum(rows, charts_dir, scenario_id)
+                    generated_charts.append(f"{scenario_id}-contention-spectrum.png")
                 if args.format in ("html", "both"):
                     plot_contention_spectrum_plotly(rows, charts_dir, scenario_id)
 
@@ -1573,9 +2030,11 @@ def main():
             geo_id = geo_key.split("-", 1)[0]
             if args.format in ("png", "both"):
                 plot_topology_mode_heatmap(geo_rows, charts_dir, geo_id)
+                generated_charts.append(f"{geo_id}-topology-mode-heatmap.png")
             if args.format in ("html", "both"):
                 plot_topology_mode_heatmap_plotly(geo_rows, charts_dir, geo_id)
 
+        generate_results_markdown(args.input, charts_dir, generated_charts)
         print(f"Comparative charts written to {charts_dir}")
     else:
         # ---------------------------------------------------------------
