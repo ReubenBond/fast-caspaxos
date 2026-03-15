@@ -1481,11 +1481,29 @@ All nodes co-located in a single data-centre. Uniform 1 ms links.
 ```mermaid
 graph LR
   subgraph Data Centre
-    P1([P1]) ---|1 ms| A1([A1])
-    P1 ---|1 ms| A2([A2])
-    P1 ---|1 ms| A3([A3])
-    P1 ---|1 ms| A4([A4])
-    P1 ---|1 ms| A5([A5])
+    P1([P1])
+    P2([P2])
+    P3([P3])
+    A1([A1])
+    A2([A2])
+    A3([A3])
+    A4([A4])
+    A5([A5])
+    P1 ---|1 ms| A1
+    P1 ---|1 ms| A2
+    P1 ---|1 ms| A3
+    P1 ---|1 ms| A4
+    P1 ---|1 ms| A5
+    P2 ---|1 ms| A1
+    P2 ---|1 ms| A2
+    P2 ---|1 ms| A3
+    P2 ---|1 ms| A4
+    P2 ---|1 ms| A5
+    P3 ---|1 ms| A1
+    P3 ---|1 ms| A2
+    P3 ---|1 ms| A3
+    P3 ---|1 ms| A4
+    P3 ---|1 ms| A5
   end
 ```
 
@@ -1506,13 +1524,29 @@ isolates the 1-vs-2 RTT signal without quorum-placement noise.
 
 ```mermaid
 graph LR
-  P1([P1]) ---|40 ms| A1([A1])
-  P1 ---|40 ms| A2([A2])
-  P1 ---|40 ms| A3([A3])
-  P1 ---|40 ms| A4([A4])
-  P1 ---|40 ms| A5([A5])
-  P2([P2]) ---|40 ms| A1
-  P3([P3]) ---|40 ms| A1
+  P1([P1])
+  P2([P2])
+  P3([P3])
+  A1([A1])
+  A2([A2])
+  A3([A3])
+  A4([A4])
+  A5([A5])
+  P1 ---|40 ms| A1
+  P1 ---|40 ms| A2
+  P1 ---|40 ms| A3
+  P1 ---|40 ms| A4
+  P1 ---|40 ms| A5
+  P2 ---|40 ms| A1
+  P2 ---|40 ms| A2
+  P2 ---|40 ms| A3
+  P2 ---|40 ms| A4
+  P2 ---|40 ms| A5
+  P3 ---|40 ms| A1
+  P3 ---|40 ms| A2
+  P3 ---|40 ms| A3
+  P3 ---|40 ms| A4
+  P3 ---|40 ms| A5
 ```
 
 | Link | One-way latency | RTT |
@@ -1538,20 +1572,27 @@ graph LR
     A1([A1])
     A2([A2])
     A3([A3])
-    P1 ---|1 ms| A1
-    P1 ---|1 ms| A2
-    P1 ---|1 ms| A3
   end
   subgraph US-West
     P3([P3])
     A4([A4])
     A5([A5])
-    P3 ---|1 ms| A4
-    P3 ---|1 ms| A5
   end
+  P1 ---|1 ms| A1
+  P1 ---|1 ms| A2
+  P1 ---|1 ms| A3
   P1 ---|15 ms| A4
   P1 ---|15 ms| A5
+  P2 ---|1 ms| A1
+  P2 ---|1 ms| A2
+  P2 ---|1 ms| A3
+  P2 ---|15 ms| A4
+  P2 ---|15 ms| A5
   P3 ---|15 ms| A1
+  P3 ---|15 ms| A2
+  P3 ---|15 ms| A3
+  P3 ---|1 ms| A4
+  P3 ---|1 ms| A5
 ```
 
 | Link | One-way latency | RTT |
@@ -1589,9 +1630,21 @@ graph TB
     P3([P3])
     A5([A5])
   end
-  US-East ---|"40 ms ± 5 ms"| EU-West
-  US-East ---|"80 ms ± 10 ms"| AP-Southeast
-  EU-West ---|"60 ms ± 8 ms"| AP-Southeast
+  P1 ---|1 ms| A1
+  P1 ---|1 ms| A2
+  P1 ---|40 ms| A3
+  P1 ---|40 ms| A4
+  P1 ---|80 ms| A5
+  P2 ---|40 ms| A1
+  P2 ---|40 ms| A2
+  P2 ---|1 ms| A3
+  P2 ---|1 ms| A4
+  P2 ---|60 ms| A5
+  P3 ---|80 ms| A1
+  P3 ---|80 ms| A2
+  P3 ---|60 ms| A3
+  P3 ---|60 ms| A4
+  P3 ---|1 ms| A5
 ```
 
 | Route | One-way latency | RTT |
