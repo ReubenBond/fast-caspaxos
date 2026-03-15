@@ -1912,7 +1912,7 @@ public static class SimulationScenarioCatalog
 
         var version = 0;
         var completedProposals = 0;
-        var currentLeader = proposers[0];
+        var currentLeader = benchmarkOptions.GetInitialLeader(proposers);
         while (completedProposals < proposalCount)
         {
             benchmarkOptions.ApplyFaultAtProposal(cluster, completedProposals, recorder);
@@ -2164,7 +2164,7 @@ public static class SimulationScenarioCatalog
         var proposalCount = benchmarkOptions.ProposalCount;
         var nextRequestId = 100_000;
         var writeInterval = TimeSpan.FromMilliseconds(benchmarkOptions.WriteIntervalMs);
-        var leader = proposers[0];
+        var leader = benchmarkOptions.GetInitialLeader(proposers);
 
         var version = 0;
         var completedProposals = 0;
@@ -2356,7 +2356,7 @@ public static class SimulationScenarioCatalog
 
         var completedProposals = 0;
         var agreementRound = 0;
-        var currentLeader = proposers[0];
+        var currentLeader = benchmarkOptions.GetInitialLeader(proposers);
         while (completedProposals < proposalCount)
         {
             benchmarkOptions.ApplyFaultAtProposal(cluster, completedProposals, recorder);

@@ -47,6 +47,7 @@ internal sealed record BenchmarkWorkloadOptions(
     int ClientTimeoutMs,
     int ClientMaxRetries,
     int? ClientOrdinal,
+    int? LeaderOrdinal,
     int? ProposerRetryStartAfterFailuresOverride,
     TimeSpan? ProposerRetryBaseDelayOverride,
     TimeSpan? ProposerRetryMaxDelayOverride,
@@ -75,6 +76,7 @@ internal sealed record BenchmarkWorkloadOptions(
         "client-timeout-ms",
         "client-max-retries",
         "client-ordinal",
+        "leader-ordinal",
         "proposer-retry-start-after-failures",
         "proposer-retry-base-ms",
         "proposer-retry-max-ms",
@@ -154,6 +156,18 @@ internal sealed record BenchmarkWorkloadOptions(
             throw new ArgumentException(
                 $"Scenario '{ScenarioName}' does not support 'serial-round-robin=true' with an explicit 'client-ordinal'.");
         }
+        var leaderOrdinal = GetOptionalPositiveIntOrZero(parameters, "leader-ordinal");
+        if (leaderOrdinal is <= 0)
+        {
+            leaderOrdinal = null;
+        }
+        if (leaderOrdinal is not null && leaderOrdinal > proposerCount)
+        {
+            throw new ArgumentOutOfRangeException(
+                "leader-ordinal",
+                leaderOrdinal,
+                $"benchmark-workload 'leader-ordinal' must be between 1 and proposer-count ({proposerCount}).");
+        }
         var proposerRetryStartAfterFailuresOverride = GetOptionalPositiveIntOrZero(
             parameters,
             "proposer-retry-start-after-failures");
@@ -196,6 +210,7 @@ internal sealed record BenchmarkWorkloadOptions(
             clientTimeoutMs,
             clientMaxRetries,
             clientOrdinal,
+            leaderOrdinal,
             proposerRetryStartAfterFailuresOverride,
             proposerRetryBaseDelayOverride,
             proposerRetryMaxDelayOverride,
@@ -222,6 +237,7 @@ internal sealed record BenchmarkWorkloadOptions(
         new("client-timeout-ms", ClientTimeoutMs.ToString(CultureInfo.InvariantCulture)),
         new("client-max-retries", ClientMaxRetries.ToString(CultureInfo.InvariantCulture)),
         new("client-ordinal", FormatOptionalInt(ClientOrdinal)),
+        new("leader-ordinal", FormatOptionalInt(LeaderOrdinal)),
         new("proposer-retry-start-after-failures", FormatOptionalInt(ProposerRetryStartAfterFailuresOverride)),
         new("proposer-retry-base-ms", FormatOptionalMilliseconds(ProposerRetryBaseDelayOverride)),
         new("proposer-retry-max-ms", FormatOptionalMilliseconds(ProposerRetryMaxDelayOverride)),
@@ -233,6 +249,29 @@ internal sealed record BenchmarkWorkloadOptions(
     ];
 
     internal bool UsesExplicitClient => ClientOrdinal is not null;
+
+    /// <summary>
+    /// Returns the proposer designated as the distinguished leader. When <see cref="LeaderOrdinal"/>
+    /// is set, the proposer whose ordinal matches is returned; otherwise defaults to the first proposer.
+    /// </summary>
+    internal FastCasAddress GetInitialLeader(IReadOnlyList<FastCasAddress> proposers)
+    {
+        if (LeaderOrdinal is not { } ordinal)
+        {
+            return proposers[0];
+        }
+
+        foreach (var proposer in proposers)
+        {
+            if (proposer.Ordinal == ordinal)
+            {
+                return proposer;
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"Leader ordinal {ordinal} does not match any proposer in the cluster.");
+    }
 
     internal int GetAgreementClientCount() => Math.Max(ProposerCount, GetTopologyRegionCount(Topology));
 

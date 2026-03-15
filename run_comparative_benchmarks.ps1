@@ -89,7 +89,7 @@ $allModes = @("classic", "fast", "leader")
 
 $scenarios = [ordered]@{
     "S1-geo-no-contention" = @{
-        Description  = "Geo-distributed, no contention: one client stream originates from Australia Southeast (no proposer). Its nearest proposer is Southeast Asia (88 ms), but leader mode routes to East US 2 (204 ms)."
+        Description  = "Geo-distributed, no contention: one client stream originates from Australia Southeast (no proposer). Fast routes to the nearest proposer in Southeast Asia (88 ms), while leader mode routes to France Central (236 ms) via leader-ordinal=2."
         Combinations = @()
     }
     "S2-agreement-consensus" = @{
@@ -124,8 +124,9 @@ $scenarios = [ordered]@{
 
 # --- S1: geo-no-contention ---
 # One explicit geo client is placed in Australia Southeast (ordinal 5), a region with no proposer.
-# Its nearest proposer is proposer 3 (Southeast Asia, 88 ms RTT), while leader mode routes to
-# proposer 1 (East US 2, 204 ms RTT), paying the extra client-to-primary hop.
+# Its nearest proposer is proposer 3 (Southeast Asia, 88 ms RTT). Leader mode designates
+# proposer 2 (France Central) via leader-ordinal=2, so it pays a 236 ms client-to-primary hop
+# instead of the 88 ms fast route, and commits through a 148 ms quorum versus fast's 228 ms.
 # The workload stays contention-free by driving a single client request stream.
 foreach ($mode in $allModes) {
     $modeParams = Get-ModeParams $mode
@@ -133,11 +134,12 @@ foreach ($mode in $allModes) {
     $clusterParams = Get-ClusterSizeParams -ScenarioName "S1-geo-no-contention" -ProposerCount 3 -AcceptorCount $AcceptorCount
     $params = $modeParams + $topoParams + $clusterParams + @(
         "proposal-count=1000",
-        "client-ordinal=5"
+        "client-ordinal=5",
+        "leader-ordinal=2"
     )
     $scenarios["S1-geo-no-contention"].Combinations += New-Combination `
         -Params $params `
-        -Label "topo=geo mode=$mode proposers=3 client=5" `
+        -Label "topo=geo mode=$mode proposers=3 client=5 leader=2" `
         -OutputSubpath "geo\$mode\p3\client-5"
 }
 

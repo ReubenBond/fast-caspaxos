@@ -24,6 +24,7 @@ Comparative mode (--comparative) additionally generates:
   - Scenario-specific failover timeline charts
   - RTT distribution comparisons
   - Scenario-specific topology x mode heatmaps
+  - Combined scenario x mode heatmap across all scenarios
   - Scenario-specific per-proposer latency traces
 
 Usage:
@@ -1145,6 +1146,116 @@ def plot_topology_mode_heatmap_plotly(all_rows: list[dict], output_dir: str, sce
 
 
 # ---------------------------------------------------------------------------
+# 6f′ Combined Scenario x Mode heatmap (all scenarios in one chart)
+# ---------------------------------------------------------------------------
+
+def plot_scenario_mode_heatmap(
+    all_scenario_rows: dict[str, list[dict]], output_dir: str,
+) -> None:
+    """Heatmap of median latency: X=mode, Y=scenario (matplotlib)."""
+    configure_matplotlib_style()
+    import matplotlib.pyplot as plt
+
+    modes_ordered = ["classic", "fast", "leader"]
+    mode_labels = [_label_for_mode(m) for m in modes_ordered]
+
+    # Build per-(scenario, mode) median latencies
+    scenario_ids: list[str] = []
+    scenario_labels: list[str] = []
+    for sid in _SCENARIO_ORDER:
+        matching = [k for k in all_scenario_rows if k.split("-", 1)[0].upper() == sid]
+        if matching:
+            scenario_ids.append(sid)
+            scenario_labels.append(_SCENARIO_DISPLAY_NAMES.get(sid, sid))
+
+    if not scenario_ids:
+        return
+
+    matrix = np.full((len(scenario_ids), len(modes_ordered)), np.nan)
+    for si, sid in enumerate(scenario_ids):
+        rows = []
+        for k, v in all_scenario_rows.items():
+            if k.split("-", 1)[0].upper() == sid:
+                rows.extend(v)
+        for mi, mode in enumerate(modes_ordered):
+            lats = [r["latency_ms"] for r in rows if r["mode"] == mode]
+            if lats:
+                matrix[si, mi] = float(np.median(lats))
+
+    fig, ax = plt.subplots(figsize=(max(6, 2 * len(modes_ordered)), max(5, 0.8 * len(scenario_ids))))
+    im = ax.imshow(matrix, aspect="auto", cmap="YlOrRd")
+
+    ax.set_xticks(np.arange(len(modes_ordered)))
+    ax.set_yticks(np.arange(len(scenario_ids)))
+    ax.set_xticklabels(mode_labels, fontsize=11)
+    ax.set_yticklabels(scenario_labels, fontsize=11)
+
+    for si in range(len(scenario_ids)):
+        for mi in range(len(modes_ordered)):
+            val = matrix[si, mi]
+            if not np.isnan(val):
+                ax.text(mi, si, f"{val:.1f}", ha="center", va="center",
+                        color="white" if val > np.nanmedian(matrix) else "black",
+                        fontsize=10, fontweight="bold")
+
+    fig.colorbar(im, ax=ax, label="Median Latency (ms)")
+    ax.set_title("Scenario × Mode Heatmap", fontsize=14, fontweight="bold")
+    fig.tight_layout()
+    fig.savefig(os.path.join(output_dir, "scenario-mode-heatmap.png"), dpi=200)
+    plt.close(fig)
+
+
+def plot_scenario_mode_heatmap_plotly(
+    all_scenario_rows: dict[str, list[dict]], output_dir: str,
+) -> None:
+    """Scenario x Mode heatmap (plotly)."""
+    try:
+        import plotly.graph_objects as go
+    except ImportError:
+        return
+
+    modes_ordered = ["classic", "fast", "leader"]
+    mode_labels = [_label_for_mode(m) for m in modes_ordered]
+
+    scenario_ids: list[str] = []
+    scenario_labels: list[str] = []
+    for sid in _SCENARIO_ORDER:
+        matching = [k for k in all_scenario_rows if k.split("-", 1)[0].upper() == sid]
+        if matching:
+            scenario_ids.append(sid)
+            scenario_labels.append(_SCENARIO_DISPLAY_NAMES.get(sid, sid))
+
+    if not scenario_ids:
+        return
+
+    z: list[list[float]] = []
+    for si, sid in enumerate(scenario_ids):
+        rows = []
+        for k, v in all_scenario_rows.items():
+            if k.split("-", 1)[0].upper() == sid:
+                rows.extend(v)
+        row_vals: list[float] = []
+        for mode in modes_ordered:
+            lats = [r["latency_ms"] for r in rows if r["mode"] == mode]
+            row_vals.append(float(np.median(lats)) if lats else float("nan"))
+        z.append(row_vals)
+
+    text = [[f"{v:.1f}" if not np.isnan(v) else "" for v in row] for row in z]
+
+    fig = go.Figure(data=go.Heatmap(
+        z=z, x=mode_labels, y=scenario_labels,
+        colorscale="YlOrRd", text=text,
+        texttemplate="%{text}", textfont=dict(size=12),
+    ))
+    fig.update_layout(
+        title="Scenario × Mode Heatmap",
+        xaxis_title="Mode", yaxis_title="Scenario",
+        height=max(400, 60 * len(scenario_ids)), template="plotly_white",
+    )
+    fig.write_html(os.path.join(output_dir, "scenario-mode-heatmap.html"))
+
+
+# ---------------------------------------------------------------------------
 # 6g  Per-proposer latency traces
 # ---------------------------------------------------------------------------
 
@@ -1608,8 +1719,9 @@ ordinal `N` is always aligned with acceptor ordinal `N`. In the 3-proposer geo
 layout used by S1, proposers occupy East US 2, France Central, and Southeast
 Asia, while acceptors occupy all five regions. Scenario S1 places the explicit
 benchmark client at ordinal 5 in Australia Southeast, a region with no proposer.
-Its nearest proposer is P3 in Southeast Asia (88 ms RTT), while the
-distinguished primary P1 is in East US 2 (204 ms RTT).
+Its nearest proposer is P3 in Southeast Asia (88 ms RTT). The distinguished
+leader is set to P2 in France Central via `leader-ordinal=2`, so leader mode
+pays a 236 ms client hop instead of the 88 ms fast route.
 """
 
 _SCENARIO_DESCRIPTIONS: dict[str, str] = {
@@ -1621,13 +1733,13 @@ the three proposers are spread across the first three geo regions. There is no
 proposer contention, so the dominant cost is client routing plus the commit RTT.
 
 **Setup:** 3 proposers, 5 acceptors, 1000 proposals on `geo5region` with
-`client-ordinal=5` and no faults.
+`client-ordinal=5`, `leader-ordinal=2`, and no faults.
 
 **Client routing:** The explicit client is in Australia Southeast, which has no
 proposer. Fast and classic route to the nearest healthy proposer, which is
-proposer 3 in Southeast Asia (88 ms RTT). Leader mode sends every request to
-proposer 1 in East US 2 (204 ms RTT), so it pays an extra client-to-primary hop
-of 204 ms versus the 88 ms a non-leader client would pay.
+proposer 3 in Southeast Asia (88 ms RTT). Leader mode designates proposer 2 in
+France Central as the primary (`leader-ordinal=2`), so it pays a 236 ms
+client-to-primary hop versus the 88 ms a non-leader client would pay.
 
 | Parameter | Value |
 |-----------|-------|
@@ -1636,12 +1748,14 @@ of 204 ms versus the 88 ms a non-leader client would pay.
 | Proposals | 1 000 |
 | Topology | Geo 5-Region |
 | Explicit client | Ordinal 5 (Australia Southeast) |
+| Leader ordinal | 2 (France Central) |
 | Modes | Classic, Fast, Leader |
 | Faults | None |
 
-**What to look for:** Fast removes one proposer-to-acceptor RTT, but leader also
-absorbs the intentional non-local client hop. Proposer learning keeps later
-requests from starting cold even though the workload itself is contention-free.
+**What to look for:** Fast commits in a single proposer-to-acceptor RTT from the
+nearest proposer, while leader absorbs both the non-local client hop and its own
+quorum distances. Proposer learning keeps later requests from starting cold even
+though the workload itself is contention-free.
 """,
 
     "S2": r"""## S2 - Agreement Consensus
@@ -1895,21 +2009,87 @@ _RESULTS_INTRO_SECTION = r"""_This document describes the current comparative be
 
 _SCENARIO_ORDER = ("S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8")
 
+_SCENARIO_DISPLAY_NAMES: dict[str, str] = {
+    "S1": "Geo-Distributed",
+    "S2": "Same Value",
+    "S3": "Initialization",
+    "S4": "Infrequent Writes",
+    "S5": "High-Throughput",
+    "S6": "High Contention",
+    "S7": "Gray Failure",
+    "S8": "Failover",
+}
+
+def build_scenario_mode_table(
+    all_scenario_rows: dict[str, list[dict]],
+) -> str:
+    """Build a markdown table of median latency per scenario × mode with best/worst icons."""
+    modes_ordered = ["classic", "fast", "leader"]
+    mode_headers = [_label_for_mode(m) for m in modes_ordered]
+
+    header = "| Scenario | " + " | ".join(mode_headers) + " |"
+    separator = "|" + "|".join(["---"] * (1 + len(modes_ordered))) + "|"
+
+    rows: list[str] = []
+    for sid in _SCENARIO_ORDER:
+        matching_rows: list[dict] = []
+        for k, v in all_scenario_rows.items():
+            if k.split("-", 1)[0].upper() == sid:
+                matching_rows.extend(v)
+
+        display_name = _SCENARIO_DISPLAY_NAMES.get(sid, sid)
+
+        # Compute per-mode medians
+        medians: dict[str, float | None] = {}
+        for mode in modes_ordered:
+            lats = [r["latency_ms"] for r in matching_rows if r["mode"] == mode]
+            medians[mode] = float(np.median(lats)) if lats else None
+
+        present = {m: v for m, v in medians.items() if v is not None}
+        best_mode = min(present, key=lambda m: present[m]) if present else None
+        worst_mode = max(present, key=lambda m: present[m]) if present else None
+        # Only mark best/worst when there are at least 2 distinct modes to compare
+        if best_mode == worst_mode:
+            best_mode = worst_mode = None
+
+        cells: list[str] = []
+        for mode in modes_ordered:
+            val = medians[mode]
+            if val is None:
+                cells.append("—")
+            else:
+                formatted = f"{val:.1f} ms"
+                if mode == best_mode:
+                    formatted = f"🟢 {formatted}"
+                elif mode == worst_mode:
+                    formatted = f"🔴 {formatted}"
+                cells.append(formatted)
+
+        rows.append(f"| {sid} — {display_name} | " + " | ".join(cells) + " |")
+
+    return "\n".join([header, separator] + rows) + "\n"
+
+
 def generate_results_markdown(
     root_dir: str,
     charts_dir: str,
     generated_charts: list[str],
+    all_scenario_rows: dict[str, list[dict]] | None = None,
 ) -> None:
     """Write RESULTS.md to root_dir with embedded chart images from charts_dir."""
     # Determine relative path from root_dir to charts_dir
     charts_rel = os.path.relpath(charts_dir, root_dir).replace("\\", "/")
 
-    # Group charts by scenario ID
+    # Group charts by scenario ID; separate out cross-scenario charts
     from collections import OrderedDict
     scenario_charts: dict[str, list[str]] = OrderedDict()
+    cross_scenario_charts: list[str] = []
     for fname in sorted(generated_charts):
         sid = fname.split("-", 1)[0]  # e.g. "S1"
-        scenario_charts.setdefault(sid, []).append(fname)
+        if sid.upper() in {s for s in _SCENARIO_ORDER}:
+            scenario_charts.setdefault(sid, []).append(fname)
+        else:
+            cross_scenario_charts.append(fname)
 
     lines: list[str] = []
     lines.append("# Fast CASPaxos — Comparative Benchmark Results\n")
@@ -1917,6 +2097,20 @@ def generate_results_markdown(
     lines.append(_PROTOCOL_MODES_SECTION)
     lines.append(_SCENARIO_SUMMARY_SECTION)
     lines.append(_TOPOLOGY_SECTION)
+
+    # Cross-scenario section: markdown table + any remaining cross-scenario charts
+    heatmap_files = {"scenario-mode-heatmap.png", "scenario-mode-heatmap.html"}
+    non_heatmap_cross = [f for f in cross_scenario_charts if f not in heatmap_files]
+
+    if all_scenario_rows or non_heatmap_cross:
+        lines.append("## Scenario Overview\n")
+        if all_scenario_rows:
+            lines.append(build_scenario_mode_table(all_scenario_rows))
+            lines.append("")
+        for fname in non_heatmap_cross:
+            alt = fname.rsplit(".", 1)[0].replace("-", " ").title()
+            lines.append(f"![{alt}]({charts_rel}/{fname})\n")
+        lines.append("")
 
     ordered_sids = list(dict.fromkeys([*_SCENARIO_ORDER, *scenario_charts.keys()]))
 
@@ -2073,22 +2267,7 @@ def main():
                 if args.format in ("html", "both"):
                     plot_contention_spectrum_plotly(rows, charts_dir, scenario_id)
 
-        # Topology heatmap (from S1 comparative data)
-        geo_key = None
-        for k in all_scenario_rows:
-            if k.split("-", 1)[0].upper() == "S1":
-                geo_key = k
-                break
-        if geo_key is not None:
-            geo_rows = all_scenario_rows[geo_key]
-            geo_id = geo_key.split("-", 1)[0]
-            if args.format in ("png", "both"):
-                plot_topology_mode_heatmap(geo_rows, charts_dir, geo_id)
-                generated_charts.append(f"{geo_id}-topology-mode-heatmap.png")
-            if args.format in ("html", "both"):
-                plot_topology_mode_heatmap_plotly(geo_rows, charts_dir, geo_id)
-
-        generate_results_markdown(args.input, charts_dir, generated_charts)
+        generate_results_markdown(args.input, charts_dir, generated_charts, all_scenario_rows)
         print(f"Comparative charts written to {charts_dir}")
     else:
         # ---------------------------------------------------------------
