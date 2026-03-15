@@ -548,6 +548,7 @@ def plot_latency_timeseries_aggregated(
 
     ax.set_xlabel("Proposal Index", fontsize=12)
     ax.set_ylabel("Latency (ms)", fontsize=12)
+    ax.set_ylim(bottom=0)
     ax.set_title(f"Commit Latency \u2014 {scenario_name}", fontsize=14, fontweight="bold")
     ax.legend(fontsize=11, framealpha=0.9)
     ax.grid(True, alpha=0.2)
@@ -600,6 +601,7 @@ def plot_latency_timeseries_aggregated_plotly(
         xaxis_title="Proposal Index", yaxis_title="Latency (ms)",
         height=500, template="plotly_white",
     )
+    fig.update_yaxes(rangemode="tozero")
     fig.write_html(os.path.join(output_dir, f"{scenario_name}-commit-latency.html"))
 
 
@@ -648,6 +650,7 @@ def plot_contention_spectrum(all_rows: list[dict], output_dir: str, scenario_nam
 
     ax.set_xlabel("Number of Proposers (Contention)")
     ax.set_ylabel("Median Latency (ms)")
+    ax.set_ylim(bottom=0)
     ax.set_title(f"Contention Spectrum — {scenario_name}", fontsize=14, fontweight="bold")
     ax.legend(framealpha=0.9)
     fig.tight_layout()
@@ -696,6 +699,7 @@ def plot_contention_spectrum_plotly(all_rows: list[dict], output_dir: str, scena
         xaxis_title="Number of Proposers", yaxis_title="Median Latency (ms)",
         height=500, template="plotly_white",
     )
+    fig.update_yaxes(rangemode="tozero")
     fig.write_html(os.path.join(output_dir, f"{scenario_name}-contention-spectrum.html"))
 
 
@@ -769,6 +773,7 @@ def plot_failover_timeline(
 
         ax.set_xlabel("Simulated Time (ms)")
         ax.set_ylabel("Latency (ms)")
+        ax.set_ylim(bottom=0)
         ax.set_title(labels.get(key, "configuration"), fontsize=12)
         ax.legend(fontsize=8, framealpha=0.9, ncol=2)
 
@@ -843,6 +848,7 @@ def plot_failover_timeline_plotly(
         title=f"Failover Timeline \u2014 {scenario_name}",
         height=500, template="plotly_white",
     )
+    fig.update_yaxes(rangemode="tozero")
     fig.write_html(os.path.join(output_dir, f"{scenario_name}-failover-timeline.html"))
 
 
@@ -932,6 +938,7 @@ def plot_rtt_distribution_plotly(
         xaxis_title="Round Trips", yaxis_title="% of Proposals",
         height=500, template="plotly_white",
     )
+    fig.update_yaxes(rangemode="tozero")
     fig.write_html(os.path.join(output_dir, f"{scenario_name}-rtt-histogram.html"))
 
 
@@ -977,6 +984,7 @@ def plot_summary_dashboard(
                            fontsize=7, rotation=30, ha="right")
         ax.set_title(scenario, fontsize=9)
         ax.set_ylabel("Median Lat. (ms)", fontsize=8)
+        ax.set_ylim(bottom=0)
 
     # Hide unused axes
     for ax_idx in range(n, rows_count * cols):
@@ -1036,6 +1044,7 @@ def plot_summary_dashboard_plotly(
         title="Scenario Summary Dashboard",
         height=350 * rows_count, template="plotly_white",
     )
+    fig.update_yaxes(rangemode="tozero")
     fig.write_html(os.path.join(output_dir, "summary-dashboard.html"))
 
 
@@ -1181,6 +1190,7 @@ def plot_per_proposer_traces(
 
         ax.set_xlabel("Simulated Time (ms)")
         ax.set_ylabel("Latency (ms)")
+        ax.set_ylim(bottom=0)
         ax.set_title(labels.get(key, "configuration"), fontsize=12)
         ax.legend(fontsize=7, framealpha=0.9, ncol=2)
 
@@ -1253,6 +1263,7 @@ def plot_per_proposer_traces_plotly(
         title=f"Per-Proposer Latency Traces \u2014 {scenario_name}",
         height=500, template="plotly_white",
     )
+    fig.update_yaxes(rangemode="tozero")
     fig.write_html(os.path.join(output_dir, f"{scenario_name}-per-proposer-traces.html"))
 
 
@@ -1294,6 +1305,7 @@ def plot_matplotlib(all_rows: list[dict], output_dir: str):
             ax.plot(x, y, label=_label_for_mode(mode), color=_color_for_mode(mode, idx), alpha=0.8, linewidth=0.8)
         ax.set_xlabel("Proposal Index")
         ax.set_ylabel("Latency (ms)")
+        ax.set_ylim(bottom=0)
         ax.set_title(f"Commit Latency Over Time \u2014 {facet_name}")
         ax.legend()
         ax.grid(True, alpha=0.3)
@@ -1309,6 +1321,7 @@ def plot_matplotlib(all_rows: list[dict], output_dir: str):
                 ax.plot(times, throughputs, label=_label_for_mode(mode), color=_color_for_mode(mode, idx), alpha=0.8, linewidth=0.8)
         ax.set_xlabel("Simulated Time (ms)")
         ax.set_ylabel("Throughput (proposals/sec)")
+        ax.set_ylim(bottom=0)
         ax.set_title(f"Throughput Over Time \u2014 {facet_name}")
         ax.legend()
         ax.grid(True, alpha=0.3)
@@ -1348,6 +1361,7 @@ def plot_matplotlib(all_rows: list[dict], output_dir: str):
             ax.boxplot(data, labels=labels, showfliers=False)
             ax.set_title(f"Topology: {topo}")
             ax.set_ylabel("Latency (ms)")
+            ax.set_ylim(bottom=0)
             ax.grid(True, alpha=0.3)
         fig.suptitle("Latency Distribution by Topology and Protocol Mode")
         fig.tight_layout()
@@ -1456,12 +1470,12 @@ def plot_plotly(all_rows: list[dict], output_dir: str):
             showlegend=True,
         )
         fig.update_xaxes(title_text="Proposal Index", row=1, col=1)
-        fig.update_yaxes(title_text="Latency (ms)", row=1, col=1)
+        fig.update_yaxes(title_text="Latency (ms)", rangemode="tozero", row=1, col=1)
         fig.update_xaxes(title_text="Latency (ms)", row=1, col=2)
         fig.update_yaxes(title_text="CDF", row=1, col=2)
         fig.update_xaxes(title_text="Simulated Time (ms)", row=2, col=1)
-        fig.update_yaxes(title_text="Proposals/sec", row=2, col=1)
-        fig.update_yaxes(title_text="Latency (ms)", row=2, col=2)
+        fig.update_yaxes(title_text="Proposals/sec", rangemode="tozero", row=2, col=1)
+        fig.update_yaxes(title_text="Latency (ms)", rangemode="tozero", row=2, col=2)
 
         fig.write_html(os.path.join(charts_dir, f"benchmark-{facet_name}.html"))
 
@@ -1474,13 +1488,19 @@ def plot_plotly(all_rows: list[dict], output_dir: str):
 
 _TOPOLOGY_SECTION = r"""## Topologies
 
+The current comparative suite defined in `run_comparative_benchmarks.ps1` uses
+only two latency profiles: `lan` and `geo5region`. If local chart artifacts do
+not match these descriptions, regenerate the comparative output from the current
+benchmark suite.
+
 ### LAN
 
-All nodes co-located in a single data-centre. Uniform 1 ms links.
+All nodes are co-located in one datacenter. Every link uses `base-delay-ms=1`
+and `max-jitter-ms=1`, so both 3 / 5 and 4 / 5 quorums stay local.
 
 ```mermaid
 graph LR
-  subgraph Data Centre
+  subgraph Datacenter
     P1([P1])
     P2([P2])
     P3([P3])
@@ -1489,398 +1509,325 @@ graph LR
     A3([A3])
     A4([A4])
     A5([A5])
-    P1 ---|1 ms| A1
-    P1 ---|1 ms| A2
-    P1 ---|1 ms| A3
-    P1 ---|1 ms| A4
-    P1 ---|1 ms| A5
-    P2 ---|1 ms| A1
-    P2 ---|1 ms| A2
-    P2 ---|1 ms| A3
-    P2 ---|1 ms| A4
-    P2 ---|1 ms| A5
-    P3 ---|1 ms| A1
-    P3 ---|1 ms| A2
-    P3 ---|1 ms| A3
-    P3 ---|1 ms| A4
-    P3 ---|1 ms| A5
+    P1 ---|1-2 ms| A1
+    P1 ---|1-2 ms| A2
+    P1 ---|1-2 ms| A3
+    P1 ---|1-2 ms| A4
+    P1 ---|1-2 ms| A5
+    P2 ---|1-2 ms| A1
+    P2 ---|1-2 ms| A2
+    P2 ---|1-2 ms| A3
+    P2 ---|1-2 ms| A4
+    P2 ---|1-2 ms| A5
+    P3 ---|1-2 ms| A1
+    P3 ---|1-2 ms| A2
+    P3 ---|1-2 ms| A3
+    P3 ---|1-2 ms| A4
+    P3 ---|1-2 ms| A5
   end
 ```
 
-| Link | One-way latency | RTT |
-|------|-----------------|-----|
-| Any ↔ Any | 1 ms ± 1 ms | ~2 ms |
+| Link | Configured latency |
+|------|--------------------|
+| Any proposer <-> any acceptor | 1 ms base + up to 1 ms jitter |
+| Any client <-> nearest proposer | 1 ms base + up to 1 ms jitter |
 
-**Quorum analysis (5 acceptors):**
-Classic/Leader need 3/5 — all local, 2 RTT ≈ 4 ms.
-Fast needs 4/5 — all local, 1 RTT ≈ 2 ms. Pure RTT ratio advantage (1:2) with negligible absolute difference.
-
----
-
-### Symmetric 40 ms
-
-All nodes see identical 40 ms one-way latency. No regional structure —
-isolates the 1-vs-2 RTT signal without quorum-placement noise.
-
-```mermaid
-graph LR
-  P1([P1])
-  P2([P2])
-  P3([P3])
-  A1([A1])
-  A2([A2])
-  A3([A3])
-  A4([A4])
-  A5([A5])
-  P1 ---|40 ms| A1
-  P1 ---|40 ms| A2
-  P1 ---|40 ms| A3
-  P1 ---|40 ms| A4
-  P1 ---|40 ms| A5
-  P2 ---|40 ms| A1
-  P2 ---|40 ms| A2
-  P2 ---|40 ms| A3
-  P2 ---|40 ms| A4
-  P2 ---|40 ms| A5
-  P3 ---|40 ms| A1
-  P3 ---|40 ms| A2
-  P3 ---|40 ms| A3
-  P3 ---|40 ms| A4
-  P3 ---|40 ms| A5
-```
-
-| Link | One-way latency | RTT |
-|------|-----------------|-----|
-| Any ↔ Any | 40 ms ± 5 ms | ~80–90 ms |
-
-**Quorum analysis:**
-Classic/Leader 3/5, 2 RTT ≈ 160–180 ms. Fast 4/5, 1 RTT ≈ 80–90 ms — **fast saves ~80 ms** (clearest comparison topology).
+**Quorum impact (5 acceptors):**
+Classic and leader need 3 / 5 responses; fast needs 4 / 5. Because every node is
+local, the difference is mostly 1 RTT versus 2 RTT, not geography.
 
 ---
 
-### US Cross-Region
+### Geo 5-Region
 
-Two US regions (East and West) with 15 ms cross-region links.
-Demonstrates the **quorum-size cost** of fast mode: needing 4/5 acceptors forces
-cross-region traffic when regions are unevenly populated.
-
-```mermaid
-graph LR
-  subgraph US-East
-    P1([P1])
-    P2([P2])
-    A1([A1])
-    A2([A2])
-    A3([A3])
-  end
-  subgraph US-West
-    P3([P3])
-    A4([A4])
-    A5([A5])
-  end
-  P1 ---|1 ms| A1
-  P1 ---|1 ms| A2
-  P1 ---|1 ms| A3
-  P1 ---|15 ms| A4
-  P1 ---|15 ms| A5
-  P2 ---|1 ms| A1
-  P2 ---|1 ms| A2
-  P2 ---|1 ms| A3
-  P2 ---|15 ms| A4
-  P2 ---|15 ms| A5
-  P3 ---|15 ms| A1
-  P3 ---|15 ms| A2
-  P3 ---|15 ms| A3
-  P3 ---|1 ms| A4
-  P3 ---|1 ms| A5
-```
-
-| Link | One-way latency | RTT |
-|------|-----------------|-----|
-| Intra-region | 1 ms ± 1 ms | ~2 ms |
-| Cross-region (East ↔ West) | 15 ms ± 5 ms | ~30 ms |
-
-**Node placement:** P1, P2, A1–A3 in East; P3, A4–A5 in West.
-
-**Quorum analysis (East proposer P1):**
-Classic 3/5 — A1, A2, A3 all in East → 2 RTT ≈ 4 ms.
-Fast 4/5 — must reach A4 or A5 in West → 1 RTT ≈ 30 ms.
-Fast's 1-RTT advantage is **negated** by the cross-region hop needed for the larger quorum.
-
----
-
-### Geo 3-Region
-
-Three global regions (US-East, EU-West, AP-Southeast) with realistic
-intercontinental latencies. All quorum paths must cross at least one ocean link.
+The geo suite uses `geo5region`: East US 2, France Central, Southeast Asia,
+Brazil South, and Australia Southeast. Cross-region latencies are configured
+from Azure P50 RTT medians, which span 85-332 ms for this region set.
 
 ```mermaid
 graph TB
-  subgraph US-East
+  subgraph East_US_2
     P1([P1])
     A1([A1])
+  end
+  subgraph France_Central
+    P2([P2])
     A2([A2])
   end
-  subgraph EU-West
-    P2([P2])
+  subgraph Southeast_Asia
+    P3([P3])
     A3([A3])
+  end
+  subgraph Brazil_South
     A4([A4])
   end
-  subgraph AP-Southeast
-    P3([P3])
+  subgraph Australia_Southeast
     A5([A5])
   end
-  P1 ---|1 ms| A1
-  P1 ---|1 ms| A2
-  P1 ---|40 ms| A3
-  P1 ---|40 ms| A4
-  P1 ---|80 ms| A5
-  P2 ---|40 ms| A1
-  P2 ---|40 ms| A2
-  P2 ---|1 ms| A3
-  P2 ---|1 ms| A4
-  P2 ---|60 ms| A5
-  P3 ---|80 ms| A1
-  P3 ---|80 ms| A2
-  P3 ---|60 ms| A3
-  P3 ---|60 ms| A4
-  P3 ---|1 ms| A5
+  P1 ---|1-2 ms| A1
+  P1 ---|~43 ms| A2
+  P1 ---|~115 ms| A3
+  P1 ---|~59 ms| A4
+  P1 ---|~103 ms| A5
+  P2 ---|~43 ms| A1
+  P2 ---|1-2 ms| A2
+  P2 ---|~75 ms| A3
+  P2 ---|~96 ms| A4
+  P2 ---|~119 ms| A5
+  P3 ---|~115 ms| A1
+  P3 ---|~75 ms| A2
+  P3 ---|1-2 ms| A3
+  P3 ---|~167 ms| A4
+  P3 ---|~45 ms| A5
 ```
 
-| Route | One-way latency | RTT |
-|-------|-----------------|-----|
-| US ↔ EU | 40 ms ± 5 ms | ~80–90 ms |
-| US ↔ AP | 80 ms ± 10 ms | ~160–180 ms |
-| EU ↔ AP | 60 ms ± 8 ms | ~120–136 ms |
-| Intra-region | 1 ms ± 1 ms | ~2 ms |
+| Region pair | Median RTT |
+|-------------|------------|
+| East US 2 <-> France Central | 85 ms |
+| East US 2 <-> Southeast Asia | 228 ms |
+| East US 2 <-> Brazil South | 116 ms |
+| East US 2 <-> Australia Southeast | 204 ms |
+| France Central <-> Southeast Asia | 148 ms |
+| France Central <-> Brazil South | 190 ms |
+| France Central <-> Australia Southeast | 236 ms |
+| Southeast Asia <-> Brazil South | 332 ms |
+| Southeast Asia <-> Australia Southeast | 88 ms |
+| Brazil South <-> Australia Southeast | 311 ms |
+| Intra-region | 1 ms base + up to 1 ms jitter |
 
-**Node placement:** P1, A1–A2 in US; P2, A3–A4 in EU; P3, A5 in AP.
-Acceptor distribution: 2-2-1.
-
-**Quorum analysis (US proposer P1):**
-Classic 3/5 — A1, A2 (US) + A3 (EU) → bottleneck is US↔EU = 40 ms, 2 RTT ≈ 160 ms.
-Fast 4/5 — A1, A2 (US) + A3, A4 (EU) → same bottleneck (US↔EU), 1 RTT ≈ 80 ms.
-Fast saves one RTT (~80 ms) because the 4th acceptor (A4) is in the same region as the 3rd (EU).
+In the 3-proposer / 5-acceptor layout used by the comparative suite, proposers
+occupy East US 2, France Central, and Southeast Asia, while acceptors occupy all
+five regions. Scenario S1 also places the explicit benchmark client at ordinal 2,
+collocated with France Central rather than the distinguished primary.
 """
 
 _SCENARIO_DESCRIPTIONS: dict[str, str] = {
-    "S1": r"""## S1 — Geo-Distributed, Low Contention
+    "S1": r"""## S1 - Geo-Distributed, No Contention
 
-**What this tests:** A single proposer writing to 5 acceptors with no contention,
-across different topologies. This is the cleanest possible comparison of the
-1-RTT (fast) vs 2-RTT (classic/leader) cost, free from contention noise.
+**What this tests:** One explicit benchmark client drives a single request stream
+from topology ordinal 2 while the three proposers are spread across the first
+three geo regions. There is no proposer contention, so the dominant cost is
+client routing plus the commit RTT.
 
-**Setup:** 1 proposer, 5 acceptors, 1000 proposals sent serially (each waits
-for the previous to complete). No faults. Each topology is tested separately.
+**Setup:** 3 proposers, 5 acceptors, 1000 proposals on `geo5region` with
+`client-ordinal=2` and no faults.
 
-**Client routing:** Single client sends all proposals to the sole proposer (P1).
+**Client routing:** The explicit client is collocated with proposer 2's region.
+Fast and classic route to the nearest healthy proposer. Leader mode still sends
+every request to proposer 1, so it pays an extra client-to-primary hop before
+the quorum round starts.
 
 | Parameter | Value |
 |-----------|-------|
-| Proposers | 1 |
+| Proposers | 3 |
 | Acceptors | 5 |
 | Proposals | 1 000 |
-| Topologies | LAN, Symmetric-40, US Cross-Region, Geo 3-Region |
+| Topology | Geo 5-Region |
+| Explicit client | Ordinal 2 |
+| Modes | Classic, Fast, Leader |
 | Faults | None |
 
-**What to look for:** Fast should complete in ~1 RTT, classic in ~2 RTT.
-The absolute gap grows with link latency (negligible on LAN, ~80 ms on Symmetric-40).
-Leader amortizes prepare across ballots but still pays the initial cost.
+**What to look for:** Fast removes one proposer-to-acceptor RTT, but leader also
+absorbs the intentional non-local client hop. Proposer learning keeps later
+requests from starting cold even though the workload itself is contention-free.
 """,
 
-    "S2": r"""## S2 — Agreement Consensus
+    "S2": r"""## S2 - Agreement Consensus
 
-**What this tests:** Multiple proposers sending the *same* value concurrently,
-with agreement-mode routing. Clients learn committed values and propagate them
-to other proposers, avoiding future conflicts.
+**What this tests:** A LAN agreement sweep comparing the default synthetic
+per-proposer workload against `agreement-mode=true`, where geo-aware clients and
+proposer learning converge on the same next value so fast rounds avoid conflict.
 
-**Setup:** 3 (or 5) proposers, 5 acceptors, 1000 proposals on Symmetric-40.
-Agreement mode enabled — all proposers in each batch propose the same character.
+**Setup:** 3 or 5 proposers, 5 acceptors, 1000 proposals on `lan`, sweeping
+`agreement-mode=false` and `agreement-mode=true`.
 
 **Client routing:**
-- *Fast mode:* client sends to **all** healthy proposers simultaneously.
-- *Leader mode:* client sends to the current leader only.
-- *Classic mode:* client sends to the **nearest** healthy proposer
-  (ordered by ascending one-way latency, then ordinal distance).
-
-After receiving a response, the client propagates the committed value to
-all other healthy proposers via `LearnCommittedValue()`.
+- With `agreement-mode=false`, each synthetic request stream stays attached to
+  its proposer.
+- With `agreement-mode=true`, fast fans each logical request to all healthy
+  proposers, classic targets the nearest healthy proposer, and leader targets
+  the current primary and updates after failover.
+- After commits, proposers broadcast learned state so later requests can reuse
+  the accepted ballot, accepted value, and prepared ballot.
 
 | Parameter | Value |
 |-----------|-------|
 | Proposers | 3 or 5 |
 | Acceptors | 5 |
 | Proposals | 1 000 |
-| Topology | Symmetric-40 |
-| Agreement mode | ✅ |
+| Topology | LAN |
+| Agreement mode | false / true (sweep) |
+| Modes | Classic, Fast, Leader |
 | Faults | None |
 
-**What to look for:** Because all proposers agree on the same value, fast-round
-conflicts are rare. Fast mode's fan-out to all proposers adds bandwidth cost
-but avoids prepare phases entirely.
+**What to look for:** `agreement-mode=true` should sharply reduce fast-round
+conflicts. The comparison against `agreement-mode=false` shows how much of the
+gain comes from client-aware routing and learned-state propagation.
 """,
 
-    "S3": r"""## S3 — Register Initialization Burst
+    "S3": r"""## S3 - Register Initialization Burst
 
-**What this tests:** Many independent first-writes to previously uninitialized
-registers. Each proposal targets a unique register (A, B, C, …), so acceptors
-have no prior promised ballots.
+**What this tests:** Many independent first writes to previously uninitialized
+registers. Each proposal targets a distinct register, so acceptors do not start
+with any promised ballot history for that key.
 
-**Setup:** 1 or 3 proposers, 5 acceptors, 200 proposals per configuration.
-Register-init mode enabled. Tested on LAN and Geo 3-Region.
+**Setup:** 1 or 3 proposers, 5 acceptors, 200 proposals on `lan` with
+`register-init-mode=true`.
 
-**Client routing:** Non-agreement mode — each client slot maps 1:1 to a proposer.
+**Client routing:** The default benchmark workload drives one synthetic request
+stream per proposer, so the comparison isolates first-write protocol mechanics
+instead of geo routing.
 
 | Parameter | Value |
 |-----------|-------|
 | Proposers | 1 or 3 |
 | Acceptors | 5 |
 | Proposals | 200 |
-| Topologies | LAN, Geo 3-Region |
-| Register-init mode | ✅ |
+| Topology | LAN |
+| Register-init mode | true |
+| Modes | Classic, Fast, Leader |
 | Faults | None |
 
-**What to look for:** Fast mode's implicit ballot means it can commit on the
-very first write without a prepare phase (0 RTT for the prepare, 1 RTT for
-accept). Classic always needs 2 RTT. This scenario isolates that advantage.
+**What to look for:** Fast commit's implicit ballot gives first writes a 1-RTT
+path instead of prepare plus accept. On LAN the absolute gap is small, but the
+RTT histogram should still show the missing prepare phase.
 """,
 
-    "S4": r"""## S4 — Infrequent Writes (Write-Interval Sweep)
+    "S4": r"""## S4 - Infrequent Writes
 
-**What this tests:** Increasing gaps between batches of proposals (0, 10, 50,
-200 ms). Leader mode amortizes its prepare cost across many fast rounds, but
-longer gaps mean fewer proposals per prepare cycle — eventually the
-amortization breaks down and fast mode wins.
+**What this tests:** Increasing gaps between write bursts (0, 10, 50, 200 ms).
+Leader mode relies on prepared-ballot reuse, so larger gaps reduce the amount of
+work amortized by each prepare.
 
-**Setup:** 3 proposers, 5 acceptors, 100 proposals on Symmetric-40.
-Write interval swept across 0 / 10 / 50 / 200 ms. Only fast and leader modes
-(classic omitted since it's always 2 RTT).
+**Setup:** 3 proposers, 5 acceptors, 100 proposals on `lan`, sweeping
+`write-interval-ms=0,10,50,200`. Only fast and leader are included.
 
-**Client routing:** Non-agreement mode, 1:1 client-to-proposer mapping.
+**Client routing:** The default synthetic workload keeps one request stream per
+proposer. With no agreement mode enabled, each proposer competes on normal write
+traffic while the interval sweep controls how bursty the workload feels.
 
 | Parameter | Value |
 |-----------|-------|
 | Proposers | 3 |
 | Acceptors | 5 |
 | Proposals | 100 |
-| Topology | Symmetric-40 |
+| Topology | LAN |
 | Write intervals | 0, 10, 50, 200 ms |
 | Modes | Fast, Leader only |
 | Faults | None |
 
-**What to look for:** At 0 ms interval, leader's amortized prepare wins.
-As the interval grows, the prepare expires between bursts and must be
-re-issued, eroding leader's advantage.
+**What to look for:** At 0 ms, leader can hide most of its prepare cost. As the
+write interval grows, that reuse fades and fast should reclaim the latency lead.
 """,
 
-    "S5": r"""## S5 — High-Throughput Sustained Stream
+    "S5": r"""## S5 - High-Throughput Sustained Stream
 
-**What this tests:** A single proposer streaming proposals as fast as possible
-with no inter-proposal gaps. Measures sustained throughput (proposals/sec) at
-the RTT-dominated limit.
+**What this tests:** A single proposer emits a long write stream with no idle
+time. This is the best case for distinguished leader mode because prepared-ballot
+reuse is continuous and there is no multi-proposer contention.
 
-**Setup:** 1 proposer, 5 acceptors, 2000 proposals. Tested on LAN and
-US Cross-Region topologies.
+**Setup:** 1 proposer, 5 acceptors, 2000 proposals on `lan`.
 
-**Client routing:** Single client, single proposer (P1).
+**Client routing:** The default workload becomes one synthetic request stream on
+a single proposer, so the chart focuses on steady-state protocol overhead rather
+than routing decisions.
 
 | Parameter | Value |
 |-----------|-------|
 | Proposers | 1 |
 | Acceptors | 5 |
 | Proposals | 2 000 |
-| Topologies | LAN, US Cross-Region |
+| Topology | LAN |
+| Modes | Classic, Fast, Leader |
 | Faults | None |
 
-**What to look for:** On LAN, throughput is processor-limited (RTT is tiny).
-On US Cross-Region, throughput is RTT-limited: fast (1 RTT) should achieve
-roughly double the throughput of classic (2 RTT).
+**What to look for:** Fast still saves an RTT per commit, but leader should
+recover some of that gap by amortizing its prepare over a sustained stream.
 """,
 
-    "S6": r"""## S6 — Contention Spectrum
+    "S6": r"""## S6 - Contention Spectrum
 
-**What this tests:** Increasing proposer counts (1, 2, 3, 5, 7) to show how
-contention affects each protocol mode. At low contention fast's 1-RTT advantage
-dominates; at high contention leader's centralized coordination avoids conflicts.
+**What this tests:** A proposer-count sweep (1, 2, 3, 5, 7) showing where fast's
+leaderless 1-RTT path stops winning and leader's centralized coordination starts
+paying off.
 
-**Setup:** Variable proposers (1–7), 5 acceptors, 500 proposals on
-Symmetric-40. Each iteration sends one proposal per proposer in parallel.
+**Setup:** 1, 2, 3, 5, and 7 proposers, 5 acceptors, 500 proposals on `lan`.
+All three protocol modes are included.
 
-**Client routing:** Non-agreement mode, 1:1 client-to-proposer mapping.
-All N proposers compete for the same register.
+**Client routing:** The default workload keeps one synthetic request stream per
+proposer, so every point on the sweep raises or lowers contention by changing the
+number of active writers targeting the same register.
 
 | Parameter | Value |
 |-----------|-------|
-| Proposers | 1, 2, 3, 5, 7 (sweep) |
+| Proposers | 1, 2, 3, 5, 7 |
 | Acceptors | 5 |
 | Proposals | 500 |
-| Topology | Symmetric-40 |
+| Topology | LAN |
+| Modes | Classic, Fast, Leader |
 | Faults | None |
 
-**What to look for:** The contention spectrum chart shows the crossover:
-fast wins at low P, leader wins at high P. Classic is always slowest.
+**What to look for:** Low contention favors fast's 1-RTT path. As contention
+rises, retries and conflict recovery should create a crossover where leader wins.
 """,
 
-    "S7": r"""## S7 — Leader Gray Failure
+    "S7": r"""## S7 - Leader Gray Failure
 
-**What this tests:** A soft (gray) failure on the leader (proposer 1):
-200 ms extra delay ± 50 ms jitter injected on all links to/from P1 during
-proposals 200–400. Tests how each mode degrades under partial failure.
+**What this tests:** A soft failure on proposer 1. During the middle of the run,
+all traffic to and from proposer 1 gets an extra 200 ms delay plus 50 ms jitter.
 
-**Setup:** 3 proposers, 5 acceptors, 600 proposals on Symmetric-40.
-Only fast and leader modes tested.
+**Setup:** 3 proposers, 5 acceptors, 600 proposals on `lan` with
+`fault-schedule=slow-link:proposer:1:at:200:until:400:delay:200:jitter:50`.
+Only fast and leader are included.
 
-**Client routing:** Non-agreement mode. Clients 1–3 map 1:1 to proposers P1–P3.
-
-**Fault:** `slow-link:proposer:1:at:200:until:400:delay:200:jitter:50`
-— P1's links to all other nodes get +200 ms ± 50 ms added latency.
+**Client routing:** The default synthetic workload keeps one request stream per
+proposer. In leader mode, proposer 1 is also the distinguished primary, so all
+cluster traffic depends on the degraded node.
 
 | Parameter | Value |
 |-----------|-------|
 | Proposers | 3 |
 | Acceptors | 5 |
 | Proposals | 600 |
-| Topology | Symmetric-40 |
-| Fault | Slow-link on P1, proposals 200–400 |
+| Topology | LAN |
+| Fault | Slow-link on proposer 1 during proposals 200-400 |
 | Modes | Fast, Leader only |
 
-**What to look for:** In leader mode, *all* traffic goes through P1 (the leader),
-so the entire cluster degrades. In fast mode, only P1's proposals slow down —
-P2 and P3 are unaffected, demonstrating fast's per-proposer isolation.
+**What to look for:** Leader mode should degrade cluster-wide because every
+proposal still routes through proposer 1. In fast mode, only proposer 1's own
+traffic slows down while the other proposers continue normally.
 """,
 
-    "S8": r"""## S8 — Leader Crash Failover
+    "S8": r"""## S8 - Leader Crash Failover
 
-**What this tests:** Hard failure — proposer 1 (the leader) crashes at proposal 30
-and restarts at proposal 60. Agreement mode is enabled so clients can fail over
-to alternative proposers.
+**What this tests:** A hard leader outage followed by client failover. Proposer 1
+crashes at proposal 30 and stays down until proposal 60, while agreement mode
+keeps clients aware of alternative proposers.
 
-**Setup:** 3 proposers, 5 acceptors, 90 proposals on Symmetric-40.
-Client timeout set to 300 ms (3× baseline RTT) with 2 retries.
+**Setup:** 3 proposers, 5 acceptors, 90 proposals on `lan` with
+`fault-schedule=crash:proposer:1:at:30:until:60`, `agreement-mode=true`, and
+`client-timeout-ms=20`. Only fast and leader are included.
 
-**Client routing:** Agreement mode —
-- *Fast:* sends to all healthy proposers. When P1 crashes, clients immediately
-  route to P2/P3.
-- *Leader:* sends to leader (P1) only. When P1 crashes, clients wait for the
-  300 ms timeout, then fail over to P2 or P3.
-
-**Fault:** `crash:proposer:1:at:30:until:60` — P1 is network-isolated and
-suspended from proposal 30 to 60.
+**Client routing:**
+- Fast fans each logical request to all healthy proposers, so it keeps making
+  progress while proposer 1 is down.
+- Leader mode targets the current primary, waits for the 20 ms timeout, and then
+  fails over to another proposer.
 
 | Parameter | Value |
 |-----------|-------|
 | Proposers | 3 |
 | Acceptors | 5 |
 | Proposals | 90 |
-| Topology | Symmetric-40 |
-| Agreement mode | ✅ |
-| Client timeout | 300 ms |
-| Fault | Crash P1, proposals 30–60 |
+| Topology | LAN |
+| Agreement mode | true |
+| Client timeout | 20 ms |
+| Fault | Crash proposer 1 during proposals 30-60 |
 | Modes | Fast, Leader only |
 
-**What to look for:** The failover timeline shows leader mode's availability
-gap (stutter while clients detect the crash) vs fast mode's smoother failover.
-Red × markers indicate proposals that triggered client failover.
+**What to look for:** The modest 20 ms timeout keeps failover visible on a LAN
+without dominating the run. Leader mode should show a short availability stutter
+that fast largely avoids.
 """,
 }
 
@@ -1903,6 +1850,24 @@ _PROTOCOL_MODES_SECTION = r"""## Protocol Modes
   3/5 quorum. The baseline.
 """
 
+_SCENARIO_SUMMARY_SECTION = r"""## Current Comparative Suite
+
+| Scenario | Topology | Main sweep | Focus |
+|----------|----------|------------|-------|
+| S1 | Geo 5-Region | Explicit client at ordinal 2 | Non-primary client routing with no contention |
+| S2 | LAN | `agreement-mode=false/true`, proposers `3/5` | Agreement routing plus proposer learning |
+| S3 | LAN | Proposers `1/3` | First-write latency with `register-init-mode=true` |
+| S4 | LAN | `write-interval-ms=0/10/50/200` | Prepared-ballot amortization under burst gaps |
+| S5 | LAN | Single proposer stream | Sustained throughput with no contention |
+| S6 | LAN | Proposers `1/2/3/5/7` | Contention crossover between fast and leader |
+| S7 | LAN | Slow-link fault on proposer 1 | Gray-failure isolation vs leader bottleneck |
+| S8 | LAN | Crash fault on proposer 1 | Timeout-driven leader failover |
+"""
+
+_RESULTS_INTRO_SECTION = r"""_This document describes the current comparative benchmark suite defined in `run_comparative_benchmarks.ps1`. If charts are missing for a scenario, rerun `.\run_comparative_benchmarks.ps1` and then `uv run scripts\plot_benchmarks.py --input artifacts\comparative --comparative` to refresh the artifacts._
+"""
+
+_SCENARIO_ORDER = ("S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8")
 
 def generate_results_markdown(
     root_dir: str,
@@ -1922,16 +1887,26 @@ def generate_results_markdown(
 
     lines: list[str] = []
     lines.append("# Fast CASPaxos — Comparative Benchmark Results\n")
+    lines.append(_RESULTS_INTRO_SECTION)
     lines.append(_PROTOCOL_MODES_SECTION)
+    lines.append(_SCENARIO_SUMMARY_SECTION)
     lines.append(_TOPOLOGY_SECTION)
 
+    ordered_sids = list(dict.fromkeys([*_SCENARIO_ORDER, *scenario_charts.keys()]))
+
     # Per-scenario sections
-    for sid, charts in scenario_charts.items():
+    for sid in ordered_sids:
+        charts = scenario_charts.get(sid, [])
         desc = _SCENARIO_DESCRIPTIONS.get(sid)
         if desc:
             lines.append(desc)
         else:
             lines.append(f"## {sid}\n")
+
+        if not charts:
+            lines.append("_Charts are not available for this scenario in the current artifact snapshot. Re-run the comparative suite to regenerate them._\n")
+            lines.append("---\n")
+            continue
 
         # Group charts by sub-group prefix (everything before the chart-type suffix)
         sub_groups: dict[str, list[str]] = OrderedDict()
