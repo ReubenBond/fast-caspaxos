@@ -1676,10 +1676,10 @@ mode comparison isolates the remaining protocol overheads.
     "S3": r"""## S3 - Register Initialization Burst
 
 **What this tests:** Many independent first writes to previously uninitialized
-registers. Each proposal targets a distinct register, so acceptors do not start
-with any promised ballot history for that key.
+registers. The simulation reinitializes all proposer and acceptor state before
+each proposal, so every write behaves as if it targets a brand-new register.
 
-**Setup:** 1 or 3 proposers, 5 acceptors, 200 proposals on `lan` with
+**Setup:** 1 proposer, 5 acceptors, 200 proposals on `lan` with
 `register-init-mode=true`.
 
 **Client routing:** The default benchmark workload drives one synthetic request
@@ -1688,7 +1688,7 @@ instead of geo routing.
 
 | Parameter | Value |
 |-----------|-------|
-| Proposers | 1 or 3 |
+| Proposers | 1 |
 | Acceptors | 5 |
 | Proposals | 200 |
 | Topology | LAN |
@@ -1697,8 +1697,9 @@ instead of geo routing.
 | Faults | None |
 
 **What to look for:** Fast commit's implicit ballot gives first writes a 1-RTT
-path instead of prepare plus accept. On LAN the absolute gap is small, but the
-RTT histogram should still show the missing prepare phase.
+path instead of the 2-RTT prepare-plus-accept required by Classic and Leader
+modes. On LAN the absolute gap is small, but the RTT histogram should clearly
+show the missing prepare phase for Fast commits.
 """,
 
     "S4": r"""## S4 - Infrequent Writes

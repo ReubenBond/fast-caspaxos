@@ -13,4 +13,6 @@ public sealed class InMemoryFastCasAcceptorStateStore<TValue> : IFastCasAcceptor
         ArgumentNullException.ThrowIfNull(state);
         _states[nodeId] = state;
     }
+
+    public void Clear(FastCasNodeId nodeId) => _states.Remove(nodeId);
 }

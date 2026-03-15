@@ -729,6 +729,29 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         RecordFault($"resume {address}");
     }
 
+    /// <summary>
+    /// Resets every proposer and acceptor to pristine state, as if the cluster were managing a
+    /// brand-new register that has never been written to. The acceptor safety monitor is also
+    /// cleared so that subsequent commits are validated independently of earlier history.
+    /// </summary>
+    public void ReinitializeForNewRegister()
+    {
+        foreach (var proposerNode in _proposerNodes)
+        {
+            proposerNode.Restart();
+        }
+
+        foreach (var acceptorNode in _acceptorNodes)
+        {
+            if (acceptorNode.Host is FastCasAcceptorHost<TValue> acceptorHost)
+            {
+                acceptorHost.ReinitializeAsFreshRegister();
+            }
+        }
+
+        AcceptorSafetyMonitor.Reset();
+    }
+
     private FastCasSimulationNode<TValue> GetNode(FastCasAddress address)
     {
         var node = Nodes.FirstOrDefault(candidate => candidate.Host.Address == address);

@@ -1625,6 +1625,14 @@ public static class SimulationScenarioCatalog
         var completedProposals = 0;
         while (completedProposals < proposalCount)
         {
+            // In register-init mode each proposal models an independent first-write to a
+            // brand-new register. Reset all proposer and acceptor state so that no piggybacked
+            // ballots or cached values carry over from the previous proposal.
+            if (benchmarkOptions.RegisterInitMode && completedProposals > 0)
+            {
+                cluster.ReinitializeForNewRegister();
+            }
+
             // Check fault schedule before each batch
             benchmarkOptions.ApplyFaultAtProposal(cluster, completedProposals, recorder);
 

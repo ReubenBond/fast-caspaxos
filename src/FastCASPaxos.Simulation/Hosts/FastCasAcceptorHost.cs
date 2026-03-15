@@ -96,6 +96,18 @@ public sealed class FastCasAcceptorHost<TValue> : IFastCasNodeHost<TValue>
         IsRunning = true;
     }
 
+    /// <summary>
+    /// Resets the acceptor to pristine state as if it were a brand-new node that has never
+    /// participated in any protocol round. The durable state store is cleared so that a
+    /// subsequent <see cref="Restart"/> also starts fresh.
+    /// </summary>
+    public void ReinitializeAsFreshRegister()
+    {
+        _stateStore.Clear(NodeId);
+        _engine = new HostAcceptorEngine(this, Address);
+        IsRunning = true;
+    }
+
     private HostAcceptorEngine CreateEngine()
     {
         if (_stateStore.TryLoad(NodeId, out var durableState))

@@ -164,7 +164,7 @@ foreach ($mode in $allModes) {
 # --- S3: register-init-burst ---
 # LAN is the merged single-region baseline.
 foreach ($topo in @("lan")) {
-    foreach ($pCount in @(1, 3)) {
+    foreach ($pCount in @(1)) {
         foreach ($mode in $allModes) {
             $modeParams = Get-ModeParams $mode
             $topoParams = Get-TopologyParams $topo

@@ -59,6 +59,21 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
 
     public int UpdateCount { get; private set; }
 
+    /// <summary>
+    /// Clears all accumulated state so that subsequent observations start from a clean baseline.
+    /// Used when the simulation reinitializes all nodes to model a fresh register.
+    /// </summary>
+    public void Reset()
+    {
+        _commitHistory.Clear();
+        _lastSnapshot = [];
+        _lastObservedAt = null;
+        _lastUpdatedAcceptor = null;
+        _cachedArtifact = null;
+        _artifactDirty = true;
+        UpdateCount = 0;
+    }
+
     public void Observe(
         DateTimeOffset timestamp,
         FastCasAddress updatedAcceptor,
