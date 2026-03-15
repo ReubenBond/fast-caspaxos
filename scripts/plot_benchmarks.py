@@ -20,12 +20,11 @@ Reads benchmark-latency.csv files from the benchmark output directory and produc
 
 Comparative mode (--comparative) additionally generates:
   - Latency time-series with confidence bands (multi-run aggregation)
-  - Contention spectrum charts
-  - Failover timeline charts
+  - Scenario-specific contention spectrum charts
+  - Scenario-specific failover timeline charts
   - RTT distribution comparisons
-  - Scenario summary dashboards
-  - Topology x mode heatmaps
-  - Per-proposer latency traces
+  - Scenario-specific topology x mode heatmaps
+  - Scenario-specific per-proposer latency traces
 
 Usage:
     uv run scripts/plot_benchmarks.py --input artifacts/benchmark
@@ -70,6 +69,28 @@ _EXTRA_COLORS = [
     "#3F51B5", "#009688", "#FF5722", "#CDDC39", "#8BC34A",
 ]
 
+SERIES_COLORS = list(MODE_COLORS.values()) + _EXTRA_COLORS
+
+COMPARATIVE_CONFIG_FIELDS = (
+    "mode",
+    "topology",
+    "fault_label",
+    "proposer_count",
+    "acceptor_count",
+    "agreement_mode",
+    "register_init_mode",
+    "write_interval_ms",
+    "client_timeout_ms",
+    "client_max_retries",
+    "proposer_timing_source",
+    "proposer_expected_rtt_ms",
+    "proposer_retry_backoff_start_after_failures",
+    "proposer_retry_backoff_base_ms",
+    "proposer_retry_backoff_max_ms",
+    "proposer_retry_backoff_jitter_ratio",
+    "proposer_response_timeout_ms",
+)
+
 
 def _color_for_mode(mode: str, idx: int = 0) -> str:
     """Return a color for a protocol mode, falling back to extras."""
@@ -79,6 +100,11 @@ def _color_for_mode(mode: str, idx: int = 0) -> str:
 def _label_for_mode(mode: str) -> str:
     """Return a human-friendly label for a protocol mode."""
     return MODE_LABELS.get(mode, mode)
+
+
+def _color_for_series(idx: int) -> str:
+    """Return a stable color for a chart series."""
+    return SERIES_COLORS[idx % len(SERIES_COLORS)]
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +156,24 @@ def load_csv(path: Path, round_id: str = "") -> list[dict]:
     with open(path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
+            def parse_int(name: str, default: int = 0) -> int:
+                value = row.get(name)
+                if value in (None, ""):
+                    return default
+                try:
+                    return int(value)
+                except ValueError:
+                    return default
+
+            def parse_bool(name: str) -> bool:
+                return str(row.get(name, "")).strip().lower() == "true"
+
+            def parse_float(name: str, default: float = 0.0) -> float:
+                raw = str(row.get(name, "")).strip()
+                if raw == "":
+                    return default
+                return float(raw)
+
             rows.append({
                 "request_id": int(row["request_id"]),
                 "proposer": row["proposer"],
@@ -142,6 +186,20 @@ def load_csv(path: Path, round_id: str = "") -> list[dict]:
                 "topology": row.get("topology", ""),
                 "fault_label": row.get("fault_label", ""),
                 "failover_count": int(row.get("failover_count", "0")),
+                "proposer_count": parse_int("proposer_count"),
+                "acceptor_count": parse_int("acceptor_count", default=5),
+                "agreement_mode": parse_bool("agreement_mode"),
+                "register_init_mode": parse_bool("register_init_mode"),
+                "write_interval_ms": parse_int("write_interval_ms"),
+                "client_timeout_ms": parse_int("client_timeout_ms"),
+                "client_max_retries": parse_int("client_max_retries", default=2),
+                "proposer_timing_source": row.get("proposer_timing_source", ""),
+                "proposer_expected_rtt_ms": parse_float("proposer_expected_rtt_ms"),
+                "proposer_retry_backoff_start_after_failures": parse_int("proposer_retry_backoff_start_after_failures"),
+                "proposer_retry_backoff_base_ms": parse_float("proposer_retry_backoff_base_ms"),
+                "proposer_retry_backoff_max_ms": parse_float("proposer_retry_backoff_max_ms"),
+                "proposer_retry_backoff_jitter_ratio": parse_float("proposer_retry_backoff_jitter_ratio"),
+                "proposer_response_timeout_ms": parse_float("proposer_response_timeout_ms"),
                 "_round_id": round_id,
             })
     return rows
@@ -153,6 +211,129 @@ def group_by(rows: list[dict], key: str) -> dict[str, list[dict]]:
     for row in rows:
         groups[row[key]].append(row)
     return dict(groups)
+
+
+def comparative_config_key(
+    row: dict,
+    *,
+    exclude_fields: set[str] | None = None,
+) -> tuple:
+    """Build a grouping key for a comparative benchmark configuration."""
+    excluded = exclude_fields or set()
+    return tuple(
+        row.get(field)
+        for field in COMPARATIVE_CONFIG_FIELDS
+        if field not in excluded
+    )
+
+
+def build_comparative_label_map(
+    rows: list[dict],
+    *,
+    exclude_fields: set[str] | None = None,
+) -> dict[tuple, str]:
+    """Build human-readable labels for comparative benchmark configurations."""
+    excluded = exclude_fields or set()
+    unique_configs: dict[tuple, dict] = {}
+    for row in rows:
+        key = comparative_config_key(row, exclude_fields=excluded)
+        unique_configs.setdefault(key, row)
+
+    if not unique_configs:
+        return {}
+
+    varying_fields: set[str] = set()
+    for field in COMPARATIVE_CONFIG_FIELDS:
+        if field == "mode" or field in excluded:
+            continue
+        values = {config_row.get(field) for config_row in unique_configs.values()}
+        if len(values) > 1:
+            varying_fields.add(field)
+
+    labels: dict[tuple, str] = {}
+    for key, row in unique_configs.items():
+        parts = [_label_for_mode(row.get("mode", ""))]
+
+        if "topology" in varying_fields and row.get("topology"):
+            parts.append(f"topology={row['topology']}")
+        if "fault_label" in varying_fields:
+            parts.append(f"fault={row.get('fault_label') or 'none'}")
+        if "proposer_count" in varying_fields:
+            parts.append(f"proposers={row.get('proposer_count', 0)}")
+        if "acceptor_count" in varying_fields:
+            parts.append(f"acceptors={row.get('acceptor_count', 0)}")
+        if "agreement_mode" in varying_fields:
+            parts.append(f"agreement={'true' if row.get('agreement_mode') else 'false'}")
+        if "register_init_mode" in varying_fields:
+            parts.append(f"register-init={'true' if row.get('register_init_mode') else 'false'}")
+        if "write_interval_ms" in varying_fields:
+            parts.append(f"interval={row.get('write_interval_ms', 0)}ms")
+        if "client_timeout_ms" in varying_fields:
+            parts.append(f"timeout={row.get('client_timeout_ms', 0)}ms")
+        if "client_max_retries" in varying_fields:
+            parts.append(f"retries={row.get('client_max_retries', 0)}")
+        if "proposer_timing_source" in varying_fields and row.get("proposer_timing_source"):
+            parts.append(f"timing={row.get('proposer_timing_source')}")
+        if "proposer_expected_rtt_ms" in varying_fields:
+            parts.append(f"rtt={row.get('proposer_expected_rtt_ms', 0):g}ms")
+        if "proposer_retry_backoff_start_after_failures" in varying_fields:
+            parts.append(f"retry-start={row.get('proposer_retry_backoff_start_after_failures', 0)}")
+        if "proposer_retry_backoff_base_ms" in varying_fields:
+            parts.append(f"retry-base={row.get('proposer_retry_backoff_base_ms', 0):g}ms")
+        if "proposer_retry_backoff_max_ms" in varying_fields:
+            parts.append(f"retry-max={row.get('proposer_retry_backoff_max_ms', 0):g}ms")
+        if "proposer_retry_backoff_jitter_ratio" in varying_fields:
+            parts.append(f"retry-jitter={row.get('proposer_retry_backoff_jitter_ratio', 0):g}")
+        if "proposer_response_timeout_ms" in varying_fields:
+            parts.append(f"resp-timeout={row.get('proposer_response_timeout_ms', 0):g}ms")
+
+        labels[key] = ", ".join(parts)
+
+    return labels
+
+
+def _sub_group_key_no_mode(row: dict) -> tuple:
+    """Sub-grouping key: all comparative config fields except mode."""
+    return tuple(
+        row.get(field)
+        for field in COMPARATIVE_CONFIG_FIELDS
+        if field != "mode"
+    )
+
+
+def _build_sub_group_suffix(
+    sub_group_rows: list[dict], all_scenario_rows: list[dict],
+) -> str:
+    """Build a compact descriptive suffix from non-mode fields that vary within the scenario."""
+    varying: list[tuple[str, str]] = []
+    sample = sub_group_rows[0]
+    for field in COMPARATIVE_CONFIG_FIELDS:
+        if field == "mode":
+            continue
+        values = {r.get(field) for r in all_scenario_rows}
+        if len(values) <= 1:
+            continue
+        val = sample.get(field)
+        if field == "topology":
+            varying.append(("", str(val)))
+        elif field == "proposer_count":
+            varying.append(("p", str(val)))
+        elif field == "acceptor_count":
+            varying.append(("a", str(val)))
+        elif field == "agreement_mode":
+            varying.append(("agree-", "true" if val else "false"))
+        elif field == "register_init_mode":
+            varying.append(("reginit-", "true" if val else "false"))
+        elif field == "write_interval_ms":
+            varying.append(("interval-", f"{val}ms"))
+        elif field == "fault_label":
+            varying.append(("fault-", str(val or "none")))
+        else:
+            varying.append((f"{field.replace('_', '-')}-", str(val)))
+
+    if not varying:
+        return ""
+    return "-".join(f"{prefix}{val}" for prefix, val in varying)
 
 
 # ---------------------------------------------------------------------------
@@ -195,10 +376,10 @@ def aggregate_multi_run(all_rows: list[dict], smoothing_window: int = 20) -> dic
     """
     Aggregate samples across multiple rounds of the same scenario configuration.
 
-    Groups by (mode, topology, fault_label), aligns by proposal index within
+    Groups by the full benchmark configuration, aligns by proposal index within
     each group, and computes statistics.
 
-    Returns dict keyed by (mode, topology, fault_label) -> {
+    Returns dict keyed by the comparative configuration tuple -> {
         'proposal_index': [...],
         'latency_median': [...],
         'latency_p25': [...],
@@ -214,8 +395,9 @@ def aggregate_multi_run(all_rows: list[dict], smoothing_window: int = 20) -> dic
     }
     """
     groups: dict[tuple, list[dict]] = defaultdict(list)
+    labels = build_comparative_label_map(all_rows)
     for row in all_rows:
-        key = (row["mode"], row["topology"], row["fault_label"])
+        key = comparative_config_key(row)
         groups[key].append(row)
 
     result = {}
@@ -301,6 +483,8 @@ def aggregate_multi_run(all_rows: list[dict], smoothing_window: int = 20) -> dic
             tp_p75 = np.array([])
 
         result[key] = {
+            "label": labels.get(key, _label_for_mode(rows[0].get("mode", ""))),
+            "mode": rows[0].get("mode", ""),
             "proposal_index": proposal_indices,
             "latency_median": lat_median,
             "latency_p25": lat_p25,
@@ -347,35 +531,12 @@ def plot_latency_timeseries_aggregated(
     configure_matplotlib_style()
     import matplotlib.pyplot as plt
 
-    # Determine if we need to qualify labels with topology/fault
-    modes_seen = set()
-    topologies_seen = set()
-    faults_seen = set()
-    for (mode, topo, fault) in aggregated_data:
-        modes_seen.add(mode)
-        topologies_seen.add(topo)
-        faults_seen.add(fault)
-    multi_topo = len(topologies_seen) > 1
-    multi_fault = len(faults_seen - {""}) > 1
-
     fig, ax = plt.subplots(figsize=(14, 6))
-    legend_seen: set[str] = set()
-    for idx, (key, data) in enumerate(sorted(aggregated_data.items())):
-        mode, topology, fault = key
-        color = _color_for_mode(mode, idx)
-        suffix_parts = []
-        if multi_topo and topology:
-            suffix_parts.append(topology)
-        if multi_fault and fault and fault != "none":
-            suffix_parts.append(fault)
-        label = _label_for_mode(mode)
-        if suffix_parts:
-            label += f" ({', '.join(suffix_parts)})"
-        show_legend = label not in legend_seen
-        legend_seen.add(label)
-
+    for idx, (_key, data) in enumerate(sorted(aggregated_data.items(), key=lambda item: item[1]["label"])):
+        mode = data.get("mode", "")
+        color = _color_for_mode(mode, idx) if mode else _color_for_series(idx)
         x = data["proposal_index"]
-        ax.plot(x, data["latency_median"], label=label if show_legend else "_nolegend_", color=color, linewidth=1.5)
+        ax.plot(x, data["latency_median"], label=data["label"], color=color, linewidth=1.5)
         ax.fill_between(
             x, data["latency_p25"], data["latency_p75"],
             color=color, alpha=CONFIDENCE_ALPHA, label="_nolegend_",
@@ -393,7 +554,7 @@ def plot_latency_timeseries_aggregated(
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     fig.tight_layout()
-    fig.savefig(os.path.join(output_dir, f"latency-{scenario_name}.png"), dpi=200)
+    fig.savefig(os.path.join(output_dir, f"{scenario_name}-commit-latency.png"), dpi=200)
     plt.close(fig)
 
 
@@ -406,30 +567,11 @@ def plot_latency_timeseries_aggregated_plotly(
     except ImportError:
         return
 
-    # Determine if we need to qualify labels with topology/fault
-    topologies_seen = set()
-    faults_seen = set()
-    for (mode, topo, fault) in aggregated_data:
-        topologies_seen.add(topo)
-        faults_seen.add(fault)
-    multi_topo = len(topologies_seen) > 1
-    multi_fault = len(faults_seen - {""}) > 1
-
     fig = go.Figure()
-    legend_seen: set[str] = set()
-    for idx, (key, data) in enumerate(sorted(aggregated_data.items())):
-        mode, topology, fault = key
-        color = _color_for_mode(mode, idx)
-        suffix_parts = []
-        if multi_topo and topology:
-            suffix_parts.append(topology)
-        if multi_fault and fault and fault != "none":
-            suffix_parts.append(fault)
-        label = _label_for_mode(mode)
-        if suffix_parts:
-            label += f" ({', '.join(suffix_parts)})"
-        show_legend = label not in legend_seen
-        legend_seen.add(label)
+    for idx, (_key, data) in enumerate(sorted(aggregated_data.items(), key=lambda item: item[1]["label"])):
+        mode = data.get("mode", "")
+        color = _color_for_mode(mode, idx) if mode else _color_for_series(idx)
+        label = data["label"]
         x = data["proposal_index"].tolist()
 
         # P5-P95 band
@@ -449,7 +591,7 @@ def plot_latency_timeseries_aggregated_plotly(
         # Median line
         fig.add_trace(go.Scatter(
             x=x, y=data["latency_median"].tolist(),
-            mode="lines", name=label, showlegend=show_legend,
+            mode="lines", name=label, showlegend=True,
             line=dict(color=color, width=2),
         ))
 
@@ -458,14 +600,14 @@ def plot_latency_timeseries_aggregated_plotly(
         xaxis_title="Proposal Index", yaxis_title="Latency (ms)",
         height=500, template="plotly_white",
     )
-    fig.write_html(os.path.join(output_dir, f"latency-{scenario_name}.html"))
+    fig.write_html(os.path.join(output_dir, f"{scenario_name}-commit-latency.html"))
 
 
 # ---------------------------------------------------------------------------
 # 6b  Contention spectrum chart
 # ---------------------------------------------------------------------------
 
-def plot_contention_spectrum(all_rows: list[dict], output_dir: str) -> None:
+def plot_contention_spectrum(all_rows: list[dict], output_dir: str, scenario_name: str) -> None:
     """
     Contention spectrum (matplotlib).
 
@@ -476,26 +618,26 @@ def plot_contention_spectrum(all_rows: list[dict], output_dir: str) -> None:
     configure_matplotlib_style()
     import matplotlib.pyplot as plt
 
-    # Group by (mode, topology, fault_label) and count unique proposers
-    groups: dict[str, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
+    # Group by configuration excluding proposer-count, which becomes the x-axis.
+    groups: dict[tuple, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
+    labels = build_comparative_label_map(all_rows, exclude_fields={"proposer_count"})
     key_groups: dict[tuple, list[dict]] = defaultdict(list)
     for row in all_rows:
-        k = (row["mode"], row["topology"], row["fault_label"])
+        k = comparative_config_key(row, exclude_fields={"proposer_count"})
         key_groups[k].append(row)
 
-    for (mode, _topo, _fault), rows in key_groups.items():
-        n_proposers = len({r["proposer"] for r in rows})
-        lats = [r["latency_ms"] for r in rows]
-        groups[mode][n_proposers].extend(lats)
+    for key, rows in key_groups.items():
+        n_proposers = rows[0].get("proposer_count") or len({r["proposer"] for r in rows})
+        groups[key][n_proposers].extend([r["latency_ms"] for r in rows])
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    for idx, (mode, prop_data) in enumerate(sorted(groups.items())):
+    for idx, (key, prop_data) in enumerate(sorted(groups.items(), key=lambda item: labels.get(item[0], ""))):
         xs = sorted(prop_data.keys())
         medians = [float(np.median(prop_data[x])) for x in xs]
         p25s = [float(np.percentile(prop_data[x], 25)) for x in xs]
         p75s = [float(np.percentile(prop_data[x], 75)) for x in xs]
-        color = _color_for_mode(mode, idx)
-        label = _label_for_mode(mode)
+        color = _color_for_series(idx)
+        label = labels.get(key, "configuration")
 
         yerr_low = [m - p for m, p in zip(medians, p25s)]
         yerr_high = [p - m for m, p in zip(medians, p75s)]
@@ -506,40 +648,41 @@ def plot_contention_spectrum(all_rows: list[dict], output_dir: str) -> None:
 
     ax.set_xlabel("Number of Proposers (Contention)")
     ax.set_ylabel("Median Latency (ms)")
-    ax.set_title("Contention Spectrum", fontsize=14, fontweight="bold")
+    ax.set_title(f"Contention Spectrum — {scenario_name}", fontsize=14, fontweight="bold")
     ax.legend(framealpha=0.9)
     fig.tight_layout()
-    fig.savefig(os.path.join(output_dir, "contention-spectrum.png"), dpi=200)
+    fig.savefig(os.path.join(output_dir, f"{scenario_name}-contention-spectrum.png"), dpi=200)
     plt.close(fig)
 
 
-def plot_contention_spectrum_plotly(all_rows: list[dict], output_dir: str) -> None:
+def plot_contention_spectrum_plotly(all_rows: list[dict], output_dir: str, scenario_name: str) -> None:
     """Contention spectrum (plotly)."""
     try:
         import plotly.graph_objects as go
     except ImportError:
         return
 
-    groups: dict[str, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
+    groups: dict[tuple, dict[int, list[float]]] = defaultdict(lambda: defaultdict(list))
+    labels = build_comparative_label_map(all_rows, exclude_fields={"proposer_count"})
     key_groups: dict[tuple, list[dict]] = defaultdict(list)
     for row in all_rows:
-        k = (row["mode"], row["topology"], row["fault_label"])
+        k = comparative_config_key(row, exclude_fields={"proposer_count"})
         key_groups[k].append(row)
 
-    for (mode, _topo, _fault), rows in key_groups.items():
-        n_proposers = len({r["proposer"] for r in rows})
-        groups[mode][n_proposers].extend([r["latency_ms"] for r in rows])
+    for key, rows in key_groups.items():
+        n_proposers = rows[0].get("proposer_count") or len({r["proposer"] for r in rows})
+        groups[key][n_proposers].extend([r["latency_ms"] for r in rows])
 
     fig = go.Figure()
-    for idx, (mode, prop_data) in enumerate(sorted(groups.items())):
+    for idx, (key, prop_data) in enumerate(sorted(groups.items(), key=lambda item: labels.get(item[0], ""))):
         xs = sorted(prop_data.keys())
         medians = [float(np.median(prop_data[x])) for x in xs]
         p25s = [float(np.percentile(prop_data[x], 25)) for x in xs]
         p75s = [float(np.percentile(prop_data[x], 75)) for x in xs]
-        color = _color_for_mode(mode, idx)
+        color = _color_for_series(idx)
         fig.add_trace(go.Scatter(
             x=xs, y=medians, mode="lines+markers",
-            name=_label_for_mode(mode),
+            name=labels.get(key, "configuration"),
             line=dict(color=color, width=2),
             error_y=dict(
                 type="data", symmetric=False,
@@ -549,11 +692,11 @@ def plot_contention_spectrum_plotly(all_rows: list[dict], output_dir: str) -> No
         ))
 
     fig.update_layout(
-        title="Contention Spectrum",
+        title=f"Contention Spectrum — {scenario_name}",
         xaxis_title="Number of Proposers", yaxis_title="Median Latency (ms)",
         height=500, template="plotly_white",
     )
-    fig.write_html(os.path.join(output_dir, "contention-spectrum.html"))
+    fig.write_html(os.path.join(output_dir, f"{scenario_name}-contention-spectrum.html"))
 
 
 # ---------------------------------------------------------------------------
@@ -567,50 +710,71 @@ def plot_failover_timeline(
     fault_start_ms: float | None = None,
     fault_end_ms: float | None = None,
 ) -> None:
-    """Failover timeline (matplotlib). Points coloured by proposer."""
+    """Failover timeline (matplotlib), one panel per configuration."""
     configure_matplotlib_style()
     import matplotlib.pyplot as plt
 
-    # Infer fault window from failover events if not provided
-    failover_rows = [r for r in all_rows if r.get("failover_count", 0) > 0]
-    if fault_start_ms is None and failover_rows:
-        fault_start_ms = min(r["sent_ms"] for r in failover_rows)
-    if fault_end_ms is None and failover_rows:
-        fault_end_ms = max(r["completed_ms"] for r in failover_rows)
+    by_config: dict[tuple, list[dict]] = defaultdict(list)
+    labels = build_comparative_label_map(all_rows)
+    for row in all_rows:
+        by_config[comparative_config_key(row)].append(row)
 
-    by_proposer = group_by(all_rows, "proposer")
-
-    fig, ax = plt.subplots(figsize=(14, 6))
-
-    # Fault window shading
-    if fault_start_ms is not None and fault_end_ms is not None:
-        ax.axvspan(fault_start_ms, fault_end_ms, color=FAULT_WINDOW_COLOR,
-                   alpha=0.5, label="Fault Window")
-
+    config_items = sorted(by_config.items(), key=lambda item: labels.get(item[0], ""))
+    fig, axes = plt.subplots(1, max(len(config_items), 1), figsize=(7 * max(len(config_items), 1), 5), squeeze=False)
     colors = list(MODE_COLORS.values()) + _EXTRA_COLORS
-    for idx, (proposer, rows) in enumerate(sorted(by_proposer.items())):
-        color = colors[idx % len(colors)]
-        sorted_rows = sorted(rows, key=lambda r: r["sent_ms"])
-        xs = [r["sent_ms"] for r in sorted_rows]
-        ys = [r["latency_ms"] for r in sorted_rows]
-        ax.scatter(xs, ys, s=6, alpha=0.6, color=color, label=proposer)
 
-        # Mark failover events
-        fo = [r for r in sorted_rows if r.get("failover_count", 0) > 0]
-        if fo:
-            ax.scatter(
-                [r["sent_ms"] for r in fo],
-                [r["latency_ms"] for r in fo],
-                s=40, marker="x", color="red", zorder=5,
-                label="_nolegend_",
+    for config_idx, (key, config_rows) in enumerate(config_items):
+        ax = axes[0][config_idx]
+        config_failover_rows = [r for r in config_rows if r.get("failover_count", 0) > 0]
+        config_fault_start_ms = fault_start_ms
+        config_fault_end_ms = fault_end_ms
+        if config_fault_start_ms is None and config_failover_rows:
+            config_fault_start_ms = min(r["sent_ms"] for r in config_failover_rows)
+        if config_fault_end_ms is None and config_failover_rows:
+            config_fault_end_ms = max(r["completed_ms"] for r in config_failover_rows)
+
+        if config_fault_start_ms is not None and config_fault_end_ms is not None:
+            ax.axvspan(
+                config_fault_start_ms,
+                config_fault_end_ms,
+                color=FAULT_WINDOW_COLOR,
+                alpha=0.5,
+                label="Fault Window",
             )
 
-    ax.set_xlabel("Simulated Time (ms)")
-    ax.set_ylabel("Latency (ms)")
-    ax.set_title(f"Failover Timeline \u2014 {scenario_name}", fontsize=14, fontweight="bold")
-    ax.legend(fontsize=9, framealpha=0.9, ncol=2)
-    fig.tight_layout()
-    fig.savefig(os.path.join(output_dir, f"failover-timeline-{scenario_name}.png"), dpi=200)
+        by_proposer = group_by(config_rows, "proposer")
+        for idx, (proposer, rows) in enumerate(sorted(by_proposer.items())):
+            color = colors[idx % len(colors)]
+            sorted_rows = sorted(rows, key=lambda r: r["sent_ms"])
+            ax.scatter(
+                [r["sent_ms"] for r in sorted_rows],
+                [r["latency_ms"] for r in sorted_rows],
+                s=6,
+                alpha=0.6,
+                color=color,
+                label=proposer,
+            )
+
+            failover_samples = [r for r in sorted_rows if r.get("failover_count", 0) > 0]
+            if failover_samples:
+                ax.scatter(
+                    [r["sent_ms"] for r in failover_samples],
+                    [r["latency_ms"] for r in failover_samples],
+                    s=40,
+                    marker="x",
+                    color="red",
+                    zorder=5,
+                    label="_nolegend_",
+                )
+
+        ax.set_xlabel("Simulated Time (ms)")
+        ax.set_ylabel("Latency (ms)")
+        ax.set_title(labels.get(key, "configuration"), fontsize=12)
+        ax.legend(fontsize=8, framealpha=0.9, ncol=2)
+
+    fig.suptitle(f"Failover Timeline \u2014 {scenario_name}", fontsize=14, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.savefig(os.path.join(output_dir, f"{scenario_name}-failover-timeline.png"), dpi=200)
     plt.close(fig)
 
 
@@ -621,45 +785,65 @@ def plot_failover_timeline_plotly(
     fault_start_ms: float | None = None,
     fault_end_ms: float | None = None,
 ) -> None:
-    """Failover timeline (plotly)."""
+    """Failover timeline (plotly), one panel per configuration."""
     try:
         import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
     except ImportError:
         return
 
-    failover_rows = [r for r in all_rows if r.get("failover_count", 0) > 0]
-    if fault_start_ms is None and failover_rows:
-        fault_start_ms = min(r["sent_ms"] for r in failover_rows)
-    if fault_end_ms is None and failover_rows:
-        fault_end_ms = max(r["completed_ms"] for r in failover_rows)
+    by_config: dict[tuple, list[dict]] = defaultdict(list)
+    labels = build_comparative_label_map(all_rows)
+    for row in all_rows:
+        by_config[comparative_config_key(row)].append(row)
 
-    by_proposer = group_by(all_rows, "proposer")
+    config_items = sorted(by_config.items(), key=lambda item: labels.get(item[0], ""))
+    fig = make_subplots(
+        rows=1,
+        cols=max(len(config_items), 1),
+        subplot_titles=[labels.get(key, "configuration") for key, _rows in config_items],
+    )
     colors = list(MODE_COLORS.values()) + _EXTRA_COLORS
 
-    fig = go.Figure()
-    if fault_start_ms is not None and fault_end_ms is not None:
-        fig.add_vrect(
-            x0=fault_start_ms, x1=fault_end_ms,
-            fillcolor=FAULT_WINDOW_COLOR, opacity=0.4,
-            line_width=0, annotation_text="Fault Window",
-        )
+    for config_idx, (_key, config_rows) in enumerate(config_items):
+        config_failover_rows = [r for r in config_rows if r.get("failover_count", 0) > 0]
+        config_fault_start_ms = fault_start_ms
+        config_fault_end_ms = fault_end_ms
+        if config_fault_start_ms is None and config_failover_rows:
+            config_fault_start_ms = min(r["sent_ms"] for r in config_failover_rows)
+        if config_fault_end_ms is None and config_failover_rows:
+            config_fault_end_ms = max(r["completed_ms"] for r in config_failover_rows)
 
-    for idx, (proposer, rows) in enumerate(sorted(by_proposer.items())):
-        color = colors[idx % len(colors)]
-        sorted_rows = sorted(rows, key=lambda r: r["sent_ms"])
-        fig.add_trace(go.Scatter(
-            x=[r["sent_ms"] for r in sorted_rows],
-            y=[r["latency_ms"] for r in sorted_rows],
-            mode="markers", marker=dict(size=3, color=color, opacity=0.6),
-            name=proposer,
-        ))
+        if config_fault_start_ms is not None and config_fault_end_ms is not None:
+            fig.add_vrect(
+                x0=config_fault_start_ms,
+                x1=config_fault_end_ms,
+                fillcolor=FAULT_WINDOW_COLOR,
+                opacity=0.4,
+                line_width=0,
+                row=1,
+                col=config_idx + 1,
+            )
+
+        by_proposer = group_by(config_rows, "proposer")
+        for idx, (proposer, rows) in enumerate(sorted(by_proposer.items())):
+            color = colors[idx % len(colors)]
+            sorted_rows = sorted(rows, key=lambda r: r["sent_ms"])
+            fig.add_trace(go.Scatter(
+                x=[r["sent_ms"] for r in sorted_rows],
+                y=[r["latency_ms"] for r in sorted_rows],
+                mode="markers",
+                marker=dict(size=3, color=color, opacity=0.6),
+                name=proposer,
+                showlegend=(config_idx == 0),
+                legendgroup=proposer,
+            ), row=1, col=config_idx + 1)
 
     fig.update_layout(
         title=f"Failover Timeline \u2014 {scenario_name}",
-        xaxis_title="Simulated Time (ms)", yaxis_title="Latency (ms)",
         height=500, template="plotly_white",
     )
-    fig.write_html(os.path.join(output_dir, f"failover-timeline-{scenario_name}.html"))
+    fig.write_html(os.path.join(output_dir, f"{scenario_name}-failover-timeline.html"))
 
 
 # ---------------------------------------------------------------------------
@@ -669,40 +853,44 @@ def plot_failover_timeline_plotly(
 def plot_rtt_distribution(
     all_rows: list[dict], output_dir: str, scenario_name: str,
 ) -> None:
-    """Grouped bar chart of RTT buckets per mode (matplotlib)."""
+    """Grouped bar chart of RTT buckets per configuration (matplotlib)."""
     configure_matplotlib_style()
     import matplotlib.pyplot as plt
 
-    by_mode = group_by(all_rows, "mode")
+    by_config: dict[tuple, list[dict]] = defaultdict(list)
+    labels = build_comparative_label_map(all_rows)
+    for row in all_rows:
+        by_config[comparative_config_key(row)].append(row)
     buckets = ["0", "1", "2", "3", "4+"]
 
     def bucket_label(rt: int) -> str:
         return str(rt) if rt <= 3 else "4+"
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    bar_width = 0.8 / max(len(by_mode), 1)
+    bar_width = 0.8 / max(len(by_config), 1)
     x_base = np.arange(len(buckets))
 
-    for idx, (mode, rows) in enumerate(sorted(by_mode.items())):
+    for idx, (key, rows) in enumerate(sorted(by_config.items(), key=lambda item: labels.get(item[0], ""))):
         counts: dict[str, int] = {b: 0 for b in buckets}
         for r in rows:
             counts[bucket_label(r["round_trips"])] += 1
         total = max(sum(counts.values()), 1)
         pcts = [100.0 * counts[b] / total for b in buckets]
-        color = _color_for_mode(mode, idx)
+        mode = rows[0].get("mode", "")
+        color = _color_for_mode(mode, idx) if mode else _color_for_series(idx)
         ax.bar(
             x_base + idx * bar_width, pcts, bar_width,
-            label=_label_for_mode(mode), color=color,
+            label=labels.get(key, "configuration"), color=color,
         )
 
-    ax.set_xticks(x_base + bar_width * (len(by_mode) - 1) / 2)
+    ax.set_xticks(x_base + bar_width * (len(by_config) - 1) / 2)
     ax.set_xticklabels(buckets)
     ax.set_xlabel("Round Trips")
     ax.set_ylabel("% of Proposals")
     ax.set_title(f"RTT Distribution \u2014 {scenario_name}", fontsize=14, fontweight="bold")
     ax.legend(framealpha=0.9)
     fig.tight_layout()
-    fig.savefig(os.path.join(output_dir, f"rtt-distribution-{scenario_name}.png"), dpi=200)
+    fig.savefig(os.path.join(output_dir, f"{scenario_name}-rtt-histogram.png"), dpi=200)
     plt.close(fig)
 
 
@@ -715,22 +903,27 @@ def plot_rtt_distribution_plotly(
     except ImportError:
         return
 
-    by_mode = group_by(all_rows, "mode")
+    by_config: dict[tuple, list[dict]] = defaultdict(list)
+    labels = build_comparative_label_map(all_rows)
+    for row in all_rows:
+        by_config[comparative_config_key(row)].append(row)
     buckets = ["0", "1", "2", "3", "4+"]
 
     def bucket_label(rt: int) -> str:
         return str(rt) if rt <= 3 else "4+"
 
     fig = go.Figure()
-    for idx, (mode, rows) in enumerate(sorted(by_mode.items())):
+    for idx, (key, rows) in enumerate(sorted(by_config.items(), key=lambda item: labels.get(item[0], ""))):
         counts: dict[str, int] = {b: 0 for b in buckets}
         for r in rows:
             counts[bucket_label(r["round_trips"])] += 1
         total = max(sum(counts.values()), 1)
         pcts = [100.0 * counts[b] / total for b in buckets]
+        mode = rows[0].get("mode", "")
+        color = _color_for_mode(mode, idx) if mode else _color_for_series(idx)
         fig.add_trace(go.Bar(
-            x=buckets, y=pcts, name=_label_for_mode(mode),
-            marker_color=_color_for_mode(mode, idx),
+            x=buckets, y=pcts, name=labels.get(key, "configuration"),
+            marker_color=color,
         ))
 
     fig.update_layout(
@@ -739,7 +932,7 @@ def plot_rtt_distribution_plotly(
         xaxis_title="Round Trips", yaxis_title="% of Proposals",
         height=500, template="plotly_white",
     )
-    fig.write_html(os.path.join(output_dir, f"rtt-distribution-{scenario_name}.html"))
+    fig.write_html(os.path.join(output_dir, f"{scenario_name}-rtt-histogram.html"))
 
 
 # ---------------------------------------------------------------------------
@@ -850,7 +1043,7 @@ def plot_summary_dashboard_plotly(
 # 6f  Topology x Mode heatmap
 # ---------------------------------------------------------------------------
 
-def plot_topology_mode_heatmap(all_rows: list[dict], output_dir: str) -> None:
+def plot_topology_mode_heatmap(all_rows: list[dict], output_dir: str, scenario_name: str) -> None:
     """Heatmap of median latency: X=topology, Y=mode (matplotlib)."""
     configure_matplotlib_style()
     import matplotlib.pyplot as plt
@@ -891,13 +1084,13 @@ def plot_topology_mode_heatmap(all_rows: list[dict], output_dir: str) -> None:
                         fontsize=10, fontweight="bold")
 
     fig.colorbar(im, ax=ax, label="Median Latency (ms)")
-    ax.set_title("Topology \u00d7 Mode Heatmap", fontsize=14, fontweight="bold")
+    ax.set_title(f"Topology \u00d7 Mode Heatmap \u2014 {scenario_name}", fontsize=14, fontweight="bold")
     fig.tight_layout()
-    fig.savefig(os.path.join(output_dir, "topology-mode-heatmap.png"), dpi=200)
+    fig.savefig(os.path.join(output_dir, f"{scenario_name}-topology-mode-heatmap.png"), dpi=200)
     plt.close(fig)
 
 
-def plot_topology_mode_heatmap_plotly(all_rows: list[dict], output_dir: str) -> None:
+def plot_topology_mode_heatmap_plotly(all_rows: list[dict], output_dir: str, scenario_name: str) -> None:
     """Topology x Mode heatmap (plotly)."""
     try:
         import plotly.graph_objects as go
@@ -933,11 +1126,11 @@ def plot_topology_mode_heatmap_plotly(all_rows: list[dict], output_dir: str) -> 
         texttemplate="%{text}", textfont=dict(size=12),
     ))
     fig.update_layout(
-        title="Topology \u00d7 Mode Heatmap",
+        title=f"Topology \u00d7 Mode Heatmap \u2014 {scenario_name}",
         xaxis_title="Topology", yaxis_title="Mode",
         height=max(400, 80 * len(modes)), template="plotly_white",
     )
-    fig.write_html(os.path.join(output_dir, "topology-mode-heatmap.html"))
+    fig.write_html(os.path.join(output_dir, f"{scenario_name}-topology-mode-heatmap.html"))
 
 
 # ---------------------------------------------------------------------------
@@ -955,13 +1148,18 @@ def plot_per_proposer_traces(
     configure_matplotlib_style()
     import matplotlib.pyplot as plt
 
-    by_mode = group_by(all_rows, "mode")
-    n_modes = max(len(by_mode), 1)
-    fig, axes = plt.subplots(1, n_modes, figsize=(7 * n_modes, 5), squeeze=False)
+    by_config: dict[tuple, list[dict]] = defaultdict(list)
+    labels = build_comparative_label_map(all_rows)
+    for row in all_rows:
+        by_config[comparative_config_key(row)].append(row)
+
+    config_items = sorted(by_config.items(), key=lambda item: labels.get(item[0], ""))
+    n_configs = max(len(config_items), 1)
+    fig, axes = plt.subplots(1, n_configs, figsize=(7 * n_configs, 5), squeeze=False)
 
     colors = list(MODE_COLORS.values()) + _EXTRA_COLORS
 
-    for mi, (mode, mode_rows) in enumerate(sorted(by_mode.items())):
+    for mi, (key, mode_rows) in enumerate(config_items):
         ax = axes[0][mi]
         by_proposer = group_by(mode_rows, "proposer")
 
@@ -983,7 +1181,7 @@ def plot_per_proposer_traces(
 
         ax.set_xlabel("Simulated Time (ms)")
         ax.set_ylabel("Latency (ms)")
-        ax.set_title(_label_for_mode(mode), fontsize=12)
+        ax.set_title(labels.get(key, "configuration"), fontsize=12)
         ax.legend(fontsize=7, framealpha=0.9, ncol=2)
 
     fig.suptitle(
@@ -992,7 +1190,7 @@ def plot_per_proposer_traces(
     )
     fig.tight_layout(rect=[0, 0, 1, 0.95])
     fig.savefig(
-        os.path.join(output_dir, f"per-proposer-traces-{scenario_name}.png"), dpi=200,
+        os.path.join(output_dir, f"{scenario_name}-per-proposer-traces.png"), dpi=200,
     )
     plt.close(fig)
 
@@ -1011,15 +1209,22 @@ def plot_per_proposer_traces_plotly(
     except ImportError:
         return
 
-    by_mode = group_by(all_rows, "mode")
-    modes = sorted(by_mode.keys())
-    n_modes = max(len(modes), 1)
+    by_config: dict[tuple, list[dict]] = defaultdict(list)
+    labels = build_comparative_label_map(all_rows)
+    for row in all_rows:
+        by_config[comparative_config_key(row)].append(row)
 
-    fig = make_subplots(rows=1, cols=n_modes, subplot_titles=[_label_for_mode(m) for m in modes])
+    config_items = sorted(by_config.items(), key=lambda item: labels.get(item[0], ""))
+    n_modes = max(len(config_items), 1)
+
+    fig = make_subplots(
+        rows=1,
+        cols=n_modes,
+        subplot_titles=[labels.get(key, "configuration") for key, _rows in config_items],
+    )
     colors = list(MODE_COLORS.values()) + _EXTRA_COLORS
 
-    for mi, mode in enumerate(modes):
-        mode_rows = by_mode[mode]
+    for mi, (_key, mode_rows) in enumerate(config_items):
         by_proposer = group_by(mode_rows, "proposer")
 
         failover_times = [r["sent_ms"] for r in mode_rows if r.get("failover_count", 0) > 0]
@@ -1048,7 +1253,7 @@ def plot_per_proposer_traces_plotly(
         title=f"Per-Proposer Latency Traces \u2014 {scenario_name}",
         height=500, template="plotly_white",
     )
-    fig.write_html(os.path.join(output_dir, f"per-proposer-traces-{scenario_name}.html"))
+    fig.write_html(os.path.join(output_dir, f"{scenario_name}-per-proposer-traces.html"))
 
 
 # ---------------------------------------------------------------------------
@@ -1298,7 +1503,9 @@ def main():
 
     if args.comparative:
         # ---------------------------------------------------------------
-        # Comparative mode: organise by scenario directory structure
+        # Comparative mode: organise by scenario directory structure,
+        # then split each scenario into per-configuration charts with
+        # exactly 3 series (fast / leader / classic).
         # ---------------------------------------------------------------
         scenario_dirs = discover_comparative_structure(args.input)
         charts_dir = os.path.join(args.input, "charts")
@@ -1309,7 +1516,6 @@ def main():
         for scenario_name, scenario_csvs in sorted(scenario_dirs.items()):
             rows: list[dict] = []
             for csv_file in scenario_csvs:
-                # Derive a round id from the directory name
                 round_id = csv_file.parent.name
                 rows.extend(load_csv(csv_file, round_id=round_id))
 
@@ -1319,36 +1525,42 @@ def main():
             all_scenario_rows[scenario_name] = rows
             print(f"  Scenario {scenario_name}: {len(rows)} samples from {len(scenario_csvs)} CSV(s)")
 
-            # Aggregate across rounds
-            aggregated = aggregate_multi_run(rows, smoothing_window=args.smoothing_window)
+            # Extract scenario ID (e.g., "S1" from "S1-geo-low-contention")
+            scenario_id = scenario_name.split("-", 1)[0]
 
-            # Generate charts (PNG and/or HTML based on --format)
-            if args.format in ("png", "both"):
-                plot_latency_timeseries_aggregated(aggregated, charts_dir, scenario_name)
-                plot_rtt_distribution(rows, charts_dir, scenario_name)
+            # Sub-group by all config fields except mode
+            sub_groups: dict[tuple, list[dict]] = defaultdict(list)
+            for row in rows:
+                sub_groups[_sub_group_key_no_mode(row)].append(row)
 
-                if "contention" in scenario_name.lower():
-                    plot_contention_spectrum(rows, charts_dir)
-                if "gray-failure" in scenario_name.lower() or "crash-failover" in scenario_name.lower():
-                    plot_per_proposer_traces(rows, charts_dir, scenario_name)
-                    plot_failover_timeline(rows, charts_dir, scenario_name)
+            for sg_key, sg_rows in sorted(sub_groups.items()):
+                suffix = _build_sub_group_suffix(sg_rows, rows)
+                chart_prefix = f"{scenario_id}-{suffix}" if suffix else scenario_id
 
-            if args.format in ("html", "both"):
-                plot_latency_timeseries_aggregated_plotly(aggregated, charts_dir, scenario_name)
-                plot_rtt_distribution_plotly(rows, charts_dir, scenario_name)
+                aggregated = aggregate_multi_run(sg_rows, smoothing_window=args.smoothing_window)
 
-                if "contention" in scenario_name.lower():
-                    plot_contention_spectrum_plotly(rows, charts_dir)
-                if "gray-failure" in scenario_name.lower() or "crash-failover" in scenario_name.lower():
-                    plot_per_proposer_traces_plotly(rows, charts_dir, scenario_name)
-                    plot_failover_timeline_plotly(rows, charts_dir, scenario_name)
+                if args.format in ("png", "both"):
+                    plot_latency_timeseries_aggregated(aggregated, charts_dir, chart_prefix)
+                    plot_rtt_distribution(sg_rows, charts_dir, chart_prefix)
 
-        # Cross-scenario summary
-        if all_scenario_rows:
-            if args.format in ("png", "both"):
-                plot_summary_dashboard(all_scenario_rows, charts_dir)
-            if args.format in ("html", "both"):
-                plot_summary_dashboard_plotly(all_scenario_rows, charts_dir)
+                    if "gray-failure" in scenario_name.lower() or "crash-failover" in scenario_name.lower():
+                        plot_per_proposer_traces(sg_rows, charts_dir, chart_prefix)
+                        plot_failover_timeline(sg_rows, charts_dir, chart_prefix)
+
+                if args.format in ("html", "both"):
+                    plot_latency_timeseries_aggregated_plotly(aggregated, charts_dir, chart_prefix)
+                    plot_rtt_distribution_plotly(sg_rows, charts_dir, chart_prefix)
+
+                    if "gray-failure" in scenario_name.lower() or "crash-failover" in scenario_name.lower():
+                        plot_per_proposer_traces_plotly(sg_rows, charts_dir, chart_prefix)
+                        plot_failover_timeline_plotly(sg_rows, charts_dir, chart_prefix)
+
+            # Scenario-level charts (aggregate across sub-groups)
+            if "contention" in scenario_name.lower():
+                if args.format in ("png", "both"):
+                    plot_contention_spectrum(rows, charts_dir, scenario_id)
+                if args.format in ("html", "both"):
+                    plot_contention_spectrum_plotly(rows, charts_dir, scenario_id)
 
         # Topology heatmap (from geo-low-contention data)
         geo_key = None
@@ -1358,10 +1570,11 @@ def main():
                 break
         if geo_key is not None:
             geo_rows = all_scenario_rows[geo_key]
+            geo_id = geo_key.split("-", 1)[0]
             if args.format in ("png", "both"):
-                plot_topology_mode_heatmap(geo_rows, charts_dir)
+                plot_topology_mode_heatmap(geo_rows, charts_dir, geo_id)
             if args.format in ("html", "both"):
-                plot_topology_mode_heatmap_plotly(geo_rows, charts_dir)
+                plot_topology_mode_heatmap_plotly(geo_rows, charts_dir, geo_id)
 
         print(f"Comparative charts written to {charts_dir}")
     else:
