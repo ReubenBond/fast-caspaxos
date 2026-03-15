@@ -1556,7 +1556,7 @@ def main():
                         plot_failover_timeline_plotly(sg_rows, charts_dir, chart_prefix)
 
             # Scenario-level charts (aggregate across sub-groups)
-            if "contention" in scenario_name.lower():
+            if "contention-spectrum" in scenario_name.lower():
                 if args.format in ("png", "both"):
                     plot_contention_spectrum(rows, charts_dir, scenario_id)
                 if args.format in ("html", "both"):
