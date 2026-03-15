@@ -167,9 +167,18 @@ public sealed class FastCasSimulationNodeHostTests
         var firstCompletion = Assert.IsType<FastCasProposeResponseMessage<TestValue>>(Assert.Single(clientMessages));
         Assert.Equal(new TestValue(1, "A"), firstCompletion.Payload.CommittedValue);
 
-        proposerTwoHost.LearnCommittedValue(proposerOneHost.Ballot, proposerOneHost.CachedValue);
+        Assert.Equal(
+            DeliveryStatus.Success,
+            transport.Send(new FastCasLearnCommittedValueMessage<TestValue>(
+                proposerOneHost.Address,
+                proposerTwoHost.Address,
+                proposerOneHost.Ballot,
+                proposerOneHost.CachedValue)));
+        RunUntilIdle(clusterQueue, clientQueue, [.. nodes.Select(node => node.Context.TaskQueue)]);
+
         Assert.Equal(proposerOneHost.Ballot, proposerTwoHost.Ballot);
         Assert.Equal(new TestValue(1, "A"), proposerTwoHost.CachedValue);
+        Assert.Null(proposerTwoHost.PreparedBallot);
 
         clientMessages.Clear();
         var secondProposal = new FastCasProposeRequestMessage<TestValue>(
@@ -184,6 +193,165 @@ public sealed class FastCasSimulationNodeHostTests
         Assert.Equal(new TestValue(2, "AB"), secondCompletion.Payload.CommittedValue);
         Assert.Equal(new TestValue(2, "AB"), proposerTwoHost.CachedValue);
         Assert.All(acceptorHosts, host => Assert.Equal(new TestValue(2, "AB"), host.State.AcceptedValue));
+    }
+
+    [Fact]
+    public void ProposerLearner_FastModeLearnedCommitArrivesAfterNetworkDelayAndCarriesPreparedBallot()
+    {
+        var clock = new SimulationClock(DateTimeOffset.UnixEpoch);
+        var guard = new SingleThreadedGuard();
+        var clusterQueue = new SimulationTaskQueue(clock, guard);
+        List<SimulationNode> nodes = [];
+        var network = new SimulationNetwork(() => nodes, new SimulationRandom(777));
+        var transport = new FastCasSimulationTransport<TestValue>(network);
+        var options = new FastCasSimulationOptions
+        {
+            EnableFastCommit = true,
+            EnableDistinguishedLeader = false,
+        };
+
+        var acceptorHosts = new List<FastCasAcceptorHost<TestValue>>();
+        var acceptorAddresses = new List<FastCasAddress>();
+        for (var i = 1; i <= 5; i++)
+        {
+            var nodeId = new FastCasNodeId(FastCasParticipantRole.Acceptor, i);
+            var host = new FastCasAcceptorHost<TestValue>(nodeId, transport, options: options);
+            var node = new FastCasSimulationNode<TestValue>(
+                host,
+                clock,
+                guard,
+                new SimulationRandom(300 + i),
+                clusterQueue,
+                transport);
+
+            acceptorHosts.Add(host);
+            acceptorAddresses.Add(nodeId.Address);
+            nodes.Add(node);
+        }
+
+        var proposerOneHost = new FastCasProposerHost<TestValue>(
+            new FastCasNodeId(FastCasParticipantRole.Proposer, 1),
+            acceptorAddresses,
+            transport,
+            options);
+        var proposerOneNode = new FastCasSimulationNode<TestValue>(
+            proposerOneHost,
+            clock,
+            guard,
+            new SimulationRandom(800),
+            clusterQueue,
+            transport);
+        proposerOneHost.BindSimulationContext(proposerOneNode.Context);
+        nodes.Add(proposerOneNode);
+
+        var proposerTwoHost = new FastCasProposerHost<TestValue>(
+            new FastCasNodeId(FastCasParticipantRole.Proposer, 2),
+            acceptorAddresses,
+            transport,
+            options);
+        var proposerTwoNode = new FastCasSimulationNode<TestValue>(
+            proposerTwoHost,
+            clock,
+            guard,
+            new SimulationRandom(801),
+            clusterQueue,
+            transport);
+        proposerTwoHost.BindSimulationContext(proposerTwoNode.Context);
+        nodes.Add(proposerTwoNode);
+
+        var clientQueue = new SimulationTaskQueue(clock, guard);
+        List<IFastCasTransportMessage<TestValue>> clientMessages = [];
+        var clientAddress = FastCasAddress.Client();
+        transport.RegisterEndpoint(new FastCasTransportEndpointRegistration<TestValue>(
+            clientAddress,
+            clientQueue,
+            message => clientMessages.Add(message)));
+
+        var firstProposal = new FastCasProposeRequestMessage<TestValue>(
+            clientAddress,
+            proposerOneHost.Address,
+            1,
+            AppendOperation(1, "A"));
+        Assert.Equal(DeliveryStatus.Success, transport.Send(firstProposal));
+        RunUntilIdle(clusterQueue, clientQueue, [.. nodes.Select(node => node.Context.TaskQueue)]);
+
+        var firstCompletion = Assert.IsType<FastCasProposeResponseMessage<TestValue>>(Assert.Single(clientMessages));
+        Assert.Equal(new TestValue(1, "A"), firstCompletion.Payload.CommittedValue);
+
+        var learnedPreparedBallot = Assert.IsType<Ballot>(proposerOneHost.PreparedBallot);
+        network.EnableDelays = true;
+        network.BaseMessageDelay = TimeSpan.Zero;
+        network.MaxJitter = TimeSpan.Zero;
+        var learnDelay = TimeSpan.FromMilliseconds(50);
+        network.SetLinkLatency(
+            proposerOneHost.Address.NetworkAddress,
+            proposerTwoHost.Address.NetworkAddress,
+            learnDelay,
+            TimeSpan.Zero);
+
+        Assert.Equal(
+            DeliveryStatus.Success,
+            transport.Send(new FastCasLearnCommittedValueMessage<TestValue>(
+                proposerOneHost.Address,
+                proposerTwoHost.Address,
+                proposerOneHost.Ballot,
+                proposerOneHost.CachedValue,
+                learnedPreparedBallot)));
+
+        RunUntilIdle(clusterQueue, clientQueue, [.. nodes.Select(node => node.Context.TaskQueue)]);
+        Assert.Equal(default, proposerTwoHost.CachedValue);
+        Assert.Equal(Ballot.Zero, proposerTwoHost.Ballot);
+        Assert.Null(proposerTwoHost.PreparedBallot);
+
+        clock.Advance(learnDelay);
+        RunUntilIdle(clusterQueue, clientQueue, [.. nodes.Select(node => node.Context.TaskQueue)]);
+
+        Assert.Equal(proposerOneHost.Ballot, proposerTwoHost.Ballot);
+        Assert.Equal(new TestValue(1, "A"), proposerTwoHost.CachedValue);
+        Assert.Equal(learnedPreparedBallot, proposerTwoHost.PreparedBallot);
+
+        clientMessages.Clear();
+        var secondProposal = new FastCasProposeRequestMessage<TestValue>(
+            clientAddress,
+            proposerTwoHost.Address,
+            2,
+            AppendOperation(2, "B"));
+        Assert.Equal(DeliveryStatus.Success, transport.Send(secondProposal));
+        RunUntilIdle(clusterQueue, clientQueue, [.. nodes.Select(node => node.Context.TaskQueue)]);
+
+        var secondCompletion = Assert.IsType<FastCasProposeResponseMessage<TestValue>>(Assert.Single(clientMessages));
+        Assert.Equal(new TestValue(2, "AB"), secondCompletion.Payload.CommittedValue);
+        Assert.Equal(new TestValue(2, "AB"), proposerTwoHost.CachedValue);
+        var replaySafeBallot = proposerTwoHost.Ballot;
+        var replaySafePreparedBallot = Assert.IsType<Ballot>(proposerTwoHost.PreparedBallot);
+        Assert.All(acceptorHosts, host => Assert.Equal(new TestValue(2, "AB"), host.State.AcceptedValue));
+
+        var replayDelay = TimeSpan.FromMilliseconds(25);
+        network.SetLinkLatency(
+            proposerOneHost.Address.NetworkAddress,
+            proposerTwoHost.Address.NetworkAddress,
+            replayDelay,
+            TimeSpan.Zero);
+        Assert.Equal(
+            DeliveryStatus.Success,
+            transport.Send(new FastCasLearnCommittedValueMessage<TestValue>(
+                proposerOneHost.Address,
+                proposerTwoHost.Address,
+                proposerOneHost.Ballot,
+                proposerOneHost.CachedValue,
+                learnedPreparedBallot)));
+
+        RunUntilIdle(clusterQueue, clientQueue, [.. nodes.Select(node => node.Context.TaskQueue)]);
+        Assert.Equal(replaySafeBallot, proposerTwoHost.Ballot);
+        Assert.Equal(new TestValue(2, "AB"), proposerTwoHost.CachedValue);
+        Assert.Equal(replaySafePreparedBallot, proposerTwoHost.PreparedBallot);
+
+        clock.Advance(replayDelay);
+        RunUntilIdle(clusterQueue, clientQueue, [.. nodes.Select(node => node.Context.TaskQueue)]);
+
+        Assert.Equal(replaySafeBallot, proposerTwoHost.Ballot);
+        Assert.Equal(new TestValue(2, "AB"), proposerTwoHost.CachedValue);
+        Assert.Equal(replaySafePreparedBallot, proposerTwoHost.PreparedBallot);
     }
 
     private static IOperation<TestValue> AppendOperation(int expectedVersion, string suffix) =>

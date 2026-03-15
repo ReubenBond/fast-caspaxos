@@ -272,6 +272,7 @@ public sealed class SimulationObservabilitySession :
     private readonly Counter<long> _deliveredAcceptRequests;
     private readonly Counter<long> _deliveredAcceptAccepted;
     private readonly Counter<long> _deliveredAcceptRejected;
+    private readonly Counter<long> _deliveredLearnCommittedValue;
     private readonly Counter<long> _localProposalCompletions;
     private readonly Dictionary<int, ActiveProposalRoundTrip> _activeProposalRoundTrips = [];
     private readonly Dictionary<int, int> _lastCompletedRoundTrips = [];
@@ -301,6 +302,7 @@ public sealed class SimulationObservabilitySession :
         _deliveredAcceptRequests = _meter.CreateCounter<long>(SimulationMetricNames.DeliveredAcceptRequests, description: "Number of delivered accept requests");
         _deliveredAcceptAccepted = _meter.CreateCounter<long>(SimulationMetricNames.DeliveredAcceptAccepted, description: "Number of delivered accept accepted responses");
         _deliveredAcceptRejected = _meter.CreateCounter<long>(SimulationMetricNames.DeliveredAcceptRejected, description: "Number of delivered accept rejected responses");
+        _deliveredLearnCommittedValue = _meter.CreateCounter<long>(SimulationMetricNames.DeliveredLearnCommittedValue, description: "Number of delivered proposer-to-proposer learned commit messages");
         _localProposalCompletions = _meter.CreateCounter<long>(SimulationMetricNames.LocalProposalCompletions, description: "Number of collocated proposal completions returned to callers");
         _meterListener.InstrumentPublished = OnInstrumentPublished;
         _meterListener.SetMeasurementEventCallback<long>(OnMeasurementRecorded);
@@ -514,6 +516,7 @@ public sealed class SimulationObservabilitySession :
             FastCasTransportMessageKind.AcceptRequest => _deliveredAcceptRequests,
             FastCasTransportMessageKind.AcceptAccepted => _deliveredAcceptAccepted,
             FastCasTransportMessageKind.AcceptRejected => _deliveredAcceptRejected,
+            FastCasTransportMessageKind.LearnCommittedValue => _deliveredLearnCommittedValue,
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
         };
 
@@ -1792,6 +1795,8 @@ public static class SimulationScenarioCatalog
             var roundSize = Math.Min(clients.Count, proposalCount - completedProposals);
             HashSet<FastCasAddress> roundContactedProposers = [];
             Ballot? roundCommittedBallot = null;
+            Ballot? roundPreparedBallot = null;
+            FastCasAddress? roundLearningSource = null;
             var roundCommittedValue = default(StringValue);
 
             for (var clientIndex = 0; clientIndex < roundSize; clientIndex++)
@@ -1820,9 +1825,14 @@ public static class SimulationScenarioCatalog
                     result.Response.Response.CommittedValue.Version == agreementRound,
                     $"Expected everywhere-agreement round {agreementRound} to commit version {agreementRound}.");
 
+                var proposerBallot = cluster.GetProposerBallot(result.Response.Proposer);
+                var proposerPreparedBallot = cluster.GetProposerPreparedBallot(result.Response.Proposer);
+
                 if (roundCommittedBallot is null)
                 {
-                    roundCommittedBallot = cluster.GetProposerBallot(result.Response.Proposer);
+                    roundCommittedBallot = proposerBallot;
+                    roundPreparedBallot = proposerPreparedBallot;
+                    roundLearningSource = result.Response.Proposer;
                     roundCommittedValue = result.Response.Response.CommittedValue;
                 }
                 else
@@ -1830,12 +1840,27 @@ public static class SimulationScenarioCatalog
                     Ensure(
                         EqualityComparer<StringValue>.Default.Equals(roundCommittedValue, result.Response.Response.CommittedValue),
                         "Expected everywhere-agreement clients to observe the same committed value.");
+
+                    if (proposerBallot > roundCommittedBallot.Value)
+                    {
+                        roundCommittedBallot = proposerBallot;
+                        roundPreparedBallot = proposerPreparedBallot;
+                        roundLearningSource = result.Response.Proposer;
+                    }
+                    else if (proposerBallot == roundCommittedBallot.Value
+                             && proposerPreparedBallot is { } reusablePreparedBallot
+                             && (roundPreparedBallot is null || reusablePreparedBallot > roundPreparedBallot.Value))
+                    {
+                        roundPreparedBallot = reusablePreparedBallot;
+                        roundLearningSource = result.Response.Proposer;
+                    }
                 }
 
                 completedProposals++;
             }
 
-            if (roundCommittedBallot is { } committedBallot)
+            if (roundCommittedBallot is { } committedBallot
+                && roundLearningSource is { } learningSource)
             {
                 PropagateLearnedAgreementValue(
                     cluster,
@@ -1843,8 +1868,10 @@ public static class SimulationScenarioCatalog
                     proposers,
                     proposerNodesByAddress,
                     roundContactedProposers,
+                    learningSource,
                     committedBallot,
-                    roundCommittedValue);
+                    roundCommittedValue,
+                    roundPreparedBallot ?? Ballot.Zero);
             }
 
             if (writeInterval > TimeSpan.Zero && completedProposals < proposalCount)
@@ -2149,8 +2176,10 @@ public static class SimulationScenarioCatalog
         IReadOnlyList<FastCasAddress> proposers,
         IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
         IReadOnlySet<FastCasAddress> contactedProposers,
+        FastCasAddress sourceProposer,
         Ballot acceptedBallot,
-        StringValue committedValue)
+        StringValue committedValue,
+        Ballot preparedNextBallot)
     {
         foreach (var proposer in proposers)
         {
@@ -2164,13 +2193,16 @@ public static class SimulationScenarioCatalog
                 continue;
             }
 
-            cluster.LearnCommittedValue(proposer, acceptedBallot, committedValue);
-            recorder.RecordClusterTrace(
-                cluster,
-                "learn",
-                string.Create(
-                    CultureInfo.InvariantCulture,
-                    $"{proposer}|ballot={acceptedBallot}|{committedValue}"));
+            if (cluster.SendLearnCommittedValue(sourceProposer, proposer, acceptedBallot, committedValue, preparedNextBallot)
+                == DeliveryStatus.Success)
+            {
+                recorder.RecordClusterTrace(
+                    cluster,
+                    "learn",
+                    string.Create(
+                        CultureInfo.InvariantCulture,
+                        $"{proposer}|ballot={acceptedBallot}|{committedValue}"));
+            }
         }
     }
 

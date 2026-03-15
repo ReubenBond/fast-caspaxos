@@ -17,4 +17,5 @@ public enum FastCasTransportMessageKind
     AcceptAccepted,
     AcceptRejected,
     ProposeResponse,
+    LearnCommittedValue,
 }

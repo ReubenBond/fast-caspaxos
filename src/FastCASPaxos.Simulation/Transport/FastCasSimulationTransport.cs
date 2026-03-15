@@ -63,6 +63,7 @@ public sealed class FastCasSimulationTransport<TValue>
             FastCasAcceptAcceptedMessage<TValue> => FastCasTransportMessageKind.AcceptAccepted,
             FastCasAcceptRejectedMessage<TValue> => FastCasTransportMessageKind.AcceptRejected,
             FastCasProposeResponseMessage<TValue> => FastCasTransportMessageKind.ProposeResponse,
+            FastCasLearnCommittedValueMessage<TValue> => FastCasTransportMessageKind.LearnCommittedValue,
             _ => throw new InvalidOperationException(
                 $"Unknown FastCASPaxos simulation transport message type '{message.GetType().Name}'."),
         };

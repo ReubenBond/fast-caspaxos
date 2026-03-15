@@ -195,11 +195,35 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
 
     public Ballot GetProposerBallot(FastCasAddress proposer) => GetProposerHost(proposer).Ballot;
 
+    public Ballot? GetProposerPreparedBallot(FastCasAddress proposer) => GetProposerHost(proposer).PreparedBallot;
+
     public bool ProposerHasPendingClientRequests(FastCasAddress proposer) =>
         GetProposerHost(proposer).HasPendingClientRequests;
 
-    public void LearnCommittedValue(FastCasAddress proposer, Ballot acceptedBallot, TValue value) =>
-        GetProposerHost(proposer).LearnCommittedValue(acceptedBallot, value);
+    public DeliveryStatus SendLearnCommittedValue(
+        FastCasAddress sourceProposer,
+        FastCasAddress proposer,
+        Ballot acceptedBallot,
+        TValue value,
+        Ballot preparedNextBallot = default)
+    {
+        if (sourceProposer.Role != FastCasParticipantRole.Proposer)
+        {
+            throw new ArgumentException($"Address '{sourceProposer}' is not a proposer endpoint.", nameof(sourceProposer));
+        }
+
+        if (proposer.Role != FastCasParticipantRole.Proposer)
+        {
+            throw new ArgumentException($"Address '{proposer}' is not a proposer endpoint.", nameof(proposer));
+        }
+
+        return Transport.Send(new FastCasLearnCommittedValueMessage<TValue>(
+            sourceProposer,
+            proposer,
+            acceptedBallot,
+            value,
+            preparedNextBallot));
+    }
 
     public bool TryGetRoutedResponse(
         int requestId,

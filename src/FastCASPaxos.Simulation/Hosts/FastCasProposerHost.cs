@@ -57,6 +57,8 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
 
     public Ballot Ballot => _engine.Ballot;
 
+    public Ballot? PreparedBallot => _engine.PreparedBallot;
+
     public TValue CachedValue => _engine.CachedValue;
 
     public bool HasPendingClientRequests =>
@@ -105,6 +107,12 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
             case FastCasAcceptRejectedMessage<TValue> acceptRejected:
                 _engine.HandleAcceptRejected(acceptRejected.Payload);
                 break;
+            case FastCasLearnCommittedValueMessage<TValue> learnedCommit:
+                LearnCommittedValue(
+                    learnedCommit.AcceptedBallot,
+                    learnedCommit.Value,
+                    learnedCommit.PreparedNextBallot);
+                break;
             default:
                 throw new InvalidOperationException($"Proposer host '{Address}' cannot handle message type '{message.GetType().Name}'.");
         }
@@ -131,7 +139,7 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
         IsRunning = true;
     }
 
-    public void LearnCommittedValue(Ballot acceptedBallot, TValue value)
+    public void LearnCommittedValue(Ballot acceptedBallot, TValue value, Ballot preparedNextBallot = default)
     {
         if (!IsRunning)
         {
@@ -141,11 +149,10 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
 
         if (HasPendingClientRequests)
         {
-            throw new InvalidOperationException(
-                $"Proposer host '{Address}' cannot learn committed state while requests are still pending.");
+            return;
         }
 
-        _engine.LearnCommittedValue(acceptedBallot, value);
+        _engine.LearnCommittedValue(acceptedBallot, value, preparedNextBallot);
     }
 
     private HostProposerEngine CreateEngine() =>

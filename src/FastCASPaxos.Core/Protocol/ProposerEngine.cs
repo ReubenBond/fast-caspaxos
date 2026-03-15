@@ -113,7 +113,7 @@ public abstract class ProposerEngine<TValue, TRoute>
         }
     }
 
-    public void LearnCommittedValue(Ballot acceptedBallot, TValue value)
+    public void LearnCommittedValue(Ballot acceptedBallot, TValue value, Ballot preparedNextBallot = default)
     {
         if (acceptedBallot.IsZero)
         {
@@ -125,18 +125,26 @@ public abstract class ProposerEngine<TValue, TRoute>
 
         if (CurrentOperation is not null)
         {
-            throw new InvalidOperationException(
-                $"Proposer '{ProposerId}' cannot learn a committed value while a request is still in flight.");
+            return;
+        }
+
+        if (acceptedBallot < Ballot)
+        {
+            return;
         }
 
         ClearAcceptState();
-        PreparedBallot = null;
-        if (acceptedBallot > Ballot)
+        Ballot = acceptedBallot;
+        SetCachedValue(value);
+        Ballot? nextPreparedBallot = PreparedBallot is { } existingPreparedBallot && existingPreparedBallot > Ballot
+            ? existingPreparedBallot
+            : null;
+        if (preparedNextBallot > Ballot)
         {
-            Ballot = acceptedBallot;
+            nextPreparedBallot = preparedNextBallot;
         }
 
-        SetCachedValue(value);
+        PreparedBallot = nextPreparedBallot;
     }
 
     public void HandlePreparePromised(PreparePromise<TValue, TRoute> message)

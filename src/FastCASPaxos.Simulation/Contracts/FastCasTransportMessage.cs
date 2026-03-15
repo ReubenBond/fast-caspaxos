@@ -59,3 +59,11 @@ public sealed record FastCasProposeResponseMessage<TValue>(
     int RequestId,
     ProposeResponse<TValue> Payload)
     : IFastCasTransportMessage<TValue>;
+
+public sealed record FastCasLearnCommittedValueMessage<TValue>(
+    FastCasAddress From,
+    FastCasAddress To,
+    Ballot AcceptedBallot,
+    TValue Value,
+    Ballot PreparedNextBallot = default)
+    : IFastCasTransportMessage<TValue>;

@@ -16,6 +16,7 @@ internal static class SimulationMetricNames
     public const string DeliveredAcceptRequests = "fast_caspaxos.simulation.transport.delivered_accept_requests";
     public const string DeliveredAcceptAccepted = "fast_caspaxos.simulation.transport.delivered_accept_accepted";
     public const string DeliveredAcceptRejected = "fast_caspaxos.simulation.transport.delivered_accept_rejected";
+    public const string DeliveredLearnCommittedValue = "fast_caspaxos.simulation.transport.delivered_learn_committed_value";
     public const string LocalProposalCompletions = "fast_caspaxos.simulation.local_proposal_completions";
 }
 

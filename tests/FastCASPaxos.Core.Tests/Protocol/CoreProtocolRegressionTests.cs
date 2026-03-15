@@ -373,6 +373,79 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
+    public void ProposerEngine_LearnCommittedValue_ReusesLearnedPreparedNextFastBallot()
+    {
+        var engine = CreateFastProposer();
+        var acceptedBallot = Ballot.InitialFast();
+        var preparedBallot = acceptedBallot.NextRound(proposer: 0);
+
+        engine.LearnCommittedValue(acceptedBallot, new TestValue(1, "A"), preparedBallot);
+
+        Assert.Equal(acceptedBallot, engine.Ballot);
+        Assert.Equal(new TestValue(1, "A"), engine.CachedValue);
+        Assert.Equal(preparedBallot, engine.PreparedBallot);
+
+        var secondProposal = AppendOperation(2, "B");
+        engine.ResetRecording();
+        engine.StartProposal(secondProposal);
+
+        Assert.Null(engine.LastSendPrepare);
+        var secondAccept = AssertAccept(
+            engine,
+            preparedBallot,
+            new TestValue(2, "AB"),
+            preparedBallot.NextRound(proposer: 0));
+        Assert.Equal(preparedBallot, secondAccept.Ballot);
+        Assert.Null(engine.PreparedBallot);
+    }
+
+    [Fact]
+    public void ProposerEngine_LearnCommittedValue_IgnoresStaleAcceptedAndPreparedBallots()
+    {
+        var engine = CreateFastProposer();
+        var firstAcceptedBallot = Ballot.InitialFast();
+        var secondAcceptedBallot = firstAcceptedBallot.NextRound(proposer: 0);
+        var thirdPreparedBallot = secondAcceptedBallot.NextRound(proposer: 0);
+        var ignoredPreparedBallot = thirdPreparedBallot.NextRound(proposer: 0);
+
+        engine.LearnCommittedValue(secondAcceptedBallot, new TestValue(2, "AB"), thirdPreparedBallot);
+        engine.LearnCommittedValue(firstAcceptedBallot, new TestValue(1, "A"), ignoredPreparedBallot);
+        engine.LearnCommittedValue(secondAcceptedBallot, new TestValue(2, "AB"), Ballot.Zero);
+
+        Assert.Equal(secondAcceptedBallot, engine.Ballot);
+        Assert.Equal(new TestValue(2, "AB"), engine.CachedValue);
+        Assert.Equal(thirdPreparedBallot, engine.PreparedBallot);
+    }
+
+    [Fact]
+    public void ProposerEngine_LearnCommittedValue_IgnoresRequestWhileOperationIsInFlight()
+    {
+        var engine = CreateFastProposer();
+        var initialFastBallot = Ballot.InitialFast();
+        var preparedBallot = initialFastBallot.NextRound(proposer: 0);
+
+        engine.ResetRecording();
+        engine.StartProposal(AppendOperation(1, "A"));
+        var accept = AssertAccept(engine, initialFastBallot, new TestValue(1, "A"), preparedBallot);
+
+        var exception = Record.Exception(() => engine.LearnCommittedValue(
+            preparedBallot,
+            new TestValue(99, "STALE"),
+            preparedBallot.NextRound(proposer: 0)));
+
+        Assert.Null(exception);
+        Assert.Equal(initialFastBallot, engine.Ballot);
+        Assert.Equal(ProposerValueStatus.PendingAccept, engine.CurrentValueStatus);
+        Assert.Equal(accept.Value, engine.CurrentValue);
+
+        DriveFastAcceptQuorum(engine, accept.Ballot.Round, accept.Ballot, preparedBallot);
+
+        Assert.NotNull(engine.LastProposalCompleted);
+        Assert.Equal(new TestValue(1, "A"), engine.CachedValue);
+        Assert.Equal(preparedBallot, engine.PreparedBallot);
+    }
+
+    [Fact]
     public void ProposerEngine_HandlePrepareResponse_WhenOperationCannotApply_RetriesPrepare()
     {
         var engine = CreateClassicProposer();
