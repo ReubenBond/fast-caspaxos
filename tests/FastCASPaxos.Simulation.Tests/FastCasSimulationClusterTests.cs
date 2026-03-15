@@ -174,6 +174,79 @@ public sealed class FastCasSimulationClusterTests
     }
 
     [Fact]
+    public async Task CreateConfiguration_ConfiguresZeroLatencyForCollocatedProposerAndAcceptor()
+    {
+        await using var cluster = new FastCasSimulationCluster<TestValue>(
+            seed: 741,
+            options: new FastCasSimulationOptions
+            {
+                EnableFastCommit = false,
+                EnableDistinguishedLeader = false,
+            },
+            startDateTime: DateTimeOffset.UnixEpoch);
+
+        cluster.CreateConfiguration(proposerCount: 2, acceptorCount: 5);
+
+        var proposer1ToAcceptor1 = cluster.Network.GetLinkLatency("proposer-1", "acceptor-1");
+        var acceptor1ToProposer1 = cluster.Network.GetLinkLatency("acceptor-1", "proposer-1");
+        Assert.True(proposer1ToAcceptor1.HasValue);
+        Assert.True(acceptor1ToProposer1.HasValue);
+        Assert.Equal(TimeSpan.Zero, proposer1ToAcceptor1.Value.BaseDelay);
+        Assert.Equal(TimeSpan.Zero, proposer1ToAcceptor1.Value.MaxJitter);
+        Assert.Equal(TimeSpan.Zero, acceptor1ToProposer1.Value.BaseDelay);
+        Assert.Equal(TimeSpan.Zero, acceptor1ToProposer1.Value.MaxJitter);
+        Assert.Null(cluster.Network.GetLinkLatency("proposer-1", "acceptor-2"));
+    }
+
+    [Fact]
+    public async Task ClearLinkLatencies_RetainsZeroLatencyForCollocatedPairs()
+    {
+        await using var cluster = new FastCasSimulationCluster<TestValue>(
+            seed: 742,
+            options: new FastCasSimulationOptions
+            {
+                EnableFastCommit = false,
+                EnableDistinguishedLeader = false,
+            },
+            startDateTime: DateTimeOffset.UnixEpoch);
+
+        cluster.CreateConfiguration(proposerCount: 1, acceptorCount: 5);
+        cluster.ConfigureBidirectionalLinkLatency(
+            FastCasAddress.Proposer(1),
+            FastCasAddress.Acceptor(1),
+            TimeSpan.FromMilliseconds(25),
+            TimeSpan.FromMilliseconds(5));
+        cluster.ConfigureBidirectionalLinkLatency(
+            FastCasAddress.Proposer(1),
+            FastCasAddress.Acceptor(2),
+            TimeSpan.FromMilliseconds(25),
+            TimeSpan.FromMilliseconds(5));
+
+        var collocatedLatency = cluster.Network.GetLinkLatency("proposer-1", "acceptor-1");
+        var remoteLatency = cluster.Network.GetLinkLatency("proposer-1", "acceptor-2");
+        Assert.True(collocatedLatency.HasValue);
+        Assert.True(remoteLatency.HasValue);
+        Assert.Equal(TimeSpan.Zero, collocatedLatency.Value.BaseDelay);
+        Assert.Equal(TimeSpan.Zero, collocatedLatency.Value.MaxJitter);
+        Assert.Equal(TimeSpan.FromMilliseconds(25), remoteLatency.Value.BaseDelay);
+        Assert.Equal(TimeSpan.FromMilliseconds(5), remoteLatency.Value.MaxJitter);
+
+        cluster.ClearBidirectionalLinkLatency(FastCasAddress.Proposer(1), FastCasAddress.Acceptor(1));
+        var collocatedAfterSpecificClear = cluster.Network.GetLinkLatency("proposer-1", "acceptor-1");
+        Assert.True(collocatedAfterSpecificClear.HasValue);
+        Assert.Equal(TimeSpan.Zero, collocatedAfterSpecificClear.Value.BaseDelay);
+        Assert.Equal(TimeSpan.Zero, collocatedAfterSpecificClear.Value.MaxJitter);
+
+        cluster.ClearLinkLatencies();
+
+        var collocatedAfterClearAll = cluster.Network.GetLinkLatency("proposer-1", "acceptor-1");
+        Assert.True(collocatedAfterClearAll.HasValue);
+        Assert.Equal(TimeSpan.Zero, collocatedAfterClearAll.Value.BaseDelay);
+        Assert.Equal(TimeSpan.Zero, collocatedAfterClearAll.Value.MaxJitter);
+        Assert.Null(cluster.Network.GetLinkLatency("proposer-1", "acceptor-2"));
+    }
+
+    [Fact]
     public async Task RunProposal_UpdatesAcceptorSafetyMonitorHistory()
     {
         await using var cluster = new FastCasSimulationCluster<TestValue>(

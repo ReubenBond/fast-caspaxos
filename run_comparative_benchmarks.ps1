@@ -43,6 +43,20 @@ function Get-TopologyParams {
     }
 }
 
+function Get-ClusterSizeParams {
+    param(
+        [string]$ScenarioName,
+        [int]$ProposerCount,
+        [int]$AcceptorCount
+    )
+
+    if ($ProposerCount -gt $AcceptorCount) {
+        throw "Scenario '$ScenarioName' requests proposer-count=$ProposerCount with acceptor-count=$AcceptorCount. Comparative benchmarks keep each proposer collocated with a distinct acceptor, so proposer-count must not exceed acceptor-count."
+    }
+
+    return @("proposer-count=$ProposerCount", "acceptor-count=$AcceptorCount")
+}
+
 function New-Combination {
     param(
         [string[]]$Params,
@@ -75,11 +89,11 @@ $allModes = @("classic", "fast", "leader")
 
 $scenarios = [ordered]@{
     "S1-geo-no-contention" = @{
-        Description  = "Geo-distributed, no contention: one client stream is collocated with a non-primary proposer, so leader mode pays the extra client-to-primary hop."
+        Description  = "Geo-distributed, no contention: one client stream originates from Australia Southeast (no proposer). Its nearest proposer is Southeast Asia (88 ms), but leader mode routes to East US 2 (204 ms)."
         Combinations = @()
     }
     "S2-agreement-consensus" = @{
-        Description  = "Agreement workload: client-aware routing and proposer learning converge on the same next value, so fast rounds avoid conflict."
+        Description  = "Agreement workload: five proposer/acceptor pairs plus client-aware routing and proposer learning keep fast rounds aligned."
         Combinations = @()
     }
     "S3-register-init-burst" = @{
@@ -109,43 +123,42 @@ $scenarios = [ordered]@{
 }
 
 # --- S1: geo-no-contention ---
-# One explicit geo client is collocated with proposer 2, while leader mode still targets proposer 1.
+# One explicit geo client is placed in Australia Southeast (ordinal 5), a region with no proposer.
+# Its nearest proposer is proposer 3 (Southeast Asia, 88 ms RTT), while leader mode routes to
+# proposer 1 (East US 2, 204 ms RTT), paying the extra client-to-primary hop.
 # The workload stays contention-free by driving a single client request stream.
 foreach ($mode in $allModes) {
     $modeParams = Get-ModeParams $mode
     $topoParams = Get-TopologyParams "geo5region"
-    $params = $modeParams + $topoParams + @(
-        "proposer-count=3",
-        "acceptor-count=$AcceptorCount",
+    $clusterParams = Get-ClusterSizeParams -ScenarioName "S1-geo-no-contention" -ProposerCount 3 -AcceptorCount $AcceptorCount
+    $params = $modeParams + $topoParams + $clusterParams + @(
         "proposal-count=1000",
-        "client-ordinal=2"
+        "client-ordinal=5"
     )
     $scenarios["S1-geo-no-contention"].Combinations += New-Combination `
         -Params $params `
-        -Label "topo=geo mode=$mode proposers=3 client=2" `
-        -OutputSubpath "geo\$mode\p3\client-2"
+        -Label "topo=geo mode=$mode proposers=3 client=5" `
+        -OutputSubpath "geo\$mode\p3\client-5"
 }
 
 # --- S2: agreement-consensus ---
-# LAN is the merged single-region baseline; agreement=true vs false shows client-aware routing and proposer learning.
-foreach ($pCount in @(3, 5)) {
-    foreach ($mode in $allModes) {
-        foreach ($agreement in @("true", "false")) {
-            $modeParams = Get-ModeParams $mode
-            $topoParams = Get-TopologyParams "lan"
-            $params = $modeParams + $topoParams + @(
-                "proposer-count=$pCount",
-                "acceptor-count=$AcceptorCount",
-                "proposal-count=1000",
-                "agreement-mode=$agreement"
-            )
-            $slug = "agreement-$agreement"
-            $scenarios["S2-agreement-consensus"].Combinations += New-Combination `
-                -Params $params `
-                -Label "topo=lan mode=$mode proposers=$pCount agreement=$agreement" `
-                -OutputSubpath "lan\$mode\p${pCount}\$slug"
-        }
-    }
+# LAN is the merged single-region baseline. Keep five proposers so each proposer
+# can align with a distinct acceptor, and keep agreement-mode enabled because
+# this scenario exists to measure simultaneous same-value agreement pressure and
+# proposer learning.
+$s2ClusterParams = Get-ClusterSizeParams -ScenarioName "S2-agreement-consensus" -ProposerCount 5 -AcceptorCount $AcceptorCount
+foreach ($mode in $allModes) {
+    $modeParams = Get-ModeParams $mode
+    $topoParams = Get-TopologyParams "lan"
+    $params = $modeParams + $topoParams + $s2ClusterParams + @(
+        "proposal-count=1000",
+        "agreement-mode=true",
+        "agreement-concurrent-proposers=true"
+    )
+    $scenarios["S2-agreement-consensus"].Combinations += New-Combination `
+        -Params $params `
+        -Label "topo=lan mode=$mode proposers=5 agreement=true" `
+        -OutputSubpath "lan\$mode\p5\agreement-true"
 }
 
 # --- S3: register-init-burst ---
@@ -155,9 +168,8 @@ foreach ($topo in @("lan")) {
         foreach ($mode in $allModes) {
             $modeParams = Get-ModeParams $mode
             $topoParams = Get-TopologyParams $topo
-            $params = $modeParams + $topoParams + @(
-                "proposer-count=$pCount",
-                "acceptor-count=$AcceptorCount",
+            $clusterParams = Get-ClusterSizeParams -ScenarioName "S3-register-init-burst" -ProposerCount $pCount -AcceptorCount $AcceptorCount
+            $params = $modeParams + $topoParams + $clusterParams + @(
                 "proposal-count=200",
                 "register-init-mode=true"
             )
@@ -175,9 +187,8 @@ foreach ($interval in @(0, 10, 50, 200)) {
     foreach ($mode in @("fast", "leader")) {
         $modeParams = Get-ModeParams $mode
         $topoParams = Get-TopologyParams "lan"
-        $params = $modeParams + $topoParams + @(
-            "proposer-count=3",
-            "acceptor-count=$AcceptorCount",
+        $clusterParams = Get-ClusterSizeParams -ScenarioName "S4-infrequent-writes" -ProposerCount 3 -AcceptorCount $AcceptorCount
+        $params = $modeParams + $topoParams + $clusterParams + @(
             "proposal-count=100",
             "write-interval-ms=$interval"
         )
@@ -194,9 +205,8 @@ foreach ($interval in @(0, 10, 50, 200)) {
 foreach ($mode in $allModes) {
     $modeParams = Get-ModeParams $mode
     $topoParams = Get-TopologyParams "lan"
-    $params = $modeParams + $topoParams + @(
-        "proposer-count=1",
-        "acceptor-count=$AcceptorCount",
+    $clusterParams = Get-ClusterSizeParams -ScenarioName "S5-high-throughput-stream" -ProposerCount 1 -AcceptorCount $AcceptorCount
+    $params = $modeParams + $topoParams + $clusterParams + @(
         "proposal-count=2000"
     )
     $scenarios["S5-high-throughput-stream"].Combinations += New-Combination `
@@ -207,13 +217,13 @@ foreach ($mode in $allModes) {
 
 # --- S6: contention-spectrum ---
 # LAN is the merged single-region baseline for the contention sweep.
-foreach ($pCount in @(1, 2, 3, 5, 7)) {
+# Stop at five proposers so every proposer can still align with a distinct acceptor.
+foreach ($pCount in @(1, 2, 3, 5)) {
     foreach ($mode in $allModes) {
         $modeParams = Get-ModeParams $mode
         $topoParams = Get-TopologyParams "lan"
-        $params = $modeParams + $topoParams + @(
-            "proposer-count=$pCount",
-            "acceptor-count=$AcceptorCount",
+        $clusterParams = Get-ClusterSizeParams -ScenarioName "S6-contention-spectrum" -ProposerCount $pCount -AcceptorCount $AcceptorCount
+        $params = $modeParams + $topoParams + $clusterParams + @(
             "proposal-count=$ProposalCount"
         )
         $scenarios["S6-contention-spectrum"].Combinations += New-Combination `
@@ -230,9 +240,8 @@ $grayFaultSlug = "slow-link-proposer-1-at-200-until-400"
 foreach ($mode in @("fast", "leader")) {
     $modeParams = Get-ModeParams $mode
     $topoParams = Get-TopologyParams "lan"
-    $params = $modeParams + $topoParams + @(
-        "proposer-count=3",
-        "acceptor-count=$AcceptorCount",
+    $clusterParams = Get-ClusterSizeParams -ScenarioName "S7-leader-gray-failure" -ProposerCount 3 -AcceptorCount $AcceptorCount
+    $params = $modeParams + $topoParams + $clusterParams + @(
         "proposal-count=600",
         "fault-schedule=$grayFault"
     )
@@ -251,9 +260,8 @@ $crashFaultSlug = "crash-proposer-1-at-30-until-60"
 foreach ($mode in @("fast", "leader")) {
     $modeParams = Get-ModeParams $mode
     $topoParams = Get-TopologyParams "lan"
-    $params = $modeParams + $topoParams + @(
-        "proposer-count=3",
-        "acceptor-count=$AcceptorCount",
+    $clusterParams = Get-ClusterSizeParams -ScenarioName "S8-leader-crash-failover" -ProposerCount 3 -AcceptorCount $AcceptorCount
+    $params = $modeParams + $topoParams + $clusterParams + @(
         "proposal-count=90",
         "fault-schedule=$crashFault",
         "client-timeout-ms=20",

@@ -247,6 +247,9 @@ public sealed class BenchmarkWorkloadTests
         var leaderDir = Path.Combine(Path.GetTempPath(), $"benchmark-explicit-leader-{Guid.NewGuid():N}");
         try
         {
+            // Client ordinal 5 => Australia Southeast (region 4), which has no proposer.
+            // Nearest proposer is proposer-3 in Southeast Asia (88 ms RTT).
+            // Distinguished proposer is proposer-1 in East US 2 (204 ms RTT).
             var localResult = await SimulationBatchRunner.RunAsync(
                 new SimulationBatchOptions
                 {
@@ -259,7 +262,7 @@ public sealed class BenchmarkWorkloadTests
                         ["fast"] = "true",
                         ["leader"] = "false",
                         ["link-latency-profile"] = "geo5region",
-                        ["client-ordinal"] = "2",
+                        ["client-ordinal"] = "5",
                     },
                     Seed = 9101,
                     Rounds = 1,
@@ -279,7 +282,7 @@ public sealed class BenchmarkWorkloadTests
                         ["fast"] = "false",
                         ["leader"] = "true",
                         ["link-latency-profile"] = "geo5region",
-                        ["client-ordinal"] = "2",
+                        ["client-ordinal"] = "5",
                     },
                     Seed = 9101,
                     Rounds = 1,
@@ -289,8 +292,8 @@ public sealed class BenchmarkWorkloadTests
 
             var localRun = Assert.Single(localResult.Runs);
             var leaderRun = Assert.Single(leaderResult.Runs);
-            Assert.Equal("2", localRun.Details["parameter.client-ordinal"]);
-            Assert.Equal("2", leaderRun.Details["parameter.client-ordinal"]);
+            Assert.Equal("5", localRun.Details["parameter.client-ordinal"]);
+            Assert.Equal("5", leaderRun.Details["parameter.client-ordinal"]);
 
             var localSendLines = localRun.TraceLines
                 .Where(line => line.Contains("|send|", StringComparison.Ordinal))
@@ -303,7 +306,7 @@ public sealed class BenchmarkWorkloadTests
             Assert.Equal(6, leaderSendLines.Length);
             Assert.All(
                 localSendLines,
-                line => Assert.Contains("|send|proposer-2|", line, StringComparison.Ordinal));
+                line => Assert.Contains("|send|proposer-3|", line, StringComparison.Ordinal));
             Assert.All(
                 leaderSendLines,
                 line => Assert.Contains("|send|proposer-1|", line, StringComparison.Ordinal));
@@ -312,7 +315,7 @@ public sealed class BenchmarkWorkloadTests
             var leaderAvgLatency = leaderRun.ProposalLatencySamples.Average(sample => sample.LatencyMs);
             Assert.True(
                 leaderAvgLatency > localAvgLatency + 20,
-                $"Expected leader latency ({leaderAvgLatency:F1}ms) to exceed local fast latency ({localAvgLatency:F1}ms) because the client is collocated with proposer-2, not the primary.");
+                $"Expected leader latency ({leaderAvgLatency:F1}ms) to exceed local fast latency ({localAvgLatency:F1}ms) because the client is in Australia Southeast, not collocated with the primary.");
         }
         finally
         {
@@ -531,6 +534,63 @@ public sealed class BenchmarkWorkloadTests
             Assert.Equal(6, proposalLines.Length);
             Assert.Equal(5, proposalLines.Count(line => line.Contains("committed=Val(A@1)", StringComparison.Ordinal)));
             Assert.Equal(1, proposalLines.Count(line => line.Contains("committed=Val(AB@2)", StringComparison.Ordinal)));
+        }
+        finally
+        {
+            if (Directory.Exists(outputDir))
+                Directory.Delete(outputDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_BenchmarkWorkload_AgreementMode_WithConcurrentProposers_SendsAllProposersEachRound()
+    {
+        var outputDir = Path.Combine(Path.GetTempPath(), $"benchmark-agreement-concurrent-{Guid.NewGuid():N}");
+        try
+        {
+            var result = await SimulationBatchRunner.RunAsync(
+                new SimulationBatchOptions
+                {
+                    ScenarioNames = ["benchmark-workload"],
+                    ScenarioParameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["proposer-count"] = "3",
+                        ["acceptor-count"] = "5",
+                        ["proposal-count"] = "6",
+                        ["fast"] = "false",
+                        ["leader"] = "true",
+                        ["agreement-mode"] = "true",
+                        ["agreement-concurrent-proposers"] = "true",
+                        ["link-latency-profile"] = "lan",
+                    },
+                    Seed = 9033,
+                    Rounds = 1,
+                    OutputDirectory = outputDir,
+                    StopOnFailure = true,
+                });
+
+            var run = Assert.Single(result.Runs);
+            Assert.True(run.Success);
+            Assert.Equal("simultaneous-proposers", run.Details["parameter.agreement-model"]);
+            Assert.Equal("true", run.Details["parameter.agreement-concurrent-proposers"]);
+
+            var sendLines = run.TraceLines
+                .Where(line => line.Contains("|send|", StringComparison.Ordinal))
+                .ToArray();
+            Assert.Equal(6, sendLines.Length);
+            Assert.Equal(2, sendLines.Count(line => line.Contains("|send|proposer-1|", StringComparison.Ordinal)));
+            Assert.Equal(2, sendLines.Count(line => line.Contains("|send|proposer-2|", StringComparison.Ordinal)));
+            Assert.Equal(2, sendLines.Count(line => line.Contains("|send|proposer-3|", StringComparison.Ordinal)));
+            Assert.Contains("|send|proposer-1|", sendLines[0], StringComparison.Ordinal);
+            Assert.Contains("|send|proposer-2|", sendLines[1], StringComparison.Ordinal);
+            Assert.Contains("|send|proposer-3|", sendLines[2], StringComparison.Ordinal);
+
+            var proposalLines = run.TraceLines
+                .Where(line => line.Contains("|proposal|", StringComparison.Ordinal))
+                .ToArray();
+            Assert.Equal(6, proposalLines.Length);
+            Assert.Equal(3, proposalLines.Count(line => line.Contains("committed=Val(A@1)", StringComparison.Ordinal)));
+            Assert.Equal(3, proposalLines.Count(line => line.Contains("committed=Val(AB@2)", StringComparison.Ordinal)));
         }
         finally
         {

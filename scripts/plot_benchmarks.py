@@ -1495,8 +1495,9 @@ benchmark suite.
 
 ### LAN
 
-All nodes are co-located in one datacenter. Every link uses `base-delay-ms=1`
-and `max-jitter-ms=1`, so both 3 / 5 and 4 / 5 quorums stay local.
+All nodes are co-located in one datacenter. Non-collocated same-region links
+use `base-delay-ms=1` and `max-jitter-ms=1`, while proposer ordinal `N` talks
+to acceptor ordinal `N` with zero latency and no jitter.
 
 ```mermaid
 graph LR
@@ -1509,19 +1510,19 @@ graph LR
     A3([A3])
     A4([A4])
     A5([A5])
-    P1 ---|1-2 ms| A1
+    P1 ---|0 ms| A1
     P1 ---|1-2 ms| A2
     P1 ---|1-2 ms| A3
     P1 ---|1-2 ms| A4
     P1 ---|1-2 ms| A5
     P2 ---|1-2 ms| A1
-    P2 ---|1-2 ms| A2
+    P2 ---|0 ms| A2
     P2 ---|1-2 ms| A3
     P2 ---|1-2 ms| A4
     P2 ---|1-2 ms| A5
     P3 ---|1-2 ms| A1
     P3 ---|1-2 ms| A2
-    P3 ---|1-2 ms| A3
+    P3 ---|0 ms| A3
     P3 ---|1-2 ms| A4
     P3 ---|1-2 ms| A5
   end
@@ -1529,7 +1530,8 @@ graph LR
 
 | Link | Configured latency |
 |------|--------------------|
-| Any proposer <-> any acceptor | 1 ms base + up to 1 ms jitter |
+| Collocated proposer `N` <-> acceptor `N` | 0 ms |
+| Other same-region proposer <-> acceptor links | 1 ms base + up to 1 ms jitter |
 | Any client <-> nearest proposer | 1 ms base + up to 1 ms jitter |
 
 **Quorum impact (5 acceptors):**
@@ -1563,22 +1565,25 @@ graph TB
   end
   subgraph Australia_Southeast
     A5([A5])
+    C(["C (S1 client)"])
   end
-  P1 ---|1-2 ms| A1
+  P1 ---|0 ms| A1
   P1 ---|~43 ms| A2
   P1 ---|~115 ms| A3
   P1 ---|~59 ms| A4
   P1 ---|~103 ms| A5
   P2 ---|~43 ms| A1
-  P2 ---|1-2 ms| A2
+  P2 ---|0 ms| A2
   P2 ---|~75 ms| A3
   P2 ---|~96 ms| A4
   P2 ---|~119 ms| A5
   P3 ---|~115 ms| A1
   P3 ---|~75 ms| A2
-  P3 ---|1-2 ms| A3
+  P3 ---|0 ms| A3
   P3 ---|~167 ms| A4
   P3 ---|~45 ms| A5
+  C -. "~45 ms" .-> P3
+  C -. "~103 ms" .-> P1
 ```
 
 | Region pair | Median RTT |
@@ -1593,29 +1598,34 @@ graph TB
 | Southeast Asia <-> Brazil South | 332 ms |
 | Southeast Asia <-> Australia Southeast | 88 ms |
 | Brazil South <-> Australia Southeast | 311 ms |
-| Intra-region | 1 ms base + up to 1 ms jitter |
+| Collocated proposer `N` <-> acceptor `N` | 0 ms |
+| Other intra-region links | 1 ms base + up to 1 ms jitter |
 
-In the 3-proposer / 5-acceptor layout used by the comparative suite, proposers
-occupy East US 2, France Central, and Southeast Asia, while acceptors occupy all
-five regions. Scenario S1 also places the explicit benchmark client at ordinal 2,
-collocated with France Central rather than the distinguished primary.
+The comparative suite never uses more proposers than acceptors, so proposer
+ordinal `N` is always aligned with acceptor ordinal `N`. In the 3-proposer geo
+layout used by S1, proposers occupy East US 2, France Central, and Southeast
+Asia, while acceptors occupy all five regions. Scenario S1 places the explicit
+benchmark client at ordinal 5 in Australia Southeast, a region with no proposer.
+Its nearest proposer is P3 in Southeast Asia (88 ms RTT), while the
+distinguished primary P1 is in East US 2 (204 ms RTT).
 """
 
 _SCENARIO_DESCRIPTIONS: dict[str, str] = {
     "S1": r"""## S1 - Geo-Distributed, No Contention
 
 **What this tests:** One explicit benchmark client drives a single request stream
-from topology ordinal 2 while the three proposers are spread across the first
-three geo regions. There is no proposer contention, so the dominant cost is
-client routing plus the commit RTT.
+from topology ordinal 5 (Australia Southeast), a region with no proposer, while
+the three proposers are spread across the first three geo regions. There is no
+proposer contention, so the dominant cost is client routing plus the commit RTT.
 
 **Setup:** 3 proposers, 5 acceptors, 1000 proposals on `geo5region` with
-`client-ordinal=2` and no faults.
+`client-ordinal=5` and no faults.
 
-**Client routing:** The explicit client is collocated with proposer 2's region.
-Fast and classic route to the nearest healthy proposer. Leader mode still sends
-every request to proposer 1, so it pays an extra client-to-primary hop before
-the quorum round starts.
+**Client routing:** The explicit client is in Australia Southeast, which has no
+proposer. Fast and classic route to the nearest healthy proposer, which is
+proposer 3 in Southeast Asia (88 ms RTT). Leader mode sends every request to
+proposer 1 in East US 2 (204 ms RTT), so it pays an extra client-to-primary hop
+of 204 ms versus the 88 ms a non-leader client would pay.
 
 | Parameter | Value |
 |-----------|-------|
@@ -1623,7 +1633,7 @@ the quorum round starts.
 | Acceptors | 5 |
 | Proposals | 1 000 |
 | Topology | Geo 5-Region |
-| Explicit client | Ordinal 2 |
+| Explicit client | Ordinal 5 (Australia Southeast) |
 | Modes | Classic, Fast, Leader |
 | Faults | None |
 
@@ -1634,35 +1644,33 @@ requests from starting cold even though the workload itself is contention-free.
 
     "S2": r"""## S2 - Agreement Consensus
 
-**What this tests:** A LAN agreement sweep comparing the default synthetic
-per-proposer workload against `agreement-mode=true`, where geo-aware clients and
+**What this tests:** A LAN agreement workload with five proposers so each
+proposer can share a site with a different acceptor. Geo-aware clients and
 proposer learning converge on the same next value so fast rounds avoid conflict.
 
-**Setup:** 3 or 5 proposers, 5 acceptors, 1000 proposals on `lan`, sweeping
-`agreement-mode=false` and `agreement-mode=true`.
+**Setup:** 5 proposers, 5 acceptors, 1000 proposals on `lan` with
+`agreement-mode=true`.
 
 **Client routing:**
-- With `agreement-mode=false`, each synthetic request stream stays attached to
-  its proposer.
-- With `agreement-mode=true`, fast fans each logical request to all healthy
-  proposers, classic targets the nearest healthy proposer, and leader targets
-  the current primary and updates after failover.
+- Fast fans each logical request to all healthy proposers, classic targets the
+  nearest healthy proposer, and leader targets the current primary and updates
+  after failover.
 - After commits, proposers broadcast learned state so later requests can reuse
   the accepted ballot, accepted value, and prepared ballot.
 
 | Parameter | Value |
 |-----------|-------|
-| Proposers | 3 or 5 |
+| Proposers | 5 |
 | Acceptors | 5 |
 | Proposals | 1 000 |
 | Topology | LAN |
-| Agreement mode | false / true (sweep) |
+| Agreement mode | true |
 | Modes | Classic, Fast, Leader |
 | Faults | None |
 
-**What to look for:** `agreement-mode=true` should sharply reduce fast-round
-conflicts. The comparison against `agreement-mode=false` shows how much of the
-gain comes from client-aware routing and learned-state propagation.
+**What to look for:** With one proposer per acceptor site, agreement routing
+and learned-state propagation should keep fast-round conflicts low while the
+mode comparison isolates the remaining protocol overheads.
 """,
 
     "S3": r"""## S3 - Register Initialization Burst
@@ -1747,11 +1755,12 @@ recover some of that gap by amortizing its prepare over a sustained stream.
 
     "S6": r"""## S6 - Contention Spectrum
 
-**What this tests:** A proposer-count sweep (1, 2, 3, 5, 7) showing where fast's
+**What this tests:** A proposer-count sweep (1, 2, 3, 5) showing where fast's
 leaderless 1-RTT path stops winning and leader's centralized coordination starts
-paying off.
+paying off. The sweep stops at 5 so every proposer stays aligned with a
+different acceptor.
 
-**Setup:** 1, 2, 3, 5, and 7 proposers, 5 acceptors, 500 proposals on `lan`.
+**Setup:** 1, 2, 3, and 5 proposers, 5 acceptors, 500 proposals on `lan`.
 All three protocol modes are included.
 
 **Client routing:** The default workload keeps one synthetic request stream per
@@ -1760,7 +1769,7 @@ number of active writers targeting the same register.
 
 | Parameter | Value |
 |-----------|-------|
-| Proposers | 1, 2, 3, 5, 7 |
+| Proposers | 1, 2, 3, 5 |
 | Acceptors | 5 |
 | Proposals | 500 |
 | Topology | LAN |
@@ -1854,12 +1863,12 @@ _SCENARIO_SUMMARY_SECTION = r"""## Current Comparative Suite
 
 | Scenario | Topology | Main sweep | Focus |
 |----------|----------|------------|-------|
-| S1 | Geo 5-Region | Explicit client at ordinal 2 | Non-primary client routing with no contention |
-| S2 | LAN | `agreement-mode=false/true`, proposers `3/5` | Agreement routing plus proposer learning |
+| S1 | Geo 5-Region | Explicit client at ordinal 5 (Australia SE) | Non-primary client routing with no contention |
+| S2 | LAN | Proposers `5`, `agreement-mode=true` | Agreement routing plus proposer learning |
 | S3 | LAN | Proposers `1/3` | First-write latency with `register-init-mode=true` |
 | S4 | LAN | `write-interval-ms=0/10/50/200` | Prepared-ballot amortization under burst gaps |
 | S5 | LAN | Single proposer stream | Sustained throughput with no contention |
-| S6 | LAN | Proposers `1/2/3/5/7` | Contention crossover between fast and leader |
+| S6 | LAN | Proposers `1/2/3/5` | Contention crossover between fast and leader |
 | S7 | LAN | Slow-link fault on proposer 1 | Gray-failure isolation vs leader bottleneck |
 | S8 | LAN | Crash fault on proposer 1 | Timeout-driven leader failover |
 """

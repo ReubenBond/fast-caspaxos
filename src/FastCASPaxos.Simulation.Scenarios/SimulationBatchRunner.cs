@@ -1577,6 +1577,19 @@ public static class SimulationScenarioCatalog
         var proposerNodesByAddress = cluster.ProposerNodes.ToDictionary(node => node.Host.Address);
         if (benchmarkOptions.AgreementMode)
         {
+            if (benchmarkOptions.AgreementConcurrentProposers)
+            {
+                recorder.SetDetail("parameter.agreement-model", "simultaneous-proposers");
+                return RunSimultaneousAgreementBenchmarkWorkload(
+                    benchmarkOptions,
+                    cluster,
+                    recorder,
+                    proposerTiming,
+                    proposers,
+                    proposerNodesByAddress,
+                    agreementClients);
+            }
+
             recorder.SetDetail("parameter.agreement-model", "everywhere");
             return RunEverywhereAgreementBenchmarkWorkload(
                 benchmarkOptions,
@@ -2076,6 +2089,114 @@ public static class SimulationScenarioCatalog
         }
 
         return [.. clients];
+    }
+
+    private static SimulationScenarioCompletion RunSimultaneousAgreementBenchmarkWorkload(
+        BenchmarkWorkloadOptions benchmarkOptions,
+        FastCasSimulationCluster<StringValue> cluster,
+        SimulationRunRecorder recorder,
+        FastCasSimulationProposerTimingSnapshot proposerTiming,
+        IReadOnlyList<FastCasAddress> proposers,
+        IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
+        IReadOnlyList<FastCasAddress> clients)
+    {
+        var proposalCount = benchmarkOptions.ProposalCount;
+        var nextRequestId = 100_000;
+        var writeInterval = TimeSpan.FromMilliseconds(benchmarkOptions.WriteIntervalMs);
+
+        var completedProposals = 0;
+        var agreementRound = 0;
+        while (completedProposals < proposalCount)
+        {
+            benchmarkOptions.ApplyFaultAtProposal(cluster, completedProposals, recorder);
+
+            var healthyProposers = GetHealthyAgreementProposers(proposers, proposerNodesByAddress);
+            var roundSize = Math.Min(healthyProposers.Length, proposalCount - completedProposals);
+            Ensure(
+                roundSize > 0,
+                $"Expected at least one healthy proposer for simultaneous agreement round {agreementRound + 1}. " +
+                cluster.GetFailureDiagnostics($"simultaneous-agreement-round-{agreementRound + 1}"));
+
+            agreementRound++;
+            var roundSegment = ((char)('A' + ((agreementRound - 1) % 26))).ToString();
+            var roundOperation = StringScenarioOperations.AppendAtVersion(agreementRound, roundSegment);
+
+            List<(FastCasAddress Proposer, int RequestId)> submissions = [];
+            for (var index = 0; index < roundSize; index++)
+            {
+                var proposer = healthyProposers[index];
+                var caller = clients[index % clients.Count];
+                var requestId = nextRequestId++;
+                _ = cluster.SendProposal(proposer, roundOperation, requestId, caller);
+                recorder.RecordSend(cluster, proposer, roundOperation, requestId);
+                submissions.Add((proposer, requestId));
+            }
+
+            var maxIterations = 50_000 * Math.Max(1, submissions.Count);
+            Ensure(
+                cluster.RunUntil(
+                    () => submissions.All(submission => cluster.TryGetRoutedResponse(submission.RequestId, out _)),
+                    maxIterations: maxIterations),
+                $"Expected simultaneous agreement round {agreementRound} to complete for all proposers. " +
+                cluster.GetFailureDiagnostics($"simultaneous-agreement-round-{agreementRound}"));
+
+            var observedCommittedValue = false;
+            var roundCommittedValue = default(StringValue);
+            foreach (var submission in submissions)
+            {
+                Ensure(
+                    cluster.TryGetRoutedResponse(submission.RequestId, out var routedResponse),
+                    $"Expected simultaneous agreement round {agreementRound} to record response {submission.RequestId}.");
+                recorder.RecordProposal(cluster, routedResponse.Proposer, roundOperation, routedResponse.Response);
+                Ensure(
+                    routedResponse.Response.CommittedValue.Version == agreementRound,
+                    $"Expected simultaneous agreement round {agreementRound} to commit version {agreementRound}.");
+
+                if (!observedCommittedValue)
+                {
+                    roundCommittedValue = routedResponse.Response.CommittedValue;
+                    observedCommittedValue = true;
+                }
+                else
+                {
+                    Ensure(
+                        EqualityComparer<StringValue>.Default.Equals(roundCommittedValue, routedResponse.Response.CommittedValue),
+                        "Expected simultaneous agreement proposers to observe the same committed value.");
+                }
+            }
+
+            completedProposals += submissions.Count;
+
+            if (writeInterval > TimeSpan.Zero && completedProposals < proposalCount)
+            {
+                cluster.RunForDuration(writeInterval);
+            }
+        }
+
+        benchmarkOptions.ApplyFaultAtProposal(cluster, completedProposals, recorder);
+        cluster.AssertSafetyInvariants();
+
+        recorder.SetDetail("completed-proposals", completedProposals);
+        recorder.SetDetail("final-version", agreementRound);
+
+        var elapsed = cluster.TimeProvider.GetUtcNow() - DateTimeOffset.UnixEpoch;
+        var throughput = completedProposals / elapsed.TotalSeconds;
+        recorder.SetDetail("elapsed-ms", elapsed.TotalMilliseconds);
+        recorder.SetDetail("throughput-proposals-per-sec", throughput);
+
+        var reproductionParameters = benchmarkOptions
+            .DescribeParameters()
+            .Concat(DescribeProposerTimingParameters(proposerTiming))
+            .Append(new KeyValuePair<string, string>("agreement-model", "simultaneous-proposers"))
+            .ToArray();
+
+        return new(
+            Summary: string.Create(
+                CultureInfo.InvariantCulture,
+                $"mode={benchmarkOptions.ModeName} topology={benchmarkOptions.Topology} proposals={completedProposals} elapsed={elapsed.TotalMilliseconds:F1}ms throughput={throughput:F1}/s"),
+            ReproductionHint: string.Create(
+                CultureInfo.InvariantCulture,
+                $"{cluster.GetReproductionHint(BenchmarkWorkloadOptions.ScenarioName)} params: {string.Join(", ", reproductionParameters.Select(p => $"{p.Key}={p.Value}"))}"));
     }
 
     private static SimulationScenarioCompletion RunEverywhereAgreementBenchmarkWorkload(

@@ -101,6 +101,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
 
         RegisterNode(node);
         _acceptorNodes.Add(node);
+        ApplyCollocatedLinkLatencyFor(node.Host.Address);
         return node;
     }
 
@@ -128,6 +129,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
 
         RegisterNode(node);
         _proposerNodes.Add(node);
+        ApplyCollocatedLinkLatencyFor(node.Host.Address);
         RefreshCommittedValueBroadcasters();
         return node;
     }
@@ -147,6 +149,40 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
             AddProposer(proposer);
         }
     }
+
+    private void ApplyCollocatedLinkLatencyFor(FastCasAddress address)
+    {
+        switch (address.Role)
+        {
+            case FastCasParticipantRole.Proposer:
+                if (_acceptorNodes.FirstOrDefault(node => node.Host.Address.Ordinal == address.Ordinal) is { } acceptorNode)
+                {
+                    ApplyCollocatedLinkLatency(address, acceptorNode.Host.Address);
+                }
+                break;
+            case FastCasParticipantRole.Acceptor:
+                if (_proposerNodes.FirstOrDefault(node => node.Host.Address.Ordinal == address.Ordinal) is { } proposerNode)
+                {
+                    ApplyCollocatedLinkLatency(proposerNode.Host.Address, address);
+                }
+                break;
+        }
+    }
+
+    private void ApplyAllCollocatedLinkLatencies()
+    {
+        foreach (var proposerNode in _proposerNodes)
+        {
+            ApplyCollocatedLinkLatencyFor(proposerNode.Host.Address);
+        }
+    }
+
+    private void ApplyCollocatedLinkLatency(FastCasAddress proposer, FastCasAddress acceptor) =>
+        Network.SetBidirectionalLinkLatency(
+            proposer.NetworkAddress,
+            acceptor.NetworkAddress,
+            TimeSpan.Zero,
+            TimeSpan.Zero);
 
     public FastCasAddress RegisterClient(int ordinal)
     {
@@ -571,30 +607,41 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
 
     public void ConfigureLinkLatency(FastCasAddress source, FastCasAddress target, TimeSpan baseDelay, TimeSpan maxJitter)
     {
-        Network.EnableDelays = true;
-        Network.SetLinkLatency(source.NetworkAddress, target.NetworkAddress, baseDelay, maxJitter);
+        var latency = NormalizeLinkLatency(source, target, baseDelay, maxJitter);
+        Network.EnableDelays = Network.EnableDelays
+            || latency.BaseDelay > TimeSpan.Zero
+            || latency.MaxJitter > TimeSpan.Zero;
+        Network.SetLinkLatency(source.NetworkAddress, target.NetworkAddress, latency.BaseDelay, latency.MaxJitter);
         RefreshLatencyAwareProposerTiming();
-        RecordFault($"link-latency {source} -> {target} base={baseDelay} jitter={maxJitter}");
+        RecordFault($"link-latency {source} -> {target} base={latency.BaseDelay} jitter={latency.MaxJitter}");
     }
 
     public void ConfigureBidirectionalLinkLatency(FastCasAddress node1, FastCasAddress node2, TimeSpan baseDelay, TimeSpan maxJitter)
     {
-        Network.EnableDelays = true;
-        Network.SetBidirectionalLinkLatency(node1.NetworkAddress, node2.NetworkAddress, baseDelay, maxJitter);
+        var latency = NormalizeLinkLatency(node1, node2, baseDelay, maxJitter);
+        Network.EnableDelays = Network.EnableDelays
+            || latency.BaseDelay > TimeSpan.Zero
+            || latency.MaxJitter > TimeSpan.Zero;
+        Network.SetBidirectionalLinkLatency(node1.NetworkAddress, node2.NetworkAddress, latency.BaseDelay, latency.MaxJitter);
         RefreshLatencyAwareProposerTiming();
-        RecordFault($"link-latency {node1} <-> {node2} base={baseDelay} jitter={maxJitter}");
+        RecordFault($"link-latency {node1} <-> {node2} base={latency.BaseDelay} jitter={latency.MaxJitter}");
     }
 
     public void ClearBidirectionalLinkLatency(FastCasAddress node1, FastCasAddress node2)
     {
         Network.ClearLinkLatency(node1.NetworkAddress, node2.NetworkAddress);
         Network.ClearLinkLatency(node2.NetworkAddress, node1.NetworkAddress);
+        if (TryGetCollocatedPair(node1, node2, out var proposer, out var acceptor))
+        {
+            ApplyCollocatedLinkLatency(proposer, acceptor);
+        }
         RefreshLatencyAwareProposerTiming();
     }
 
     public void ClearLinkLatencies()
     {
         Network.ClearAllLinkLatencies();
+        ApplyAllCollocatedLinkLatencies();
         RefreshLatencyAwareProposerTiming();
         RecordFault("link-latencies cleared");
     }
@@ -615,6 +662,43 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         }
 
         Options.ApplyLatencyAwareProposerTiming(expectedOneWayLatency);
+    }
+
+    private static (TimeSpan BaseDelay, TimeSpan MaxJitter) NormalizeLinkLatency(
+        FastCasAddress source,
+        FastCasAddress target,
+        TimeSpan baseDelay,
+        TimeSpan maxJitter) =>
+        TryGetCollocatedPair(source, target, out _, out _)
+            ? (TimeSpan.Zero, TimeSpan.Zero)
+            : (baseDelay, maxJitter);
+
+    private static bool TryGetCollocatedPair(
+        FastCasAddress node1,
+        FastCasAddress node2,
+        out FastCasAddress proposer,
+        out FastCasAddress acceptor)
+    {
+        if (node1.Ordinal == node2.Ordinal)
+        {
+            if (node1.Role == FastCasParticipantRole.Proposer && node2.Role == FastCasParticipantRole.Acceptor)
+            {
+                proposer = node1;
+                acceptor = node2;
+                return true;
+            }
+
+            if (node1.Role == FastCasParticipantRole.Acceptor && node2.Role == FastCasParticipantRole.Proposer)
+            {
+                proposer = node2;
+                acceptor = node1;
+                return true;
+            }
+        }
+
+        proposer = default;
+        acceptor = default;
+        return false;
     }
 
     public void CrashNode(FastCasAddress address)

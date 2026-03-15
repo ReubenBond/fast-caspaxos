@@ -40,6 +40,7 @@ internal sealed record BenchmarkWorkloadOptions(
     LinkLatencyProfile Topology,
     IReadOnlyList<FaultScheduleEntry> FaultSchedule,
     bool AgreementMode,
+    bool AgreementConcurrentProposers,
     bool RegisterInitMode,
     int WriteIntervalMs,
     int ClientTimeoutMs,
@@ -66,6 +67,7 @@ internal sealed record BenchmarkWorkloadOptions(
         "link-latency-profile",
         "fault-schedule",
         "agreement-mode",
+        "agreement-concurrent-proposers",
         "register-init-mode",
         "write-interval-ms",
         "client-timeout-ms",
@@ -119,6 +121,7 @@ internal sealed record BenchmarkWorkloadOptions(
         var faultSchedule = ParseFaultSchedule(
             parameters.TryGetValue("fault-schedule", out var fs) ? fs : string.Empty);
         var agreementMode = GetBool(parameters, "agreement-mode", defaultValue: false);
+        var agreementConcurrentProposers = GetBool(parameters, "agreement-concurrent-proposers", defaultValue: false);
         var registerInitMode = GetBool(parameters, "register-init-mode", defaultValue: false);
         var writeIntervalMs = GetPositiveIntOrZero(parameters, "write-interval-ms", defaultValue: 0);
         var clientTimeoutMs = GetPositiveIntOrZero(parameters, "client-timeout-ms", defaultValue: 0);
@@ -132,6 +135,11 @@ internal sealed record BenchmarkWorkloadOptions(
         {
             throw new ArgumentException(
                 $"Scenario '{ScenarioName}' does not support 'client-ordinal' when 'agreement-mode=true'.");
+        }
+        if (agreementConcurrentProposers && !agreementMode)
+        {
+            throw new ArgumentException(
+                $"Scenario '{ScenarioName}' does not support 'agreement-concurrent-proposers=true' when 'agreement-mode=false'.");
         }
         var proposerRetryStartAfterFailuresOverride = GetOptionalPositiveIntOrZero(
             parameters,
@@ -168,6 +176,7 @@ internal sealed record BenchmarkWorkloadOptions(
             topology,
             faultSchedule,
             agreementMode,
+            agreementConcurrentProposers,
             registerInitMode,
             writeIntervalMs,
             clientTimeoutMs,
@@ -192,6 +201,7 @@ internal sealed record BenchmarkWorkloadOptions(
         new("link-latency-profile", Topology.ToString().ToLowerInvariant()),
         new("fault-schedule", FormatFaultSchedule()),
         new("agreement-mode", AgreementMode.ToString().ToLowerInvariant()),
+        new("agreement-concurrent-proposers", AgreementConcurrentProposers.ToString().ToLowerInvariant()),
         new("register-init-mode", RegisterInitMode.ToString().ToLowerInvariant()),
         new("write-interval-ms", WriteIntervalMs.ToString(CultureInfo.InvariantCulture)),
         new("client-timeout-ms", ClientTimeoutMs.ToString(CultureInfo.InvariantCulture)),
