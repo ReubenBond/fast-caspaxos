@@ -1558,7 +1558,9 @@ public static class SimulationScenarioCatalog
                 EnableDistinguishedLeader = benchmarkOptions.EnableDistinguishedLeader,
             });
         benchmarkOptions.ApplyProposerTimingOverrides(options);
-        await using var cluster = CreateStringCluster(seed, options, cancellationToken);
+        var cluster = CreateStringCluster(seed, options, cancellationToken);
+        try
+        {
         cluster.CreateConfiguration(
             proposerCount: benchmarkOptions.ProposerCount,
             acceptorCount: benchmarkOptions.AcceptorCount);
@@ -1626,11 +1628,23 @@ public static class SimulationScenarioCatalog
         while (completedProposals < proposalCount)
         {
             // In register-init mode each proposal models an independent first-write to a
-            // brand-new register. Reset all proposer and acceptor state so that no piggybacked
-            // ballots or cached values carry over from the previous proposal.
+            // brand-new register. Recreate the entire cluster so that every piece of state
+            // (protocol engines, client responses, safety monitors) starts fresh.
             if (benchmarkOptions.RegisterInitMode && completedProposals > 0)
             {
-                cluster.ReinitializeForNewRegister();
+                var nextStartTime = cluster.TimeProvider.GetUtcNow();
+                await cluster.DisposeAsync();
+                cluster = new FastCasSimulationCluster<StringValue>(
+                    seed, options, nextStartTime, cancellationToken);
+                cluster.CreateConfiguration(
+                    proposerCount: benchmarkOptions.ProposerCount,
+                    acceptorCount: benchmarkOptions.AcceptorCount);
+                benchmarkOptions.ApplyTopology(cluster);
+                proposers = cluster.ProposerNodes
+                    .Select(node => node.Host.Address).ToArray();
+                clientRoutes = proposers.ToArray();
+                proposerNodesByAddress = cluster.ProposerNodes
+                    .ToDictionary(node => node.Host.Address);
             }
 
             // Check fault schedule before each batch
@@ -1853,6 +1867,11 @@ public static class SimulationScenarioCatalog
             ReproductionHint: string.Create(
                 CultureInfo.InvariantCulture,
                 $"{cluster.GetReproductionHint(BenchmarkWorkloadOptions.ScenarioName)} params: {string.Join(", ", reproductionParameters.Select(p => $"{p.Key}={p.Value}"))}"));
+        }
+        finally
+        {
+            await cluster.DisposeAsync();
+        }
     }
 
     private static FastCasAddress RegisterExplicitClient(
