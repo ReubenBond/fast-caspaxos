@@ -248,7 +248,7 @@ foreach ($pCount in @(1, 2, 3, 5)) {
 # Client timeout is set high (30s) so the client never fails over away from the slow leader.
 # Leader mode: client sends to proposer 5 (slow), sustained degradation.
 # Classic/fast: client sends to local proposer 1 (unaffected).
-$grayFault = "slow-link:proposer:5:at:200:until:600:delay:500:jitter:50"
+$grayFault = "slow-link:proposer:5:at:200:until:600:delay:15:jitter:3"
 $grayFaultSlug = "slow-link-proposer-5-at-200-until-600"
 foreach ($mode in $allModes) {
     $modeParams = Get-ModeParams $mode
