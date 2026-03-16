@@ -1975,34 +1975,36 @@ traffic slows down while the other proposers continue normally.
 
     "S8": r"""## S8 - Leader Crash Failover
 
-**What this tests:** A hard leader outage followed by client failover. Proposer 1
-crashes at proposal 30 and stays down until proposal 60, while agreement mode
-keeps clients aware of alternative proposers.
+**What this tests:** A hard leader outage followed by client failover. Proposer 5
+(the designated leader) crashes at proposal 30 and stays down until proposal 60.
+A single explicit client at proposer 1 routes locally for classic/fast and through
+the leader for leader mode.
 
-**Setup:** 3 proposers, 5 acceptors, 90 proposals on `lan` with
-`fault-schedule=crash:proposer:1:at:30:until:60`, `agreement-mode=true`, and
-`client-timeout-ms=20`. Only fast and leader are included.
+**Setup:** 5 proposers, 5 acceptors, 90 proposals on `lan` with
+`fault-schedule=crash:proposer:5:at:30:until:60`, `client-ordinal=1`,
+`leader-ordinal=5`, and `client-timeout-ms=20`. All three modes are included.
 
 **Client routing:**
-- Fast fans each logical request to all healthy proposers, so it keeps making
-  progress while proposer 1 is down.
-- Leader mode targets the current primary, waits for the 20 ms timeout, and then
-  fails over to another proposer.
+- Classic/Fast: client routes to nearest proposer (proposer 1, collocated),
+  completely unaffected by the leader crash.
+- Leader: client routes to proposer 5, crash forces a 20 ms timeout followed
+  by failover to a different healthy proposer.
 
 | Parameter | Value |
 |-----------|-------|
-| Proposers | 3 |
+| Proposers | 5 |
 | Acceptors | 5 |
 | Proposals | 90 |
 | Topology | LAN |
-| Agreement mode | true |
+| Client | Ordinal 1 (collocated with proposer 1) |
+| Leader | Proposer 5 |
 | Client timeout | 20 ms |
-| Fault | Crash proposer 1 during proposals 30-60 |
-| Modes | Fast, Leader only |
+| Fault | Crash proposer 5 during proposals 30-60 |
+| Modes | Classic, Fast, Leader |
 
-**What to look for:** The modest 20 ms timeout keeps failover visible on a LAN
-without dominating the run. Leader mode should show a short availability stutter
-that fast largely avoids.
+**What to look for:** Classic and fast should show flat, unaffected latency
+throughout the run. Leader mode should show a short availability stutter
+during the crash window, with recovery after failover.
 """,
 }
 
@@ -2036,7 +2038,7 @@ _SCENARIO_SUMMARY_SECTION = r"""## Current Comparative Suite
 | S5 | LAN | Single proposer stream | Sustained throughput with no contention |
 | S6 | LAN | Proposers `1/2/3/5` | Contention crossover between fast and leader |
 | S7 | LAN | Slow-link fault on proposer 1 | Gray-failure isolation vs leader bottleneck |
-| S8 | LAN | Crash fault on proposer 1 | Timeout-driven leader failover |
+| S8 | LAN | Crash fault on proposer 5 | Timeout-driven leader failover |
 """
 
 _RESULTS_INTRO_SECTION = r"""_This document describes the current comparative benchmark suite defined in `run_comparative_benchmarks.ps1`. If charts are missing for a scenario, rerun `.\run_comparative_benchmarks.ps1` and then `uv run scripts\plot_benchmarks.py --input artifacts\comparative --comparative` to refresh the artifacts._

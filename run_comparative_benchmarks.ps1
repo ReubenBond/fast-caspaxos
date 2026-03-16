@@ -117,7 +117,7 @@ $scenarios = [ordered]@{
         Combinations = @()
     }
     "S8-leader-crash-failover" = @{
-        Description  = "Leader crash: proposer 1 crashes, clients timeout and failover. Shows the unavailability stutter."
+        Description  = "Leader crash: 5 proposers, 1 explicit client at proposer 1, proposer 5 is leader; crash proposer 5 at proposal 30. Leader mode fails over after timeout; classic/fast route locally and are unaffected."
         Combinations = @()
     }
 }
@@ -270,24 +270,29 @@ foreach ($mode in $allModes) {
 }
 
 # --- S8: leader-crash-failover ---
-# LAN baseline; crash + client failover. Keep timeout modest so failover remains visible on a low-latency link.
-# Keep this scenario smaller than the others so the crash/retry window stays representative
-# without dominating the full comparative suite runtime.
-$crashFault = "crash:proposer:1:at:30:until:60"
-$crashFaultSlug = "crash-proposer-1-at-30-until-60"
-foreach ($mode in @("fast", "leader")) {
+# 5 proposers, 1 explicit client collocated with proposer 1.
+# Proposer 5 is the initial leader. Crash proposer 5 at proposal 30,
+# recover at proposal 60. Client timeout set to 20 ms so leader-mode
+# failover is visible on a LAN link.
+# Leader mode: client sends to proposer 5, crash forces timeout + failover.
+# Classic/fast: client sends to local proposer 1 (unaffected by leader crash).
+$crashFault = "crash:proposer:5:at:30:until:60"
+$crashFaultSlug = "crash-proposer-5-at-30-until-60"
+foreach ($mode in $allModes) {
     $modeParams = Get-ModeParams $mode
     $topoParams = Get-TopologyParams "lan"
-    $clusterParams = Get-ClusterSizeParams -ScenarioName "S8-leader-crash-failover" -ProposerCount 3 -AcceptorCount $AcceptorCount
+    $clusterParams = Get-ClusterSizeParams -ScenarioName "S8-leader-crash-failover" -ProposerCount 5 -AcceptorCount $AcceptorCount
     $params = $modeParams + $topoParams + $clusterParams + @(
         "proposal-count=90",
         "fault-schedule=$crashFault",
-        "agreement-mode=true"
+        "client-ordinal=1",
+        "leader-ordinal=5",
+        "client-timeout-ms=20"
     )
     $scenarios["S8-leader-crash-failover"].Combinations += New-Combination `
         -Params $params `
-        -Label "topo=lan mode=$mode proposers=3 fault=crash" `
-        -OutputSubpath "lan\$mode\p3\$crashFaultSlug"
+        -Label "topo=lan mode=$mode proposers=5 client=1 leader=5 fault=crash" `
+        -OutputSubpath "lan\$mode\p5\$crashFaultSlug"
 }
 
 # ---------------------------------------------------------------------------

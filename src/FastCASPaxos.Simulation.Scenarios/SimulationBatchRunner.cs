@@ -735,20 +735,20 @@ public static class SimulationScenarioCatalog
         [
             new(
                 "string-corpus",
-                "Replay the string corpus (Coyote parity) on the deterministic simulator.",
-                RunLegacyStringCorpusAsync),
+                "Replay the string corpus on the deterministic simulator.",
+                RunStringCorpusAsync),
             new(
                 "set-corpus",
-                "Replay the set corpus (Coyote parity) on the deterministic simulator.",
-                RunLegacySetCorpusAsync),
+                "Replay the set corpus on the deterministic simulator.",
+                RunSetCorpusAsync),
             new(
                 "random-string-corpus",
-                "Replay the randomized string corpus (Coyote parity) on the deterministic simulator.",
-                RunLegacyRandomStringCorpusAsync),
+                "Replay the randomized string corpus on the deterministic simulator.",
+                RunRandomStringCorpusAsync),
             new(
                 "forking-string-corpus",
-                "Replay the forking string corpus (Coyote parity) on the deterministic simulator.",
-                RunLegacyForkingStringCorpusAsync),
+                "Replay the forking string corpus on the deterministic simulator.",
+                RunForkingStringCorpusAsync),
             new(
                 "randomized-append-mix",
                 "Run a seeded randomized append mix across three proposers.",
@@ -841,7 +841,7 @@ public static class SimulationScenarioCatalog
         return definitions;
     }
 
-    private static async ValueTask<SimulationScenarioCompletion> RunLegacyStringCorpusAsync(
+    private static async ValueTask<SimulationScenarioCompletion> RunStringCorpusAsync(
         int seed,
         int round,
         SimulationRunRecorder recorder,
@@ -854,8 +854,8 @@ public static class SimulationScenarioCatalog
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
 
         var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
-        var operations = CoyoteParityCorpus.BuildLegacyStringOperations();
-        var expected = CoyoteParityCorpus.LegacyStringExpectedValue;
+        var operations = TestCorpus.BuildStringOperations();
+        var expected = TestCorpus.StringExpectedValue;
 
         for (var index = 0; index < operations.Count; index++)
         {
@@ -874,7 +874,7 @@ public static class SimulationScenarioCatalog
             ReproductionHint: cluster.GetReproductionHint("string-corpus"));
     }
 
-    private static async ValueTask<SimulationScenarioCompletion> RunLegacySetCorpusAsync(
+    private static async ValueTask<SimulationScenarioCompletion> RunSetCorpusAsync(
         int seed,
         int round,
         SimulationRunRecorder recorder,
@@ -887,7 +887,7 @@ public static class SimulationScenarioCatalog
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
 
         var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
-        var (operations, expected) = CoyoteParityCorpus.BuildLegacySetOperations();
+        var (operations, expected) = TestCorpus.BuildSetOperations();
         var expectedVersion = 0;
         for (var index = 0; index < operations.Count; index++)
         {
@@ -899,7 +899,7 @@ public static class SimulationScenarioCatalog
         foreach (var value in RecordSetReads(cluster, recorder))
         {
             Ensure(value.Version == expectedVersion, $"Expected committed version {expectedVersion}.");
-            Ensure(value.Value.SetEquals(expected), "Expected final membership to match the legacy set corpus.");
+            Ensure(value.Value.SetEquals(expected), "Expected final membership to match the set corpus.");
         }
 
         cluster.AssertSafetyInvariants();
@@ -908,7 +908,7 @@ public static class SimulationScenarioCatalog
             ReproductionHint: cluster.GetReproductionHint("set-corpus"));
     }
 
-    private static async ValueTask<SimulationScenarioCompletion> RunLegacyRandomStringCorpusAsync(
+    private static async ValueTask<SimulationScenarioCompletion> RunRandomStringCorpusAsync(
         int seed,
         int round,
         SimulationRunRecorder recorder,
@@ -922,7 +922,7 @@ public static class SimulationScenarioCatalog
 
         var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
         var proposerRandom = new Random(seed + 500);
-        var (operations, expected) = CoyoteParityCorpus.BuildLegacyRandomStringOperations();
+        var (operations, expected) = TestCorpus.BuildRandomStringOperations();
         for (var index = 0; index < operations.Count; index++)
         {
             var proposer = proposers[proposerRandom.Next(proposers.Length)];
@@ -943,7 +943,7 @@ public static class SimulationScenarioCatalog
             ReproductionHint: cluster.GetReproductionHint("random-string-corpus"));
     }
 
-    private static async ValueTask<SimulationScenarioCompletion> RunLegacyForkingStringCorpusAsync(
+    private static async ValueTask<SimulationScenarioCompletion> RunForkingStringCorpusAsync(
         int seed,
         int round,
         SimulationRunRecorder recorder,
@@ -956,7 +956,7 @@ public static class SimulationScenarioCatalog
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
 
         var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
-        var (operations, expected) = CoyoteParityCorpus.BuildLegacyForkingStringOperations();
+        var (operations, expected) = TestCorpus.BuildForkingStringOperations();
         for (var index = 0; index < operations.Count; index++)
         {
             var proposer = proposers[index % proposers.Length];
@@ -1776,7 +1776,7 @@ public static class SimulationScenarioCatalog
                         if (submission.FailoverCount >= benchmarkOptions.ClientMaxRetries)
                         {
                             if ((!proposerNodesByAddress[submission.Proposer].IsRunning || proposerNodesByAddress[submission.Proposer].IsSuspended)
-                                && FindPreferredHealthyProposer(proposers, proposerNodesByAddress, submission.Proposer) is { } fallbackProposer)
+                                && FindNextHealthyProposer(proposers, proposerNodesByAddress, submission.Proposer) is { } fallbackProposer)
                             {
                                 clientRoutes[submission.ClientSlot] = fallbackProposer;
                             }
@@ -1796,12 +1796,12 @@ public static class SimulationScenarioCatalog
                             continue;
                         }
 
-                        var nextProposer = FindAvailableFailoverProposer(
+                        var nextProposer = FindNextHealthyProposer(
                             proposers,
                             proposerNodesByAddress,
                             submission.Proposer,
-                            occupiedProposers,
-                            reservedProposers);
+                            excludeOccupied: occupiedProposers,
+                            excludeReserved: reservedProposers);
                         if (nextProposer is not { } failoverProposer)
                         {
                             updatedSubmissions.Add(submission);
@@ -2092,25 +2092,9 @@ public static class SimulationScenarioCatalog
         FastCasAddress client,
         IReadOnlyList<FastCasAddress> proposers,
         IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
-        FastCasAddress currentLeader)
-    {
-        if (benchmarkOptions.EnableDistinguishedLeader)
-        {
-            if (IsHealthyProposer(proposerNodesByAddress[currentLeader]))
-            {
-                return currentLeader;
-            }
-
-            return FindPreferredHealthyProposer(proposers, proposerNodesByAddress, currentLeader);
-        }
-
-        return FindNearestHealthyClientProposer(
-            benchmarkOptions,
-            client,
-            proposers,
-            proposerNodesByAddress,
-            excluded: null);
-    }
+        FastCasAddress currentLeader) =>
+        SelectSingleRoutingTarget(
+            benchmarkOptions, client, proposers, proposerNodesByAddress, currentLeader);
 
     private static FastCasAddress? GetExplicitClientRetryTarget(
         BenchmarkWorkloadOptions benchmarkOptions,
@@ -2118,20 +2102,11 @@ public static class SimulationScenarioCatalog
         IReadOnlyList<FastCasAddress> proposers,
         IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
         FastCasAddress currentLeader,
-        FastCasAddress currentTarget)
-    {
-        if (benchmarkOptions.EnableDistinguishedLeader)
-        {
-            return FindPreferredHealthyProposer(proposers, proposerNodesByAddress, currentLeader);
-        }
-
-        return FindNearestHealthyClientProposer(
-            benchmarkOptions,
-            client,
-            proposers,
-            proposerNodesByAddress,
-            excluded: new HashSet<FastCasAddress> { currentTarget });
-    }
+        FastCasAddress currentTarget) =>
+        SelectSingleRoutingTarget(
+            benchmarkOptions, client, proposers, proposerNodesByAddress, currentLeader,
+            excluded: new HashSet<FastCasAddress> { currentTarget },
+            preferCurrentLeader: false);
 
     private static FastCasAddress[] RegisterAgreementClients(
         FastCasSimulationCluster<StringValue> cluster,
@@ -2183,6 +2158,8 @@ public static class SimulationScenarioCatalog
         var completedProposals = 0;
         while (completedProposals < proposalCount)
         {
+            benchmarkOptions.ApplyFaultAtProposal(cluster, completedProposals, recorder);
+
             var clientIndex = clientRandom.Next(clients.Count);
             var client = clients[clientIndex];
 
@@ -2220,6 +2197,7 @@ public static class SimulationScenarioCatalog
             }
         }
 
+        benchmarkOptions.ApplyFaultAtProposal(cluster, completedProposals, recorder);
         cluster.AssertSafetyInvariants();
 
         recorder.SetDetail("completed-proposals", completedProposals);
@@ -2284,7 +2262,7 @@ public static class SimulationScenarioCatalog
                 var proposer = clientCurrentProposers[clientIndex];
                 if (!IsHealthyProposer(proposerNodesByAddress[proposer]))
                 {
-                    proposer = FindPreferredHealthyProposer(proposers, proposerNodesByAddress, proposer)
+                    proposer = FindNextHealthyProposer(proposers, proposerNodesByAddress, proposer)
                                ?? proposer;
                     clientCurrentProposers[clientIndex] = proposer;
                 }
@@ -2341,7 +2319,7 @@ public static class SimulationScenarioCatalog
 
                         if (submission.FailoverCount >= benchmarkOptions.ClientMaxRetries)
                         {
-                            if (FindPreferredHealthyProposer(proposers, proposerNodesByAddress, submission.Proposer) is { } fallbackProposer)
+                            if (FindNextHealthyProposer(proposers, proposerNodesByAddress, submission.Proposer) is { } fallbackProposer)
                             {
                                 clientCurrentProposers[submission.ClientIndex] = fallbackProposer;
                             }
@@ -2363,7 +2341,7 @@ public static class SimulationScenarioCatalog
                         }
 
                         // Proposer is down — fail over to next healthy proposer
-                        var nextProposer = FindPreferredHealthyProposer(
+                        var nextProposer = FindNextHealthyProposer(
                             proposers, proposerNodesByAddress, submission.Proposer);
                         if (nextProposer is not { } failoverProposer)
                         {
@@ -2750,29 +2728,11 @@ public static class SimulationScenarioCatalog
             return GetHealthyAgreementProposers(proposers, proposerNodesByAddress);
         }
 
-        if (benchmarkOptions.EnableDistinguishedLeader)
+        if (SelectSingleRoutingTarget(
+                benchmarkOptions, client, proposers, proposerNodesByAddress, currentLeader)
+            is { } target)
         {
-            if (IsHealthyProposer(proposerNodesByAddress[currentLeader]))
-            {
-                return [currentLeader];
-            }
-
-            if (FindPreferredHealthyProposer(proposers, proposerNodesByAddress, currentLeader) is { } fallbackLeader)
-            {
-                return [fallbackLeader];
-            }
-
-            return [];
-        }
-
-        if (FindNearestHealthyClientProposer(
-            benchmarkOptions,
-            client,
-            proposers,
-            proposerNodesByAddress,
-            excluded: null) is { } nearestProposer)
-        {
-            return [nearestProposer];
+            return [target];
         }
 
         return [];
@@ -2809,27 +2769,44 @@ public static class SimulationScenarioCatalog
             return GetHealthyAgreementProposers(proposers, proposerNodesByAddress);
         }
 
-        if (benchmarkOptions.EnableDistinguishedLeader)
+        if (SelectSingleRoutingTarget(
+                benchmarkOptions, client, proposers, proposerNodesByAddress, currentLeader,
+                excluded: benchmarkOptions.EnableDistinguishedLeader ? null : contactedProposers,
+                preferCurrentLeader: false)
+            is { } fallbackTarget)
         {
-            if (FindPreferredHealthyProposer(proposers, proposerNodesByAddress, currentLeader) is { } fallbackLeader)
-            {
-                return [fallbackLeader];
-            }
-
-            return [];
-        }
-
-        if (FindNearestHealthyClientProposer(
-            benchmarkOptions,
-            client,
-            proposers,
-            proposerNodesByAddress,
-            contactedProposers) is { } fallbackProposer)
-        {
-            return [fallbackProposer];
+            return [fallbackTarget];
         }
 
         return [];
+    }
+
+    /// <summary>
+    /// Selects a single routing target based on the protocol mode:
+    /// DistinguishedLeader → leader or next healthy successor;
+    /// default/FastCommit → nearest healthy by topology.
+    /// </summary>
+    private static FastCasAddress? SelectSingleRoutingTarget(
+        BenchmarkWorkloadOptions benchmarkOptions,
+        FastCasAddress client,
+        IReadOnlyList<FastCasAddress> proposers,
+        IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
+        FastCasAddress currentLeader,
+        IReadOnlySet<FastCasAddress>? excluded = null,
+        bool preferCurrentLeader = true)
+    {
+        if (benchmarkOptions.EnableDistinguishedLeader)
+        {
+            if (preferCurrentLeader && IsHealthyProposer(proposerNodesByAddress[currentLeader]))
+            {
+                return currentLeader;
+            }
+
+            return FindNextHealthyProposer(proposers, proposerNodesByAddress, currentLeader);
+        }
+
+        return FindNearestHealthyClientProposer(
+            benchmarkOptions, client, proposers, proposerNodesByAddress, excluded);
     }
 
     private static FastCasAddress? FindNearestHealthyClientProposer(
@@ -2929,12 +2906,12 @@ public static class SimulationScenarioCatalog
         new("proposer-expected-rtt-ms", timing.ExpectedRoundTripLatency.TotalMilliseconds.ToString("0.###", CultureInfo.InvariantCulture)),
     ];
 
-    private static FastCasAddress? FindAvailableFailoverProposer(
+    private static FastCasAddress? FindNextHealthyProposer(
         IReadOnlyList<FastCasAddress> proposers,
         IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
         FastCasAddress currentProposer,
-        IReadOnlySet<FastCasAddress> occupiedProposers,
-        IReadOnlySet<FastCasAddress> reservedProposers)
+        IReadOnlySet<FastCasAddress>? excludeOccupied = null,
+        IReadOnlySet<FastCasAddress>? excludeReserved = null)
     {
         var currentIndex = -1;
         for (var i = 0; i < proposers.Count; i++)
@@ -2954,46 +2931,16 @@ public static class SimulationScenarioCatalog
         for (var offset = 1; offset < proposers.Count; offset++)
         {
             var candidate = proposers[(currentIndex + offset) % proposers.Count];
-            if (occupiedProposers.Contains(candidate) || reservedProposers.Contains(candidate))
+            if (excludeOccupied is not null && excludeOccupied.Contains(candidate))
             {
                 continue;
             }
 
-            var node = proposerNodesByAddress[candidate];
-            if (!node.IsRunning || node.IsSuspended)
+            if (excludeReserved is not null && excludeReserved.Contains(candidate))
             {
                 continue;
             }
 
-            return candidate;
-        }
-
-        return null;
-    }
-
-    private static FastCasAddress? FindPreferredHealthyProposer(
-        IReadOnlyList<FastCasAddress> proposers,
-        IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
-        FastCasAddress currentProposer)
-    {
-        var currentIndex = -1;
-        for (var i = 0; i < proposers.Count; i++)
-        {
-            if (proposers[i] == currentProposer)
-            {
-                currentIndex = i;
-                break;
-            }
-        }
-
-        if (currentIndex < 0)
-        {
-            return null;
-        }
-
-        for (var offset = 1; offset < proposers.Count; offset++)
-        {
-            var candidate = proposers[(currentIndex + offset) % proposers.Count];
             var node = proposerNodesByAddress[candidate];
             if (!node.IsRunning || node.IsSuspended)
             {

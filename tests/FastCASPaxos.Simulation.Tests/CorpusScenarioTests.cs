@@ -6,17 +6,17 @@ using Xunit;
 
 namespace FastCASPaxos.Simulation.Tests;
 
-public sealed class CoyoteParityScenarioTests
+public sealed class CorpusScenarioTests
 {
     [Fact]
-    public async Task LegacyStringCorpus_ReachesHelloWorld()
+    public async Task StringCorpus_ReachesHelloWorld()
     {
         await using var cluster = CreateStringCluster(seed: 8801);
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
 
         var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
-        var operations = CoyoteParityCorpus.BuildLegacyStringOperations();
-        var expected = CoyoteParityCorpus.LegacyStringExpectedValue;
+        var operations = TestCorpus.BuildStringOperations();
+        var expected = TestCorpus.StringExpectedValue;
 
         for (var index = 0; index < operations.Count; index++)
         {
@@ -35,13 +35,13 @@ public sealed class CoyoteParityScenarioTests
     }
 
     [Fact]
-    public async Task LegacySetCorpus_ReachesExpectedMembership()
+    public async Task SetCorpus_ReachesExpectedMembership()
     {
         await using var cluster = CreateSetCluster(seed: 8802);
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
 
         var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
-        var (operations, expected) = CoyoteParityCorpus.BuildLegacySetOperations();
+        var (operations, expected) = TestCorpus.BuildSetOperations();
         var expectedVersion = 0;
 
         for (var index = 0; index < operations.Count; index++)
@@ -64,14 +64,14 @@ public sealed class CoyoteParityScenarioTests
     }
 
     [Fact]
-    public async Task LegacyRandomStringCorpus_ReachesDeterministicValue()
+    public async Task RandomStringCorpus_ReachesDeterministicValue()
     {
         await using var cluster = CreateStringCluster(seed: 8803);
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
 
         var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
         var proposerRandom = new Random(8804);
-        var (operations, expected) = CoyoteParityCorpus.BuildLegacyRandomStringOperations();
+        var (operations, expected) = TestCorpus.BuildRandomStringOperations();
 
         for (var index = 0; index < operations.Count; index++)
         {
@@ -89,13 +89,13 @@ public sealed class CoyoteParityScenarioTests
     }
 
     [Fact]
-    public async Task LegacyForkingStringCorpus_ResolvesToSingleCommittedChain()
+    public async Task ForkingStringCorpus_ResolvesToSingleCommittedChain()
     {
         await using var cluster = CreateStringCluster(seed: 8805);
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
 
         var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
-        var (operations, expected) = CoyoteParityCorpus.BuildLegacyForkingStringOperations();
+        var (operations, expected) = TestCorpus.BuildForkingStringOperations();
 
         for (var index = 0; index < operations.Count; index++)
         {

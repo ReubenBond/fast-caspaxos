@@ -148,11 +148,11 @@ public sealed class BenchmarkWorkloadTests
     [Theory]
     [InlineData("uscrossregion", "us3region")]
     [InlineData("geo3region", "geo5region")]
-    public async Task RunAsync_BenchmarkWorkload_LegacyTopologyAliases_MapToRenamedProfiles(
+    public async Task RunAsync_BenchmarkWorkload_TopologyAliases_MapToRenamedProfiles(
         string configuredTopology,
         string effectiveTopology)
     {
-        var outputDir = Path.Combine(Path.GetTempPath(), $"benchmark-legacy-topology-{Guid.NewGuid():N}");
+        var outputDir = Path.Combine(Path.GetTempPath(), $"benchmark-topology-alias-{Guid.NewGuid():N}");
         try
         {
             var result = await SimulationBatchRunner.RunAsync(

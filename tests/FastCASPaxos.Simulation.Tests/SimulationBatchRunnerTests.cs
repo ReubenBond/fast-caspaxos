@@ -12,7 +12,7 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
     private readonly ITestOutputHelper _output = output;
 
     [Fact]
-    public async Task RunAsync_LegacyStringScenario_WritesArtifactsAndCapturesStatistics()
+    public async Task RunAsync_StringScenario_WritesArtifactsAndCapturesStatistics()
     {
         var outputDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -110,7 +110,7 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task RunAsync_LegacySetScenario_WritesPorcupineHistoryArtifact()
+    public async Task RunAsync_SetScenario_WritesPorcupineHistoryArtifact()
     {
         var outputDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -155,7 +155,7 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void AvailableScenarios_ExposeLegacyAndSimulatorNativeCoverage()
+    public void AvailableScenarios_ExposeCorpusAndSimulatorNativeCoverage()
     {
         var names = SimulationBatchRunner.AvailableScenarios
             .Select(scenario => scenario.Name)

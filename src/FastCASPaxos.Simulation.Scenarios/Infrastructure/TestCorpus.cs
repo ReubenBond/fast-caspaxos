@@ -2,18 +2,18 @@ using FastCASPaxos.Model;
 
 namespace FastCASPaxos.Simulation.Scenarios;
 
-public static class CoyoteParityCorpus
+public static class TestCorpus
 {
     private const string CharacterSet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
-    public static string LegacyStringExpectedValue => "Hello, World!";
+    public static string StringExpectedValue => "Hello, World!";
 
-    public static IReadOnlyList<IOperation<StringValue>> BuildLegacyStringOperations() =>
-        LegacyStringExpectedValue
+    public static IReadOnlyList<IOperation<StringValue>> BuildStringOperations() =>
+        StringExpectedValue
             .Select((character, index) => StringScenarioOperations.AppendAtVersion(index + 1, character.ToString()))
             .ToList();
 
-    public static (IReadOnlyList<IOperation<SetValue>> Operations, HashSet<string> ExpectedValue) BuildLegacySetOperations(
+    public static (IReadOnlyList<IOperation<SetValue>> Operations, HashSet<string> ExpectedValue) BuildSetOperations(
         int seed = 1234,
         int count = 20)
     {
@@ -31,7 +31,7 @@ public static class CoyoteParityCorpus
         return (operations, expected);
     }
 
-    public static (IReadOnlyList<IOperation<StringValue>> Operations, string ExpectedValue) BuildLegacyRandomStringOperations(
+    public static (IReadOnlyList<IOperation<StringValue>> Operations, string ExpectedValue) BuildRandomStringOperations(
         int seed = 2345,
         int versions = 5,
         int operationsPerVersion = 3)
@@ -53,7 +53,7 @@ public static class CoyoteParityCorpus
         return (operations, new string([.. expected]));
     }
 
-    public static (IReadOnlyList<IOperation<StringValue>> Operations, string ExpectedValue) BuildLegacyForkingStringOperations(
+    public static (IReadOnlyList<IOperation<StringValue>> Operations, string ExpectedValue) BuildForkingStringOperations(
         int seed = 3456,
         int versions = 5,
         int operationsPerVersion = 3)

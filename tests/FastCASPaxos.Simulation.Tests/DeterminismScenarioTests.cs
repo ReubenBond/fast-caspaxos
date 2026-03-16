@@ -41,7 +41,7 @@ public sealed class DeterminismScenarioTests
 
         var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
         var proposerRandom = new Random(4401);
-        var (operations, expectedValue) = CoyoteParityCorpus.BuildLegacyRandomStringOperations(seed: 4402);
+        var (operations, expectedValue) = TestCorpus.BuildRandomStringOperations(seed: 4402);
         List<string> trace = [];
 
         foreach (var operation in operations)
