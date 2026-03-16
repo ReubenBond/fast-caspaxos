@@ -94,15 +94,15 @@ public sealed class BenchmarkWorkloadTests
             Assert.Equal("false", fields[13]);
             Assert.Equal("false", fields[14]);
             Assert.Equal("false", fields[16]);
-            Assert.Equal("latency-aware-derived", fields[19]);
+            Assert.Equal("fixed-defaults", fields[19]);
             Assert.Equal("4", fields[21]);
             Assert.Equal("exponential-proportional-jitter", fields[22]);
             Assert.Equal("true", fields[23]);
-            Assert.Equal("0", fields[24]);
-            Assert.Equal("12", fields[25]);
-            Assert.Equal("80", fields[26]);
+            Assert.Equal("2", fields[24]);
+            Assert.Equal("50", fields[25]);
+            Assert.Equal("10000", fields[26]);
             Assert.Equal("0.5", fields[27]);
-            Assert.Equal("16", fields[28]);
+            Assert.Equal("1000", fields[28]);
         }
         finally
         {
@@ -475,7 +475,7 @@ public sealed class BenchmarkWorkloadTests
                 });
 
             var run = Assert.Single(result.Runs);
-            Assert.Equal("explicit-overrides", run.Details["parameter.retry-backoff-source"]);
+            Assert.Equal("fixed-defaults", run.Details["parameter.retry-backoff-source"]);
             Assert.Equal("1", run.Details["parameter.retry-backoff-start-after-failures"]);
             Assert.Equal("250", run.Details["parameter.retry-backoff-base-ms"]);
             Assert.Equal("750", run.Details["parameter.retry-backoff-max-ms"]);
@@ -578,13 +578,11 @@ public sealed class BenchmarkWorkloadTests
             var sendLines = run.TraceLines
                 .Where(line => line.Contains("|send|", StringComparison.Ordinal))
                 .ToArray();
+            // In leader mode with per-client routing, all 3 clients route to proposer 1.
+            // 2 rounds × 3 clients = 6 sends, all to the leader.
             Assert.Equal(6, sendLines.Length);
-            Assert.Equal(2, sendLines.Count(line => line.Contains("|send|proposer-1|", StringComparison.Ordinal)));
-            Assert.Equal(2, sendLines.Count(line => line.Contains("|send|proposer-2|", StringComparison.Ordinal)));
-            Assert.Equal(2, sendLines.Count(line => line.Contains("|send|proposer-3|", StringComparison.Ordinal)));
+            Assert.Equal(6, sendLines.Count(line => line.Contains("|send|proposer-1|", StringComparison.Ordinal)));
             Assert.Contains("|send|proposer-1|", sendLines[0], StringComparison.Ordinal);
-            Assert.Contains("|send|proposer-2|", sendLines[1], StringComparison.Ordinal);
-            Assert.Contains("|send|proposer-3|", sendLines[2], StringComparison.Ordinal);
 
             var proposalLines = run.TraceLines
                 .Where(line => line.Contains("|proposal|", StringComparison.Ordinal))

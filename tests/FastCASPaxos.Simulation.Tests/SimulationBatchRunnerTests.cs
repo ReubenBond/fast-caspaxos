@@ -527,7 +527,7 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
                         "exponential-proportional-jitter",
                         run.Details["parameter.retry-backoff"]);
                     Assert.Equal(
-                        "0",
+                        "2",
                         run.Details["parameter.retry-backoff-start-after-failures"]);
                     Assert.Equal("0.5", run.Details["parameter.retry-backoff-jitter-ratio"]);
                     Assert.True(run.CreateStatisticsSummary().WriteAcceptorRoundTripsRecorded > 0);
@@ -569,7 +569,7 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
                 "exponential-proportional-jitter",
                 run.Details["parameter.retry-backoff"]);
             Assert.Equal(
-                "0",
+                "2",
                 run.Details["parameter.retry-backoff-start-after-failures"]);
             Assert.Equal("0.5", run.Details["parameter.retry-backoff-jitter-ratio"]);
             Assert.True(run.CreateStatisticsSummary().WriteAcceptorRoundTripsMax >= 4);

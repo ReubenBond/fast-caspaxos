@@ -93,7 +93,7 @@ $scenarios = [ordered]@{
         Combinations = @()
     }
     "S2-agreement-consensus" = @{
-        Description  = "Agreement workload: five proposer/acceptor pairs plus client-aware routing and proposer learning keep fast rounds aligned."
+        Description  = "Agreement workload with leader suspend: five proposers with per-client routing; suspending proposer 1 at proposal 400 forces client failover, showing leader mode's recovery cost vs fast/classic resilience."
         Combinations = @()
     }
     "S3-register-init-burst" = @{
@@ -113,7 +113,7 @@ $scenarios = [ordered]@{
         Combinations = @()
     }
     "S7-leader-gray-failure" = @{
-        Description  = "Leader gray failure: slow-link on proposer 1, all leader traffic degrades vs only one fast proposer."
+        Description  = "Leader gray failure: 5 proposers, 1 explicit client at proposer 1, proposer 5 is leader; slow-link (500ms) on proposer 5. Leader mode sends through slow leader; classic/fast route locally."
         Combinations = @()
     }
     "S8-leader-crash-failover" = @{
@@ -145,9 +145,12 @@ foreach ($mode in $allModes) {
 
 # --- S2: agreement-consensus ---
 # LAN is the merged single-region baseline. Keep five proposers so each proposer
-# can align with a distinct acceptor, and keep agreement-mode enabled because
-# this scenario exists to measure simultaneous same-value agreement pressure and
-# proposer learning.
+# can align with a distinct acceptor. Per-client routing assigns each client a
+# "current proposer" (leader mode: all start on proposer 1; fast/classic: spread).
+# Suspending proposer 1 at proposal 400 forces client failover and shows leader
+# mode's single-point-of-failure cost versus fast/classic resilience.
+$s2SuspendFault = "suspend:proposer:1:at:400:until:1001"
+$s2FaultSlug = "suspend-proposer-1-at-400"
 $s2ClusterParams = Get-ClusterSizeParams -ScenarioName "S2-agreement-consensus" -ProposerCount 5 -AcceptorCount $AcceptorCount
 foreach ($mode in $allModes) {
     $modeParams = Get-ModeParams $mode
@@ -155,12 +158,13 @@ foreach ($mode in $allModes) {
     $params = $modeParams + $topoParams + $s2ClusterParams + @(
         "proposal-count=1000",
         "agreement-mode=true",
-        "agreement-concurrent-proposers=true"
+        "agreement-concurrent-proposers=true",
+        "fault-schedule=$s2SuspendFault"
     )
     $scenarios["S2-agreement-consensus"].Combinations += New-Combination `
         -Params $params `
-        -Label "topo=lan mode=$mode proposers=5 agreement=true" `
-        -OutputSubpath "lan\$mode\p5\agreement-true"
+        -Label "topo=lan mode=$mode proposers=5 agreement=true fault=suspend" `
+        -OutputSubpath "lan\$mode\p5\$s2FaultSlug"
 }
 
 # --- S3: register-init-burst ---
@@ -238,21 +242,31 @@ foreach ($pCount in @(1, 2, 3, 5)) {
 }
 
 # --- S7: leader-gray-failure ---
-# LAN baseline; slow-link adds 200ms+50ms to the leader, making the degradation dramatic.
-$grayFault = "slow-link:proposer:1:at:200:until:400:delay:200:jitter:50"
-$grayFaultSlug = "slow-link-proposer-1-at-200-until-400"
-foreach ($mode in @("fast", "leader")) {
+# 5 proposers, 1 explicit client colocated with proposer 1.
+# Proposer 5 is the initial leader. slow-link adds 500ms+50ms to proposer 5
+# from proposal 200 through the end of the run (no recovery).
+# Client timeout is set high (30s) so the client never fails over away from the slow leader.
+# Leader mode: client sends to proposer 5 (slow), sustained degradation.
+# Classic/fast: client sends to local proposer 1 (unaffected).
+$grayFault = "slow-link:proposer:5:at:200:until:600:delay:500:jitter:50"
+$grayFaultSlug = "slow-link-proposer-5-at-200-until-600"
+foreach ($mode in $allModes) {
     $modeParams = Get-ModeParams $mode
     $topoParams = Get-TopologyParams "lan"
-    $clusterParams = Get-ClusterSizeParams -ScenarioName "S7-leader-gray-failure" -ProposerCount 3 -AcceptorCount $AcceptorCount
+    $clusterParams = Get-ClusterSizeParams -ScenarioName "S7-leader-gray-failure" -ProposerCount 5 -AcceptorCount $AcceptorCount
+    $modeExtra = @()
     $params = $modeParams + $topoParams + $clusterParams + @(
         "proposal-count=600",
-        "fault-schedule=$grayFault"
-    )
+        "fault-schedule=$grayFault",
+        "client-ordinal=1",
+        "leader-ordinal=5",
+        "client-timeout-ms=30000",
+        "proposer-response-timeout-ms=3000"
+    ) + $modeExtra
     $scenarios["S7-leader-gray-failure"].Combinations += New-Combination `
         -Params $params `
-        -Label "topo=lan mode=$mode proposers=3 fault=slow-link" `
-        -OutputSubpath "lan\$mode\p3\$grayFaultSlug"
+        -Label "topo=lan mode=$mode proposers=5 client=1 leader=5 fault=slow-link" `
+        -OutputSubpath "lan\$mode\p5\$grayFaultSlug"
 }
 
 # --- S8: leader-crash-failover ---
@@ -268,7 +282,6 @@ foreach ($mode in @("fast", "leader")) {
     $params = $modeParams + $topoParams + $clusterParams + @(
         "proposal-count=90",
         "fault-schedule=$crashFault",
-        "client-timeout-ms=20",
         "agreement-mode=true"
     )
     $scenarios["S8-leader-crash-failover"].Combinations += New-Combination `

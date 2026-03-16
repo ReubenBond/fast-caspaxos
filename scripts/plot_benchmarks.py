@@ -1608,34 +1608,46 @@ benchmark suite.
 
 ### LAN
 
-All nodes are co-located in one datacenter. Non-collocated same-region links
-use `base-delay-ms=1` and `max-jitter-ms=1`, while proposer ordinal `N` talks
-to acceptor ordinal `N` with zero latency and no jitter.
+All nodes are co-located in one datacenter. Each proposer ordinal `N` is
+collocated with client `N` and acceptor `N` on the same machine (~0 ms latency).
+Non-collocated same-region links use `base-delay-ms=1` and `max-jitter-ms=1`.
 
 ```mermaid
 graph LR
   subgraph Datacenter
-    P1([P1])
-    P2([P2])
-    P3([P3])
-    A1([A1])
-    A2([A2])
-    A3([A3])
+    subgraph Machine_1
+      C1([C1])
+      P1([P1])
+      A1([A1])
+    end
+    subgraph Machine_2
+      C2([C2])
+      P2([P2])
+      A2([A2])
+    end
+    subgraph Machine_3
+      C3([C3])
+      P3([P3])
+      A3([A3])
+    end
     A4([A4])
     A5([A5])
-    P1 ---|0 ms| A1
+    C1 ---|~0 ms| P1
+    C2 ---|~0 ms| P2
+    C3 ---|~0 ms| P3
+    P1 ---|~0 ms| A1
     P1 ---|1-2 ms| A2
     P1 ---|1-2 ms| A3
     P1 ---|1-2 ms| A4
     P1 ---|1-2 ms| A5
     P2 ---|1-2 ms| A1
-    P2 ---|0 ms| A2
+    P2 ---|~0 ms| A2
     P2 ---|1-2 ms| A3
     P2 ---|1-2 ms| A4
     P2 ---|1-2 ms| A5
     P3 ---|1-2 ms| A1
     P3 ---|1-2 ms| A2
-    P3 ---|0 ms| A3
+    P3 ---|~0 ms| A3
     P3 ---|1-2 ms| A4
     P3 ---|1-2 ms| A5
   end
@@ -1643,9 +1655,9 @@ graph LR
 
 | Link | Configured latency |
 |------|--------------------|
-| Collocated proposer `N` <-> acceptor `N` | 0 ms |
+| Collocated client `N` <-> proposer `N` | ~0 ms (1 µs) |
+| Collocated proposer `N` <-> acceptor `N` | ~0 ms (1 µs) |
 | Other same-region proposer <-> acceptor links | 1 ms base + up to 1 ms jitter |
-| Any client <-> nearest proposer | 1 ms base + up to 1 ms jitter |
 
 **Quorum impact (5 acceptors):**
 Classic and leader need 3 / 5 responses; fast needs 4 / 5. Because every node is
@@ -1658,18 +1670,23 @@ local, the difference is mostly 1 RTT versus 2 RTT, not geography.
 The geo suite uses `geo5region`: East US 2, France Central, Southeast Asia,
 Brazil South, and Australia Southeast. Cross-region latencies are configured
 from Azure P50 RTT medians, which span 85-332 ms for this region set.
+Each proposer ordinal `N` is collocated with client `N` and acceptor `N`
+on the same machine (~0 ms latency).
 
 ```mermaid
 graph TB
   subgraph East_US_2
+    C1([C1])
     P1([P1])
     A1([A1])
   end
   subgraph France_Central
+    C2([C2])
     P2([P2])
     A2([A2])
   end
   subgraph Southeast_Asia
+    C3([C3])
     P3([P3])
     A3([A3])
   end
@@ -1678,25 +1695,28 @@ graph TB
   end
   subgraph Australia_Southeast
     A5([A5])
-    C(["C (S1 client)"])
+    CX(["CX (S1 client)"])
   end
-  P1 ---|0 ms| A1
+  C1 ---|~0 ms| P1
+  C2 ---|~0 ms| P2
+  C3 ---|~0 ms| P3
+  P1 ---|~0 ms| A1
   P1 ---|~43 ms| A2
   P1 ---|~115 ms| A3
   P1 ---|~59 ms| A4
   P1 ---|~103 ms| A5
   P2 ---|~43 ms| A1
-  P2 ---|0 ms| A2
+  P2 ---|~0 ms| A2
   P2 ---|~75 ms| A3
   P2 ---|~96 ms| A4
   P2 ---|~119 ms| A5
   P3 ---|~115 ms| A1
   P3 ---|~75 ms| A2
-  P3 ---|0 ms| A3
+  P3 ---|~0 ms| A3
   P3 ---|~167 ms| A4
   P3 ---|~45 ms| A5
-  C -. "~45 ms" .-> P3
-  C -. "~103 ms" .-> P1
+  CX -. "~45 ms" .-> P3
+  CX -. "~103 ms" .-> P1
 ```
 
 | Region pair | Median RTT |
@@ -1711,7 +1731,8 @@ graph TB
 | Southeast Asia <-> Brazil South | 332 ms |
 | Southeast Asia <-> Australia Southeast | 88 ms |
 | Brazil South <-> Australia Southeast | 311 ms |
-| Collocated proposer `N` <-> acceptor `N` | 0 ms |
+| Collocated client `N` <-> proposer `N` | ~0 ms (1 µs) |
+| Collocated proposer `N` <-> acceptor `N` | ~0 ms (1 µs) |
 | Other intra-region links | 1 ms base + up to 1 ms jitter |
 
 The comparative suite never uses more proposers than acceptors, so proposer
@@ -1850,13 +1871,27 @@ collocated and 2/3 traverse a standard LAN hop.
 
 - **Fast ≈ 1 acceptor RTT.** Each proposer reuses the learned prepared fast
   ballot from the previous commit. The fast ballot is shared (proposer-id = 0),
-  so any proposer can skip prepare.
+  so any proposer can skip prepare. Because every client sends to its collocated
+  proposer (≈ 0 ms hop), end-to-end latency is uniformly ~1 acceptor RTT with a
+  tight spread.
 - **Classic ≈ 2 acceptor RTTs.** Classic mode does not piggyback a prepared
-  ballot, so every proposal must prepare before accepting.
-- **Leader ≈ slightly under 2 acceptor RTTs on average.** All proposals go to
-  the leader who reuses its own piggybacked classic ballot (1 protocol RTT).
-  When the originating client is remote from the leader (2/3 of the time),
-  the forwarding hop adds ~1 RTT of wall-clock latency.
+  ballot, so every proposal must prepare before accepting. Like fast, each client
+  sends to its own collocated proposer, so the spread is tight.
+- **Leader: wide bimodal spread, average slightly under 2 acceptor RTTs.** All
+  proposals route to P1 (the distinguished leader), who reuses its piggybacked
+  classic ballot and commits in 1 protocol RTT—the same as fast. However, the
+  end-to-end latency measured from client to client includes the client ↔ leader
+  network hop. Because each proposer's collocated client has a near-zero link
+  (1 μs) to its _own_ proposer but uses the standard LAN delay (~1 ms base +
+  0–1 ms jitter) for any other node, the commit latency splits into two bands:
+  - **~1/3 of proposals** (Client 1, collocated with leader): ≈ 0 ms forwarding
+    → total ≈ 1 acceptor RTT.
+  - **~2/3 of proposals** (Client 2 or 3, remote from leader): ≈ 1 LAN
+    round-trip of forwarding overhead → total ≈ 2 acceptor RTTs.
+
+  This bimodal split produces the wide spread visible in the commit-latency
+  chart. The weighted average is roughly 1/3 × 1 + 2/3 × 2 ≈ 5/3 acceptor RTTs,
+  which is why leader sits between fast (1 RTT) and classic (2 RTTs).
 """,
 
     "S5": r"""## S5 - High-Throughput Sustained Stream

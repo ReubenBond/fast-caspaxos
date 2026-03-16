@@ -129,7 +129,7 @@ internal sealed record BenchmarkWorkloadOptions(
         var registerInitMode = GetBool(parameters, "register-init-mode", defaultValue: false);
         var writeIntervalMs = GetPositiveIntOrZero(parameters, "write-interval-ms", defaultValue: 0);
         var serialRandomProposer = GetBool(parameters, "serial-random-proposer", defaultValue: false);
-        var clientTimeoutMs = GetPositiveIntOrZero(parameters, "client-timeout-ms", defaultValue: 0);
+        var clientTimeoutMs = GetPositiveIntOrZero(parameters, "client-timeout-ms", defaultValue: 5000);
         var clientMaxRetries = GetPositiveIntOrZero(parameters, "client-max-retries", defaultValue: 2);
         var clientOrdinal = GetOptionalPositiveIntOrZero(parameters, "client-ordinal");
         if (clientOrdinal is <= 0)

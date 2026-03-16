@@ -22,6 +22,7 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
     private readonly FastCasSimulationTransport<TValue> _transport;
     private readonly List<FastCasAddress> _acceptors;
     private readonly FastCasSimulationOptions _options;
+    private readonly Queue<FastCasProposeRequestMessage<TValue>> _requestQueue = new();
     private HostProposerEngine _engine;
     private SimulationNodeContext? _simulationContext;
     private Action<FastCasAddress, Ballot, TValue, Ballot>? _committedValueBroadcaster;
@@ -70,7 +71,8 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
 
     public bool HasPendingClientRequests =>
         _activeRequestId is not null
-        || _engine.HasPendingProposal;
+        || _engine.HasPendingProposal
+        || _requestQueue.Count > 0;
 
     public void BindSimulationContext(SimulationNodeContext simulationContext)
     {
@@ -205,10 +207,17 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
     private void ClearPendingClientRequests()
     {
         _activeRequestId = null;
+        _requestQueue.Clear();
     }
 
     private void StartProposal(FastCasProposeRequestMessage<TValue> proposeRequest)
     {
+        if (_activeRequestId is not null || _engine.HasPendingProposal)
+        {
+            _requestQueue.Enqueue(proposeRequest);
+            return;
+        }
+
         _activeRequestId = proposeRequest.RequestId;
         StartNewProposal();
         _engine.StartProposal(AttachCaller(proposeRequest.From, proposeRequest.Payload));
@@ -227,6 +236,7 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
         ResetPendingRetryState();
         _activeRequestId = null;
         ApplyPendingLearnedCommit();
+        ProcessNextQueuedRequest();
     }
 
     private void BroadcastCommittedValue(Ballot acceptedBallot, TValue value, Ballot preparedBallot)
@@ -267,6 +277,35 @@ public sealed class FastCasProposerHost<TValue> : IFastCasNodeHost<TValue>
             learnedCommit.AcceptedBallot,
             learnedCommit.Value,
             learnedCommit.PreparedBallot);
+    }
+
+    private void ProcessNextQueuedRequest()
+    {
+        while (_requestQueue.TryDequeue(out var nextRequest))
+        {
+            var operation = nextRequest.Payload;
+            var (status, _) = operation.Apply(_engine.CachedValue);
+            if (status == OperationStatus.NotApplicable)
+            {
+                // The value is already at (or past) the requested version — return the
+                // committed value immediately without running the Paxos protocol.
+                var response = new ProposeResponse<TValue>(
+                    _engine.Ballot.Round,
+                    _engine.CachedValue);
+                _transport.Send(new FastCasProposeResponseMessage<TValue>(
+                    Address,
+                    nextRequest.From,
+                    nextRequest.RequestId,
+                    response));
+                continue;
+            }
+
+            // Start a normal proposal for this queued request.
+            _activeRequestId = nextRequest.RequestId;
+            StartNewProposal();
+            _engine.StartProposal(AttachCaller(nextRequest.From, nextRequest.Payload));
+            return;
+        }
     }
 
     private void SendPrepare(

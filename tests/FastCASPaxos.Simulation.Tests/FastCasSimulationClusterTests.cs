@@ -191,9 +191,9 @@ public sealed class FastCasSimulationClusterTests
         var acceptor1ToProposer1 = cluster.Network.GetLinkLatency("acceptor-1", "proposer-1");
         Assert.True(proposer1ToAcceptor1.HasValue);
         Assert.True(acceptor1ToProposer1.HasValue);
-        Assert.Equal(TimeSpan.Zero, proposer1ToAcceptor1.Value.BaseDelay);
+        Assert.Equal(TimeSpan.FromMicroseconds(1), proposer1ToAcceptor1.Value.BaseDelay);
         Assert.Equal(TimeSpan.Zero, proposer1ToAcceptor1.Value.MaxJitter);
-        Assert.Equal(TimeSpan.Zero, acceptor1ToProposer1.Value.BaseDelay);
+        Assert.Equal(TimeSpan.FromMicroseconds(1), acceptor1ToProposer1.Value.BaseDelay);
         Assert.Equal(TimeSpan.Zero, acceptor1ToProposer1.Value.MaxJitter);
         Assert.Null(cluster.Network.GetLinkLatency("proposer-1", "acceptor-2"));
     }
@@ -226,7 +226,7 @@ public sealed class FastCasSimulationClusterTests
         var remoteLatency = cluster.Network.GetLinkLatency("proposer-1", "acceptor-2");
         Assert.True(collocatedLatency.HasValue);
         Assert.True(remoteLatency.HasValue);
-        Assert.Equal(TimeSpan.Zero, collocatedLatency.Value.BaseDelay);
+        Assert.Equal(TimeSpan.FromMicroseconds(1), collocatedLatency.Value.BaseDelay);
         Assert.Equal(TimeSpan.Zero, collocatedLatency.Value.MaxJitter);
         Assert.Equal(TimeSpan.FromMilliseconds(25), remoteLatency.Value.BaseDelay);
         Assert.Equal(TimeSpan.FromMilliseconds(5), remoteLatency.Value.MaxJitter);
@@ -234,14 +234,14 @@ public sealed class FastCasSimulationClusterTests
         cluster.ClearBidirectionalLinkLatency(FastCasAddress.Proposer(1), FastCasAddress.Acceptor(1));
         var collocatedAfterSpecificClear = cluster.Network.GetLinkLatency("proposer-1", "acceptor-1");
         Assert.True(collocatedAfterSpecificClear.HasValue);
-        Assert.Equal(TimeSpan.Zero, collocatedAfterSpecificClear.Value.BaseDelay);
+        Assert.Equal(TimeSpan.FromMicroseconds(1), collocatedAfterSpecificClear.Value.BaseDelay);
         Assert.Equal(TimeSpan.Zero, collocatedAfterSpecificClear.Value.MaxJitter);
 
         cluster.ClearLinkLatencies();
 
         var collocatedAfterClearAll = cluster.Network.GetLinkLatency("proposer-1", "acceptor-1");
         Assert.True(collocatedAfterClearAll.HasValue);
-        Assert.Equal(TimeSpan.Zero, collocatedAfterClearAll.Value.BaseDelay);
+        Assert.Equal(TimeSpan.FromMicroseconds(1), collocatedAfterClearAll.Value.BaseDelay);
         Assert.Equal(TimeSpan.Zero, collocatedAfterClearAll.Value.MaxJitter);
         Assert.Null(cluster.Network.GetLinkLatency("proposer-1", "acceptor-2"));
     }

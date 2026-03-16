@@ -10,9 +10,9 @@ public sealed class FastCasSimulationProposerRetryBackoffOptions
 
     public int StartAfterFailures { get; init; } = 2;
 
-    public TimeSpan BaseDelay { get; init; } = TimeSpan.FromMilliseconds(4);
+    public TimeSpan BaseDelay { get; init; } = TimeSpan.FromMilliseconds(50);
 
-    public TimeSpan MaxDelay { get; init; } = TimeSpan.FromMilliseconds(64);
+    public TimeSpan MaxDelay { get; init; } = TimeSpan.FromSeconds(10);
 
     public double JitterRatio { get; init; } = 0.5;
 

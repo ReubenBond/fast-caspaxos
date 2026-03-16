@@ -1629,6 +1629,10 @@ public static class SimulationScenarioCatalog
         }
 
         var clientRoutes = proposers.ToArray();
+        var collocatedClients = proposers
+            .Select(p => cluster.GetCollocatedClient(p)
+                ?? throw new InvalidOperationException($"No collocated client for proposer '{p}'."))
+            .ToArray();
         var proposalCount = benchmarkOptions.ProposalCount;
         var requestId = 100_000;
         var clientTimeoutEnabled = benchmarkOptions.ClientTimeoutMs > 0;
@@ -1656,6 +1660,10 @@ public static class SimulationScenarioCatalog
                 proposers = cluster.ProposerNodes
                     .Select(node => node.Host.Address).ToArray();
                 clientRoutes = proposers.ToArray();
+                collocatedClients = proposers
+                    .Select(p => cluster.GetCollocatedClient(p)
+                        ?? throw new InvalidOperationException($"No collocated client for proposer '{p}'."))
+                    .ToArray();
                 proposerNodesByAddress = cluster.ProposerNodes
                     .ToDictionary(node => node.Host.Address);
             }
@@ -1695,7 +1703,7 @@ public static class SimulationScenarioCatalog
                 }
 
                 var submissionRequestId = requestId++;
-                _ = cluster.SendProposal(proposer, operation, submissionRequestId);
+                _ = cluster.SendProposal(proposer, operation, submissionRequestId, collocatedClients[clientSlot]);
                 recorder.RecordSend(cluster, proposer, operation, submissionRequestId);
                 submissions.Add((clientSlot, proposer, operation, submissionRequestId, 0));
             }
@@ -1745,6 +1753,13 @@ public static class SimulationScenarioCatalog
                         break;
                     }
 
+                    // RunUntil may exhaust its iteration budget before the timeout
+                    // deadline.  Only process retries when the timeout has elapsed.
+                    if (cluster.TimeProvider.GetUtcNow() < timeoutDeadline)
+                    {
+                        continue;
+                    }
+
                     var respondedCount = submissions.Count - pendingSubmissions.Count;
                     var reroutedAny = false;
                     var droppedTimedOutFailures = 0;
@@ -1774,7 +1789,7 @@ public static class SimulationScenarioCatalog
                         if (currentProposerNode.IsRunning && !currentProposerNode.IsSuspended)
                         {
                             var retriedRequestId = requestId++;
-                            _ = cluster.SendProposal(submission.Proposer, submission.Operation, retriedRequestId);
+                            _ = cluster.SendProposal(submission.Proposer, submission.Operation, retriedRequestId, collocatedClients[submission.ClientSlot]);
                             recorder.RecordSend(cluster, submission.Proposer, submission.Operation, retriedRequestId);
                             updatedSubmissions.Add((submission.ClientSlot, submission.Proposer, submission.Operation, retriedRequestId, submission.FailoverCount + 1));
                             reroutedAny = true;
@@ -1794,7 +1809,7 @@ public static class SimulationScenarioCatalog
                         }
 
                         var retryRequestId = requestId++;
-                        _ = cluster.SendProposal(failoverProposer, submission.Operation, retryRequestId);
+                        _ = cluster.SendProposal(failoverProposer, submission.Operation, retryRequestId, collocatedClients[submission.ClientSlot]);
                         recorder.RecordSend(cluster, failoverProposer, submission.Operation, retryRequestId);
                         clientRoutes[submission.ClientSlot] = failoverProposer;
                         occupiedProposers.Add(failoverProposer);
@@ -2135,19 +2150,14 @@ public static class SimulationScenarioCatalog
         FastCasSimulationCluster<StringValue> cluster,
         BenchmarkWorkloadOptions benchmarkOptions)
     {
+        // Collocated clients are automatically registered by the cluster when
+        // proposers are created.  Just retrieve them in ordinal order.
         List<FastCasAddress> clients = [];
         for (var ordinal = 1; ordinal <= benchmarkOptions.ProposerCount; ordinal++)
         {
-            var client = cluster.RegisterClient(ordinal);
-            clients.Add(client);
-
-            // Collocate each client with its same-ordinal proposer (0 latency)
-            var proposerAddress = FastCasAddress.Proposer(ordinal);
-            cluster.Network.SetBidirectionalLinkLatency(
-                client.NetworkAddress,
-                proposerAddress.NetworkAddress,
-                TimeSpan.Zero,
-                TimeSpan.Zero);
+            var proposer = FastCasAddress.Proposer(ordinal);
+            clients.Add(cluster.GetCollocatedClient(proposer)
+                ?? throw new InvalidOperationException($"No collocated client for proposer '{proposer}'."));
         }
 
         return [.. clients];
@@ -2246,6 +2256,13 @@ public static class SimulationScenarioCatalog
         var proposalCount = benchmarkOptions.ProposalCount;
         var nextRequestId = 100_000;
         var writeInterval = TimeSpan.FromMilliseconds(benchmarkOptions.WriteIntervalMs);
+        var clientTimeoutEnabled = benchmarkOptions.ClientTimeoutMs > 0;
+        var clientTimeout = TimeSpan.FromMilliseconds(benchmarkOptions.ClientTimeoutMs);
+
+        // Per-client "current proposer" routing: each client tracks which proposer
+        // it sends requests to, and fails over on timeout.
+        var clientCurrentProposers = InitializeClientProposers(
+            benchmarkOptions, clients, proposers, proposerNodesByAddress);
 
         var completedProposals = 0;
         var agreementRound = 0;
@@ -2253,43 +2270,154 @@ public static class SimulationScenarioCatalog
         {
             benchmarkOptions.ApplyFaultAtProposal(cluster, completedProposals, recorder);
 
-            var healthyProposers = GetHealthyAgreementProposers(proposers, proposerNodesByAddress);
-            var roundSize = Math.Min(healthyProposers.Length, proposalCount - completedProposals);
-            Ensure(
-                roundSize > 0,
-                $"Expected at least one healthy proposer for simultaneous agreement round {agreementRound + 1}. " +
-                cluster.GetFailureDiagnostics($"simultaneous-agreement-round-{agreementRound + 1}"));
-
             agreementRound++;
             var roundSegment = ((char)('A' + ((agreementRound - 1) % 26))).ToString();
             var roundOperation = StringScenarioOperations.AppendAtVersion(agreementRound, roundSegment);
+            var roundSize = Math.Min(clients.Count, proposalCount - completedProposals);
 
-            List<(FastCasAddress Proposer, int RequestId)> submissions = [];
-            for (var index = 0; index < roundSize; index++)
+            // Submit from each client to its current proposer. Multiple clients may
+            // target the same proposer (e.g. all in leader mode); the proposer's
+            // request queue handles concurrent arrivals with no-op optimization.
+            List<(int ClientIndex, FastCasAddress Proposer, int RequestId, int FailoverCount)> submissions = [];
+            for (var clientIndex = 0; clientIndex < roundSize; clientIndex++)
             {
-                var proposer = healthyProposers[index];
-                var caller = clients[index % clients.Count];
+                var proposer = clientCurrentProposers[clientIndex];
+                if (!IsHealthyProposer(proposerNodesByAddress[proposer]))
+                {
+                    proposer = FindPreferredHealthyProposer(proposers, proposerNodesByAddress, proposer)
+                               ?? proposer;
+                    clientCurrentProposers[clientIndex] = proposer;
+                }
+
+                var caller = clients[clientIndex];
                 var requestId = nextRequestId++;
                 _ = cluster.SendProposal(proposer, roundOperation, requestId, caller);
                 recorder.RecordSend(cluster, proposer, roundOperation, requestId);
-                submissions.Add((proposer, requestId));
+                submissions.Add((clientIndex, proposer, requestId, 0));
             }
 
-            var maxIterations = 50_000 * Math.Max(1, submissions.Count);
-            Ensure(
-                cluster.RunUntil(
-                    () => submissions.All(submission => cluster.TryGetRoutedResponse(submission.RequestId, out _)),
-                    maxIterations: maxIterations),
-                $"Expected simultaneous agreement round {agreementRound} to complete for all proposers. " +
-                cluster.GetFailureDiagnostics($"simultaneous-agreement-round-{agreementRound}"));
+            if (submissions.Count == 0)
+            {
+                break;
+            }
 
+            var maxIterationsPerBatch = 50_000 * Math.Max(1, submissions.Count);
+
+            if (clientTimeoutEnabled)
+            {
+                var consecutiveTimeoutsWithoutProgress = 0;
+
+                while (submissions.Any(s => !cluster.TryGetRoutedResponse(s.RequestId, out _)))
+                {
+                    var timeoutDeadline = cluster.TimeProvider.GetUtcNow() + clientTimeout;
+                    cluster.RunUntil(
+                        () => submissions.All(s => cluster.TryGetRoutedResponse(s.RequestId, out _))
+                              || cluster.TimeProvider.GetUtcNow() >= timeoutDeadline,
+                        maxIterations: maxIterationsPerBatch);
+
+                    var pendingCount = submissions.Count(s => !cluster.TryGetRoutedResponse(s.RequestId, out _));
+                    if (pendingCount == 0)
+                    {
+                        break;
+                    }
+
+                    // RunUntil may exhaust its iteration budget before the timeout
+                    // deadline.  Only process retries when the timeout has elapsed.
+                    if (cluster.TimeProvider.GetUtcNow() < timeoutDeadline)
+                    {
+                        continue;
+                    }
+
+                    var reroutedAny = false;
+                    var droppedTimedOutFailures = 0;
+                    var updatedSubmissions = new List<(int ClientIndex, FastCasAddress Proposer, int RequestId, int FailoverCount)>(submissions.Count);
+                    foreach (var submission in submissions)
+                    {
+                        if (cluster.TryGetRoutedResponse(submission.RequestId, out _))
+                        {
+                            updatedSubmissions.Add(submission);
+                            continue;
+                        }
+
+                        if (submission.FailoverCount >= benchmarkOptions.ClientMaxRetries)
+                        {
+                            if (FindPreferredHealthyProposer(proposers, proposerNodesByAddress, submission.Proposer) is { } fallbackProposer)
+                            {
+                                clientCurrentProposers[submission.ClientIndex] = fallbackProposer;
+                            }
+
+                            droppedTimedOutFailures++;
+                            continue;
+                        }
+
+                        var currentProposerNode = proposerNodesByAddress[submission.Proposer];
+                        if (currentProposerNode.IsRunning && !currentProposerNode.IsSuspended)
+                        {
+                            // Proposer is alive but slow — retry on the same proposer
+                            var retriedRequestId = nextRequestId++;
+                            _ = cluster.SendProposal(submission.Proposer, roundOperation, retriedRequestId, clients[submission.ClientIndex]);
+                            recorder.RecordSend(cluster, submission.Proposer, roundOperation, retriedRequestId);
+                            updatedSubmissions.Add((submission.ClientIndex, submission.Proposer, retriedRequestId, submission.FailoverCount + 1));
+                            reroutedAny = true;
+                            continue;
+                        }
+
+                        // Proposer is down — fail over to next healthy proposer
+                        var nextProposer = FindPreferredHealthyProposer(
+                            proposers, proposerNodesByAddress, submission.Proposer);
+                        if (nextProposer is not { } failoverProposer)
+                        {
+                            updatedSubmissions.Add(submission);
+                            continue;
+                        }
+
+                        var retryRequestId = nextRequestId++;
+                        _ = cluster.SendProposal(failoverProposer, roundOperation, retryRequestId, clients[submission.ClientIndex]);
+                        recorder.RecordSend(cluster, failoverProposer, roundOperation, retryRequestId);
+                        clientCurrentProposers[submission.ClientIndex] = failoverProposer;
+                        updatedSubmissions.Add((submission.ClientIndex, failoverProposer, retryRequestId, submission.FailoverCount + 1));
+                        reroutedAny = true;
+                    }
+
+                    submissions = updatedSubmissions;
+                    var respondedCount = submissions.Count - submissions.Count(s => !cluster.TryGetRoutedResponse(s.RequestId, out _));
+                    if (respondedCount > 0 || reroutedAny || droppedTimedOutFailures > 0)
+                    {
+                        consecutiveTimeoutsWithoutProgress = 0;
+                        continue;
+                    }
+
+                    consecutiveTimeoutsWithoutProgress++;
+                    if (consecutiveTimeoutsWithoutProgress > benchmarkOptions.ClientMaxRetries + proposers.Count)
+                    {
+                        Ensure(
+                            false,
+                            $"Simultaneous agreement round {agreementRound} made no progress after repeated client timeouts. " +
+                            cluster.GetFailureDiagnostics($"simultaneous-agreement-round-{agreementRound}"));
+                    }
+                }
+            }
+            else
+            {
+                Ensure(
+                    cluster.RunUntil(
+                        () => submissions.All(s => cluster.TryGetRoutedResponse(s.RequestId, out _)),
+                        maxIterations: maxIterationsPerBatch),
+                    $"Expected simultaneous agreement round {agreementRound} to complete for all proposers. " +
+                    cluster.GetFailureDiagnostics($"simultaneous-agreement-round-{agreementRound}"));
+            }
+
+            // Collect responses and verify agreement invariants
+            var batchResponded = 0;
             var observedCommittedValue = false;
             var roundCommittedValue = default(StringValue);
             foreach (var submission in submissions)
             {
-                Ensure(
-                    cluster.TryGetRoutedResponse(submission.RequestId, out var routedResponse),
-                    $"Expected simultaneous agreement round {agreementRound} to record response {submission.RequestId}.");
+                if (!cluster.TryGetRoutedResponse(submission.RequestId, out var routedResponse))
+                {
+                    continue;
+                }
+
                 recorder.RecordProposal(cluster, routedResponse.Proposer, roundOperation, routedResponse.Response);
                 Ensure(
                     routedResponse.Response.CommittedValue.Version == agreementRound,
@@ -2306,9 +2434,18 @@ public static class SimulationScenarioCatalog
                         EqualityComparer<StringValue>.Default.Equals(roundCommittedValue, routedResponse.Response.CommittedValue),
                         "Expected simultaneous agreement proposers to observe the same committed value.");
                 }
+
+                batchResponded++;
             }
 
-            completedProposals += submissions.Count;
+            if (batchResponded == 0 && benchmarkOptions.FaultSchedule.Count == 0)
+            {
+                Ensure(false,
+                    $"Expected simultaneous agreement round {agreementRound} to have at least one response. " +
+                    cluster.GetFailureDiagnostics($"simultaneous-agreement-round-{agreementRound}"));
+            }
+
+            completedProposals += batchResponded;
 
             if (writeInterval > TimeSpan.Zero && completedProposals < proposalCount)
             {
@@ -2340,6 +2477,39 @@ public static class SimulationScenarioCatalog
             ReproductionHint: string.Create(
                 CultureInfo.InvariantCulture,
                 $"{cluster.GetReproductionHint(BenchmarkWorkloadOptions.ScenarioName)} params: {string.Join(", ", reproductionParameters.Select(p => $"{p.Key}={p.Value}"))}"));
+    }
+
+    private static FastCasAddress[] InitializeClientProposers(
+        BenchmarkWorkloadOptions benchmarkOptions,
+        IReadOnlyList<FastCasAddress> clients,
+        IReadOnlyList<FastCasAddress> proposers,
+        IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress)
+    {
+        var result = new FastCasAddress[clients.Count];
+        if (benchmarkOptions.EnableDistinguishedLeader)
+        {
+            var leader = benchmarkOptions.GetInitialLeader(proposers);
+            Array.Fill(result, leader);
+            return result;
+        }
+
+        var healthyProposers = GetHealthyAgreementProposers(proposers, proposerNodesByAddress);
+        if (healthyProposers.Length == 0)
+        {
+            for (var i = 0; i < clients.Count; i++)
+            {
+                result[i] = proposers[i % proposers.Count];
+            }
+
+            return result;
+        }
+
+        for (var i = 0; i < clients.Count; i++)
+        {
+            result[i] = healthyProposers[i % healthyProposers.Length];
+        }
+
+        return result;
     }
 
     private static SimulationScenarioCompletion RunEverywhereAgreementBenchmarkWorkload(
@@ -2505,6 +2675,14 @@ public static class SimulationScenarioCatalog
                 continue;
             }
 
+            // RunUntil may have exhausted its iteration budget before the
+            // timeout deadline.  Only count a retry when the timeout has
+            // actually been reached.
+            if (cluster.TimeProvider.GetUtcNow() < timeoutDeadline)
+            {
+                continue;
+            }
+
             Ensure(
                 failoverCount < benchmarkOptions.ClientMaxRetries,
                 $"Agreement request {requestId} from {client} exhausted client retries. " +
@@ -2559,6 +2737,16 @@ public static class SimulationScenarioCatalog
     {
         if (benchmarkOptions.EnableFastCommit)
         {
+            // Target the nearest healthy proposer to avoid multi-proposer
+            // ballot contention.  Fast commit only needs one proposer to
+            // succeed; broadcasting to all creates dueling-ballot livelocks.
+            if (FindNearestHealthyClientProposer(
+                    benchmarkOptions, client, proposers, proposerNodesByAddress,
+                    excluded: null) is { } nearest)
+            {
+                return [nearest];
+            }
+
             return GetHealthyAgreementProposers(proposers, proposerNodesByAddress);
         }
 
@@ -2600,12 +2788,25 @@ public static class SimulationScenarioCatalog
     {
         if (benchmarkOptions.EnableFastCommit)
         {
+            // Try an uncontacted healthy proposer first; fall back to the
+            // nearest one.  Always target a single proposer to avoid the
+            // same dueling-ballot contention that caused the initial timeout.
             var remainingHealthy = GetHealthyAgreementProposers(proposers, proposerNodesByAddress)
                 .Where(proposer => !contactedProposers.Contains(proposer))
                 .ToArray();
-            return remainingHealthy.Length > 0
-                ? remainingHealthy
-                : GetHealthyAgreementProposers(proposers, proposerNodesByAddress);
+            if (remainingHealthy.Length > 0)
+            {
+                return [remainingHealthy[0]];
+            }
+
+            if (FindNearestHealthyClientProposer(
+                    benchmarkOptions, client, proposers, proposerNodesByAddress,
+                    excluded: null) is { } nearest)
+            {
+                return [nearest];
+            }
+
+            return GetHealthyAgreementProposers(proposers, proposerNodesByAddress);
         }
 
         if (benchmarkOptions.EnableDistinguishedLeader)
