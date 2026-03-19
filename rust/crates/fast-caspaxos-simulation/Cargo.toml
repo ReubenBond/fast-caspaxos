@@ -1,0 +1,20 @@
+[package]
+name = "fast-caspaxos-simulation"
+version = "0.1.0"
+edition = "2021"
+description = "Deterministic simulation harness for Fast CASPaxos using turmoil"
+license = "MIT"
+
+[dependencies]
+fast-caspaxos-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+rand = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true
