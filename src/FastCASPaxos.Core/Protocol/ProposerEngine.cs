@@ -658,16 +658,17 @@ public abstract class ProposerEngine<TValue, TRoute>
         // Piggybacked prepare is purely a latency optimization. Fast mode keeps asking acceptors
         // to line up the next shared fast ballot; leader mode lines up this proposer's next
         // classic ballot so consecutive operations can remain leader-owned.
-        if (Ballot.IsFastRoundBallot && EnableFastCommit)
+        if (EnableFastCommit)
         {
             return Ballot.NextRound(proposer: 0);
         }
 
-        if (Ballot.IsClassicRoundBallot && EnableDistinguishedLeader)
+        if (EnableDistinguishedLeader)
         {
             return Ballot.NextRound(ProposerId);
         }
 
+        // Do not prepare next round
         return null;
     }
 

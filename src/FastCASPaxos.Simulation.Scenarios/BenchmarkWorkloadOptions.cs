@@ -464,6 +464,12 @@ internal sealed record BenchmarkWorkloadOptions(
         };
     }
 
+    /// <summary>
+    /// Default jitter ratio for cross-region links: jitter = 15% of one-way delay.
+    /// The formula preserves the expected (median) RTT: E[delay] = baseDelay + maxJitter/2 = oneWay.
+    /// </summary>
+    private const double DefaultCrossRegionJitterRatio = 0.15;
+
     private static (TimeSpan BaseDelay, TimeSpan MaxJitter) CreateLatencyFromMedianRtt(int medianRttMs)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(medianRttMs, 0);
@@ -472,9 +478,10 @@ internal sealed record BenchmarkWorkloadOptions(
             return (TimeSpan.Zero, TimeSpan.Zero);
         }
 
-        var jitterMs = medianRttMs > 1 && medianRttMs % 2 == 0 ? 2 : 1;
-        var baseDelayMs = (medianRttMs - jitterMs) / 2;
-        return (TimeSpan.FromMilliseconds(baseDelayMs), TimeSpan.FromMilliseconds(jitterMs));
+        var oneWayMs = medianRttMs / 2.0;
+        var maxJitterMs = oneWayMs * DefaultCrossRegionJitterRatio;
+        var baseDelayMs = oneWayMs - maxJitterMs / 2.0;
+        return (TimeSpan.FromMilliseconds(baseDelayMs), TimeSpan.FromMilliseconds(maxJitterMs));
     }
 
     private static void ApplyCrossRegionLatency<TValue>(

@@ -524,6 +524,25 @@ def discover_comparative_structure(root_dir: str) -> dict[str, list[Path]]:
 
 
 # ---------------------------------------------------------------------------
+# Y-axis auto-sizing helper
+# ---------------------------------------------------------------------------
+
+def _data_y_max(*arrays, margin: float = 0.05) -> float:
+    """Compute tight Y-axis upper limit from the primary plotted data.
+
+    Accepts numpy arrays and scalar floats.  Returns *max(data) × (1 + margin)*,
+    or 1.0 when all inputs are empty/zero.
+    """
+    peak = 0.0
+    for arr in arrays:
+        if isinstance(arr, (int, float)):
+            peak = max(peak, float(arr))
+        elif hasattr(arr, "__len__") and len(arr) > 0:
+            peak = max(peak, float(np.nanmax(arr)))
+    return peak * (1 + margin) if peak > 0 else 1.0
+
+
+# ---------------------------------------------------------------------------
 # 6a  Latency time-series with confidence bands
 # ---------------------------------------------------------------------------
 
@@ -551,7 +570,7 @@ def plot_latency_timeseries_aggregated(
 
     ax.set_xlabel("Proposal Index", fontsize=12)
     ax.set_ylabel("Latency (ms)", fontsize=12)
-    ax.set_ylim(bottom=0)
+    ax.set_ylim(0, _data_y_max(*(data["latency_p75"] for data in aggregated_data.values()), margin=0.1))
     ax.set_title(f"Commit Latency \u2014 {scenario_name}", fontsize=14, fontweight="bold")
     ax.legend(fontsize=11, framealpha=0.9)
     ax.grid(True, alpha=0.2)
@@ -604,7 +623,8 @@ def plot_latency_timeseries_aggregated_plotly(
         xaxis_title="Proposal Index", yaxis_title="Latency (ms)",
         height=500, template="plotly_white",
     )
-    fig.update_yaxes(rangemode="tozero")
+    y_max = _data_y_max(*(data["latency_p75"] for data in aggregated_data.values()), margin=0.1)
+    fig.update_yaxes(range=[0, y_max])
     fig.write_html(os.path.join(output_dir, f"{scenario_name}-commit-latency.html"))
 
 
@@ -636,11 +656,13 @@ def plot_contention_spectrum(all_rows: list[dict], output_dir: str, scenario_nam
         groups[key][n_proposers].extend([r["latency_ms"] for r in rows])
 
     fig, ax = plt.subplots(figsize=(10, 6))
+    all_p75s: list[float] = []
     for idx, (key, prop_data) in enumerate(sorted(groups.items(), key=lambda item: labels.get(item[0], ""))):
         xs = sorted(prop_data.keys())
         medians = [float(np.median(prop_data[x])) for x in xs]
         p25s = [float(np.percentile(prop_data[x], 25)) for x in xs]
         p75s = [float(np.percentile(prop_data[x], 75)) for x in xs]
+        all_p75s.extend(p75s)
         color = _color_for_series(idx)
         label = labels.get(key, "configuration")
 
@@ -653,7 +675,7 @@ def plot_contention_spectrum(all_rows: list[dict], output_dir: str, scenario_nam
 
     ax.set_xlabel("Number of Proposers (Contention)")
     ax.set_ylabel("Median Latency (ms)")
-    ax.set_ylim(bottom=0)
+    ax.set_ylim(0, _data_y_max(*all_p75s, margin=0.1))
     ax.set_title(f"Contention Spectrum — {scenario_name}", fontsize=14, fontweight="bold")
     ax.legend(framealpha=0.9)
     fig.tight_layout()
@@ -680,11 +702,13 @@ def plot_contention_spectrum_plotly(all_rows: list[dict], output_dir: str, scena
         groups[key][n_proposers].extend([r["latency_ms"] for r in rows])
 
     fig = go.Figure()
+    all_p75s: list[float] = []
     for idx, (key, prop_data) in enumerate(sorted(groups.items(), key=lambda item: labels.get(item[0], ""))):
         xs = sorted(prop_data.keys())
         medians = [float(np.median(prop_data[x])) for x in xs]
         p25s = [float(np.percentile(prop_data[x], 25)) for x in xs]
         p75s = [float(np.percentile(prop_data[x], 75)) for x in xs]
+        all_p75s.extend(p75s)
         color = _color_for_series(idx)
         fig.add_trace(go.Scatter(
             x=xs, y=medians, mode="lines+markers",
@@ -702,12 +726,8 @@ def plot_contention_spectrum_plotly(all_rows: list[dict], output_dir: str, scena
         xaxis_title="Number of Proposers", yaxis_title="Median Latency (ms)",
         height=500, template="plotly_white",
     )
-    fig.update_yaxes(rangemode="tozero")
+    fig.update_yaxes(range=[0, _data_y_max(*all_p75s, margin=0.1)])
     fig.write_html(os.path.join(output_dir, f"{scenario_name}-contention-spectrum.html"))
-
-
-# ---------------------------------------------------------------------------
-# 6c  Failover timeline chart
 # ---------------------------------------------------------------------------
 
 def plot_failover_timeline(
@@ -776,7 +796,8 @@ def plot_failover_timeline(
 
         ax.set_xlabel("Simulated Time (ms)")
         ax.set_ylabel("Latency (ms)")
-        ax.set_ylim(bottom=0)
+        panel_lats = [r["latency_ms"] for r in config_rows]
+        ax.set_ylim(0, _data_y_max(*panel_lats, margin=0.05))
         ax.set_title(labels.get(key, "configuration"), fontsize=12)
         ax.legend(fontsize=8, framealpha=0.9, ncol=2)
 
@@ -851,12 +872,10 @@ def plot_failover_timeline_plotly(
         title=f"Failover Timeline \u2014 {scenario_name}",
         height=500, template="plotly_white",
     )
-    fig.update_yaxes(rangemode="tozero")
+    y_max = _data_y_max(*[r["latency_ms"] for r in all_rows], margin=0.05)
+    for ci in range(len(config_items)):
+        fig.update_yaxes(range=[0, y_max], row=1, col=ci + 1)
     fig.write_html(os.path.join(output_dir, f"{scenario_name}-failover-timeline.html"))
-
-
-# ---------------------------------------------------------------------------
-# 6d  RTT distribution comparison
 # ---------------------------------------------------------------------------
 
 def plot_rtt_distribution(
@@ -987,7 +1006,7 @@ def plot_summary_dashboard(
                            fontsize=7, rotation=30, ha="right")
         ax.set_title(scenario, fontsize=9)
         ax.set_ylabel("Median Lat. (ms)", fontsize=8)
-        ax.set_ylim(bottom=0)
+        ax.set_ylim(0, _data_y_max(*p75s, margin=0.1))
 
     # Hide unused axes
     for ax_idx in range(n, rows_count * cols):
@@ -1023,8 +1042,10 @@ def plot_summary_dashboard_plotly(
         rows = scenario_results[scenario]
         r, c = divmod(ax_idx, cols)
         by_mode = group_by(rows, "mode")
+        panel_p75s: list[float] = []
         for m_idx, (mode, mrows) in enumerate(sorted(by_mode.items())):
             lats = [x["latency_ms"] for x in mrows]
+            panel_p75s.append(float(np.percentile(lats, 75)))
             fig.add_trace(
                 go.Bar(
                     x=[_label_for_mode(mode)],
@@ -1042,12 +1063,12 @@ def plot_summary_dashboard_plotly(
                 ),
                 row=r + 1, col=c + 1,
             )
+        fig.update_yaxes(range=[0, _data_y_max(*panel_p75s, margin=0.1)], row=r + 1, col=c + 1)
 
     fig.update_layout(
         title="Scenario Summary Dashboard",
         height=350 * rows_count, template="plotly_white",
     )
-    fig.update_yaxes(rangemode="tozero")
     fig.write_html(os.path.join(output_dir, "summary-dashboard.html"))
 
 
@@ -1303,7 +1324,8 @@ def plot_per_proposer_traces(
 
         ax.set_xlabel("Simulated Time (ms)")
         ax.set_ylabel("Latency (ms)")
-        ax.set_ylim(bottom=0)
+        panel_lats = [r["latency_ms"] for r in mode_rows]
+        ax.set_ylim(0, _data_y_max(*panel_lats, margin=0.05))
         ax.set_title(labels.get(key, "configuration"), fontsize=12)
         ax.legend(fontsize=7, framealpha=0.9, ncol=2)
 
@@ -1376,7 +1398,9 @@ def plot_per_proposer_traces_plotly(
         title=f"Per-Proposer Latency Traces \u2014 {scenario_name}",
         height=500, template="plotly_white",
     )
-    fig.update_yaxes(rangemode="tozero")
+    y_max = _data_y_max(*[r["latency_ms"] for r in all_rows], margin=0.05)
+    for ci in range(len(config_items)):
+        fig.update_yaxes(range=[0, y_max], row=1, col=ci + 1)
     fig.write_html(os.path.join(output_dir, f"{scenario_name}-per-proposer-traces.html"))
 
 
@@ -1411,14 +1435,16 @@ def plot_matplotlib(all_rows: list[dict], output_dir: str):
 
         # 1. Latency time-series
         fig, ax = plt.subplots(figsize=(12, 6))
+        all_y: list[float] = []
         for idx, (mode, rows) in enumerate(sorted(by_mode.items())):
             sorted_rows = sorted(rows, key=lambda r: r["completed_ms"])
             x = list(range(len(sorted_rows)))
             y = [r["latency_ms"] for r in sorted_rows]
+            all_y.extend(y)
             ax.plot(x, y, label=_label_for_mode(mode), color=_color_for_mode(mode, idx), alpha=0.8, linewidth=0.8)
         ax.set_xlabel("Proposal Index")
         ax.set_ylabel("Latency (ms)")
-        ax.set_ylim(bottom=0)
+        ax.set_ylim(0, _data_y_max(*all_y, margin=0.05))
         ax.set_title(f"Commit Latency Over Time \u2014 {facet_name}")
         ax.legend()
         ax.grid(True, alpha=0.3)
@@ -1428,13 +1454,15 @@ def plot_matplotlib(all_rows: list[dict], output_dir: str):
 
         # 2. Throughput
         fig, ax = plt.subplots(figsize=(12, 6))
+        all_tp: list[float] = []
         for idx, (mode, rows) in enumerate(sorted(by_mode.items())):
             times, throughputs = sliding_window_throughput(rows, window_ms=200.0)
             if times:
+                all_tp.extend(throughputs)
                 ax.plot(times, throughputs, label=_label_for_mode(mode), color=_color_for_mode(mode, idx), alpha=0.8, linewidth=0.8)
         ax.set_xlabel("Simulated Time (ms)")
         ax.set_ylabel("Throughput (proposals/sec)")
-        ax.set_ylim(bottom=0)
+        ax.set_ylim(0, _data_y_max(*all_tp, margin=0.05))
         ax.set_title(f"Throughput Over Time \u2014 {facet_name}")
         ax.legend()
         ax.grid(True, alpha=0.3)
@@ -1474,7 +1502,8 @@ def plot_matplotlib(all_rows: list[dict], output_dir: str):
             ax.boxplot(data, labels=labels, showfliers=False)
             ax.set_title(f"Topology: {topo}")
             ax.set_ylabel("Latency (ms)")
-            ax.set_ylim(bottom=0)
+            panel_lats = [v for d in data for v in d]
+            ax.set_ylim(0, _data_y_max(*panel_lats, margin=0.05))
             ax.grid(True, alpha=0.3)
         fig.suptitle("Latency Distribution by Topology and Protocol Mode")
         fig.tight_layout()
@@ -1515,6 +1544,8 @@ def plot_plotly(all_rows: list[dict], output_dir: str):
             ],
         )
 
+        all_lats = [r["latency_ms"] for r in facet_rows]
+        all_tps: list[float] = []
         for i, (mode, rows) in enumerate(sorted(by_mode.items())):
             color = _color_for_mode(mode, i)
             label = _label_for_mode(mode)
@@ -1552,6 +1583,7 @@ def plot_plotly(all_rows: list[dict], output_dir: str):
             # Throughput
             times, throughputs = sliding_window_throughput(rows, window_ms=200.0)
             if times:
+                all_tps.extend(throughputs)
                 fig.add_trace(
                     go.Scatter(
                         x=times,
@@ -1583,12 +1615,14 @@ def plot_plotly(all_rows: list[dict], output_dir: str):
             showlegend=True,
         )
         fig.update_xaxes(title_text="Proposal Index", row=1, col=1)
-        fig.update_yaxes(title_text="Latency (ms)", rangemode="tozero", row=1, col=1)
+        lat_y_max = _data_y_max(*all_lats, margin=0.05)
+        fig.update_yaxes(title_text="Latency (ms)", range=[0, lat_y_max], row=1, col=1)
         fig.update_xaxes(title_text="Latency (ms)", row=1, col=2)
         fig.update_yaxes(title_text="CDF", row=1, col=2)
         fig.update_xaxes(title_text="Simulated Time (ms)", row=2, col=1)
-        fig.update_yaxes(title_text="Proposals/sec", rangemode="tozero", row=2, col=1)
-        fig.update_yaxes(title_text="Latency (ms)", rangemode="tozero", row=2, col=2)
+        tp_y_max = _data_y_max(*all_tps, margin=0.05) if all_tps else 1.0
+        fig.update_yaxes(title_text="Proposals/sec", range=[0, tp_y_max], row=2, col=1)
+        fig.update_yaxes(title_text="Latency (ms)", range=[0, lat_y_max], row=2, col=2)
 
         fig.write_html(os.path.join(charts_dir, f"benchmark-{facet_name}.html"))
 
