@@ -1,0 +1,31 @@
+% ==============================================================================
+\section{Introduction}
+\label{sec:introduction}
+% ==============================================================================
+
+Distributed consensus allows a set of processes to agree on a single value despite failures.
+Paxos~\cite{lamport_tcs98,lamport_sigact01} and its variants provide reliable solutions to this problem and often underpin the replicated state machines at the heart of industrial distributed systems~\cite{schneider_cs90}.
+
+Classic Paxos operates in two phases---\emph{prepare} and \emph{accept}---each requiring a quorum of acceptors.
+Multi-Paxos amortizes the cost of the prepare phase by electing a stable leader, allowing committed values in a single round-trip as long as the leader is uncontended.
+However, the leader is also a single point of contention and a potential performance bottleneck.
+If the leader fails, the system must detect the failure and elect a new leader before progress can resume.
+
+Fast Paxos~\cite{lamport_msr05} introduced the concept of \emph{fast rounds}, in which any proposer may send a value directly to acceptors without first acquiring leadership.
+If sufficiently many acceptors receive the same value, it commits in one round-trip.
+When concurrent proposals conflict, the protocol falls back to a coordinated recovery round.
+The price is a larger quorum requirement: fast quorums must be large enough that any later classic recovery quorum can identify which fast-round value, if any, was committed.
+
+CASPaxos~\cite{rystsov_caspaxos} simplifies single-decree Paxos into a replicated, rewritable, linearizable register with compare-and-swap semantics.
+It requires only two metadata fields per register and supports a piggybacked-prepare optimization that amortizes leader election across successive operations.
+
+In this paper we present \emph{Fast CASPaxos}, which applies the Fast Paxos fast-round optimization to CASPaxos.
+The key insight is that the piggybacked ballot in each accept message can be either a shared fast ballot or a proposer-owned classic ballot, allowing the protocol to switch between leadered and leaderless operation on a per-operation basis.
+This gives deployments the flexibility to optimize for their current workload: leaderless mode for geo-distributed, low-conflict scenarios where 1~RTT commits from any proposer are attractive, and leadered mode when contention is high and a stable leader provides better throughput.
+
+We make the following contributions:
+\begin{itemize}
+    \item We describe the Fast CASPaxos protocol and its adaptive mode-switching mechanism (Section~\ref{sec:fast-caspaxos}).
+    \item We argue correctness and present a TLA+ specification verified by model checking (Section~\ref{sec:correctness}, Appendix~\ref{sec:tla-specification}).
+    \item We evaluate performance through deterministic simulation with fault injection and linearizability checking across LAN and geo-distributed topologies (Section~\ref{sec:evaluation}).
+\end{itemize}

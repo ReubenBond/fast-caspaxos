@@ -1,0 +1,15 @@
+% ==============================================================================
+\section{Summary}
+\label{sec:summary}
+% ==============================================================================
+
+Fast CASPaxos is a small modification to CASPaxos that yields a large increase in flexibility.
+By allowing the piggybacked ballot to be either a shared fast ballot or a proposer-owned classic ballot, the protocol supports both leadered and leaderless operation, and can switch between them on a per-operation basis.
+
+The modification requires only the addition of the Fast Paxos vote-tallying rule for value recovery and the reservation of proposer~ID~0 for shared fast ballots.
+Acceptor state remains unchanged---two fields per register---and the protocol retains CASPaxos's simplicity and minimal metadata footprint.
+
+We have formalized the protocol in TLA+ and verified safety and liveness properties through model checking.
+Our deterministic simulation evaluation demonstrates that Fast CASPaxos achieves 1~RTT commits in both leadered and leaderless modes when uncontended, and gracefully falls back to coordinated recovery under contention.
+
+More broadly, we believe that adaptive protocols that can tune their behavior to match current conditions---rather than committing to a single operating mode at deployment time---represent a promising direction for practical consensus systems.

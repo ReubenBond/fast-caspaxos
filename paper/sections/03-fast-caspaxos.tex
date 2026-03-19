@@ -1,0 +1,57 @@
+% ==============================================================================
+\section{Fast CASPaxos}
+\label{sec:fast-caspaxos}
+% ==============================================================================
+
+Fast CASPaxos applies the Fast Paxos fast-round optimization to CASPaxos.
+The modification is small: we extend the piggybacked-prepare mechanism to support shared fast ballots in addition to proposer-owned classic ballots, and adopt the Fast Paxos vote-tallying rules for value recovery.
+
+% ------------------------------------------------------------------------------
+\subsection{Ballot Structure}
+\label{sec:ballot-structure}
+% ------------------------------------------------------------------------------
+
+Ballots are represented as tuples $(r, p)$ where $r$ is the round number and $p$ identifies the proposer.
+We reserve $p = 0$ to denote a \emph{shared fast ballot}: any proposer may have its value accepted under ballot $(r, 0)$.
+A ballot with $p \neq 0$ is a \emph{classic ballot} owned exclusively by proposer~$p$.
+
+The quorum size depends on the ballot type:
+\begin{align}
+    \textit{classicQuorum} &= \lfloor N/2 \rfloor + 1 \\
+    \textit{fastQuorum} &= \lceil 3N/4 \rceil
+\end{align}
+where $N$ is the number of acceptors.
+A fast ballot requires a fast quorum for commitment, while a classic ballot requires only a classic quorum.
+
+% ------------------------------------------------------------------------------
+\subsection{Piggybacked Prepare}
+\label{sec:piggybacked-prepare}
+% ------------------------------------------------------------------------------
+
+CASPaxos's piggybacked-prepare optimization sends the next ballot to prepare alongside each accept request.
+Fast CASPaxos generalizes this: the piggybacked ballot can be either:
+\begin{itemize}
+    \item $(r+1, 0)$---a shared fast ballot, keeping the next round leaderless, or
+    \item $(r+1, p)$---a classic ballot owned by proposer~$p$, keeping the next round leadered.
+\end{itemize}
+
+This choice is the mechanism by which Fast CASPaxos adapts between leadered and leaderless operation.
+A proposer that expects low contention piggybacks a fast ballot; one that anticipates contention (or that wishes to retain leadership) piggybacks a classic ballot.
+The decision can be made independently for each operation, allowing the system to respond to changing workload conditions.
+
+When a proposer runs the prepare phase and observes accepted entries from a fast ballot, it must apply the Fast Paxos vote-tallying rule: group responses by value for that ballot and select the value with the uniquely largest count.
+If no value has a unique majority, the fast round is declared conflicted and the proposer falls back to a classic recovery round.
+
+% ------------------------------------------------------------------------------
+\subsection{Optimizations}
+\label{sec:optimizations}
+% ------------------------------------------------------------------------------
+
+\paragraph{Idempotent accept.}
+To allow multiple proposers to concurrently commit identical values without conflicting, acceptors reply with an acknowledgment when they receive an accept request matching their current accepted ballot and value exactly.
+This optimization is particularly useful in fast rounds where multiple proposers may propose the same value (e.g., in an everywhere-agreement scenario), and also makes classic-round retries idempotent.
+
+\paragraph{Register initialization.}
+Acceptors are initialized with a promised ballot of $(1, 0)$---the first fast ballot.
+This means the first write to a register can skip the prepare phase entirely and proceed directly to the accept phase.
+If there is no contention, the value commits in a single round-trip; if there is, the proposer learns of the conflict and retries with a prepare phase.

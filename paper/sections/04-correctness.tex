@@ -1,0 +1,18 @@
+% ==============================================================================
+\section{Correctness}
+\label{sec:correctness}
+% ==============================================================================
+
+Fast CASPaxos must guarantee \emph{linearizability}: every completed operation on the register appears to take effect atomically at some point between its invocation and its response, and the sequence of these atomic points is consistent with a sequential specification.
+
+The safety argument rests on two properties inherited from Paxos and Fast Paxos.
+First, the ballot mechanism ensures mutual exclusion for classic rounds: only the proposer that owns a classic ballot may have a value accepted under it.
+Second, the fast-round quorum size ensures that any later classic recovery quorum observes enough information to reconstruct which value, if any, was committed during a fast round.
+Specifically, if a value $v$ was accepted by a fast quorum of $\lceil 3N/4 \rceil$ acceptors in fast ballot $(r, 0)$, then any classic quorum of $\lfloor N/2 \rfloor + 1$ acceptors must include at least one acceptor that accepted $v$---and in fact, enough acceptors that $v$ has a uniquely largest count among the values reported for that ballot.
+
+The piggybacked-prepare mechanism does not weaken this invariant.
+A piggybacked ballot is treated identically to a standalone prepare: the acceptor updates its promised ballot to the maximum of its current promise and the piggybacked value.
+The only difference is timing---the promise is made atomically with the accept---but this does not change the safety properties because the promise only constrains future rounds, not the current one.
+
+We have formalized Fast CASPaxos in TLA+~\cite{lamport_tla} and verified both safety and liveness properties using the TLC model checker.
+The specification and model-checking configuration are described in Appendix~\ref{sec:tla-specification}.

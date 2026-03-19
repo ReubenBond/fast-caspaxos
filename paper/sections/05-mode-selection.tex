@@ -1,0 +1,68 @@
+% ==============================================================================
+\section{Mode Selection}
+\label{sec:mode-selection}
+% ==============================================================================
+
+Because the piggybacked ballot determines whether the next round is fast or classic, Fast CASPaxos can adapt its operating mode on a per-operation basis.
+This section discusses when each mode is preferable.
+
+% ------------------------------------------------------------------------------
+\subsection{Leadered Mode}
+\label{sec:leadered-mode}
+% ------------------------------------------------------------------------------
+
+Leadered (classic) mode is preferable when write rates are high and a single proposer is likely to drive a long sequence of updates.
+In this regime, the amortized cost of piggybacked prepare means each commit takes only one round-trip, and the classic quorum ($\lfloor N/2 \rfloor + 1$) is smaller than the fast quorum ($\lceil 3N/4 \rceil$), reducing the chance that a straggler acceptor delays commitment.
+
+Leadered mode is also preferable under high contention.
+When independent proposers frequently propose different values, a stable leader reduces repeated proposer-versus-proposer collisions and provides more predictable progress than optimistic fast rounds that may repeatedly fail and fall back to recovery.
+
+% ------------------------------------------------------------------------------
+\subsection{Leaderless Mode}
+\label{sec:leaderless-mode}
+% ------------------------------------------------------------------------------
+
+Leaderless (fast) mode is attractive in geo-distributed deployments where network latency is high.
+A 1~RTT commit from any proposer avoids the cost of routing requests to a remote leader, which would add at least one additional cross-region hop.
+
+Leaderless mode also suits infrequent writes.
+When writes are rare and proposers have a chance to learn the latest committed value between operations (e.g., through a background learn protocol), fast rounds allow 1~RTT commits at any proposer without contention.
+
+A particularly compelling use case is \emph{everywhere agreement}, where all proposers propose the same next value.
+The Rapid cluster membership protocol~\cite{suresh_atc18} uses Fast Paxos for exactly this property: its cut detector produces proposals based on observer alerts and delays action until churn stabilizes, resulting in very low conflict rates and allowing 1~RTT commits most of the time.
+
+Finally, register initialization benefits from leaderless mode.
+Because the initial fast ballot $(1, 0)$ is implicitly prepared at all acceptors, the first write can skip prepare entirely.
+This makes 1~RTT initialization especially attractive for systems that create many lightweight registers.
+
+% ------------------------------------------------------------------------------
+\subsection{When to Use Each Mode}
+\label{sec:when-to-use}
+% ------------------------------------------------------------------------------
+
+Table~\ref{tab:mode-comparison} summarizes the trade-offs.
+The choice is not always clear-cut.
+In a leadered protocol, the leader itself can become a straggler (a gray failure) and slow down all requests.
+If the leader crashes, the system must first detect the failure---which is inherently slow---and then elect a new leader, creating a window of unavailability.
+Leaderless algorithms avoid these problems entirely but pay a higher cost under contention.
+
+\begin{table}[t]
+\caption{Mode comparison for Fast CASPaxos.}
+\label{tab:mode-comparison}
+\centering
+\small
+\begin{tabular}{lcc}
+\toprule
+\textbf{Property} & \textbf{Leadered} & \textbf{Leaderless} \\
+\midrule
+Uncontended commit & 1 RTT & 1 RTT \\
+Quorum size & $\lfloor N/2 \rfloor + 1$ & $\lceil 3N/4 \rceil$ \\
+Contention handling & Stable & Falls back \\
+Leader failure & Unavailable & Unaffected \\
+Geo-distributed & Extra hop & Direct \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Since Fast CASPaxos can switch modes per-operation via the piggybacked ballot, a system can adapt dynamically.
+For example, a proposer might default to fast rounds and switch to classic mode after observing repeated conflicts, then revert to fast rounds when contention subsides.

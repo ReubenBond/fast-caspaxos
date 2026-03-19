@@ -1,0 +1,16 @@
+% ==============================================================================
+\section{Formal Specification}
+\label{sec:tla-specification}
+% ==============================================================================
+
+We formalize Fast CASPaxos in TLA+~\cite{lamport_tla} and verify its correctness using the TLC model checker.
+The specification models a configurable number of proposers and acceptors, with both fast and classic ballots, piggybacked prepare, and the vote-tallying recovery rule.
+
+We provide two model-checking wrappers:
+\begin{itemize}
+    \item \textbf{Safety}: verifies that the protocol maintains linearizability---at most one value is committed per round, and any committed value is consistent with the sequential register specification.
+    \item \textbf{Liveness}: verifies that under fair scheduling and eventual message delivery, every proposed operation eventually completes.
+\end{itemize}
+
+The model checker explores all reachable states for small configurations (e.g., 2~proposers, 3~acceptors) and has found no safety or liveness violations.
+The TLA+ source, model-checking configurations, and reproduction scripts are included in the accompanying repository.

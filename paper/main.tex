@@ -1,0 +1,143 @@
+% ======================================================================
+% 1. TARGET CONFERENCE SELECTION
+% ======================================================================
+\newif\ifIEEE
+\newif\ifACM
+\newif\ifUSENIX
+
+% ----------------------------------------------------------------------
+\ifdefined\ForceACM
+    \ACMtrue
+\else\ifdefined\ForceUSENIX
+    \USENIXtrue
+\else\ifdefined\ForceIEEE
+    \IEEEtrue
+\else
+    \ACMtrue % Default to ACM if no specific conference is forced
+\fi\fi\fi
+% ----------------------------------------------------------------------
+
+% ======================================================================
+% 2. DOCUMENT CLASS & SPECIFIC PACKAGES
+% ======================================================================
+\ifIEEE
+    \documentclass[conference, 10pt]{IEEEtran}
+    \IEEEoverridecommandlockouts
+    \usepackage{cite}
+    \usepackage{amsmath,amssymb,amsfonts}
+    \usepackage{algorithmic}
+\fi
+
+\ifACM
+    \documentclass[sigconf,anonymous,10pt]{acmart}
+    \renewcommand\footnotetextcopyrightpermission[1]{} % remove copyright stuff
+    \settopmatter{printfolios=true,printacmref=false}  % page num
+\fi
+
+\ifUSENIX
+    \documentclass[letterpaper,twocolumn,10pt]{article}
+    \usepackage{usenix-2020-09}
+    \usepackage{amsmath}
+\fi
+
+% ======================================================================
+% 3. COMMON PACKAGES
+% ======================================================================
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+\graphicspath{{./figures/}}
+\usepackage{tikz}
+\usepackage{xcolor}
+
+\begin{document}
+
+\input{utils/my_commands.tex}
+
+% ======================================================================
+% 4. TITLE & AUTHORS
+% ======================================================================
+\title{Fast CASPaxos: Adaptive Leadered and Leaderless Consensus}
+
+\ifIEEE
+    \author{
+        \IEEEauthorblockN{Author Name}
+        \IEEEauthorblockA{
+            \textit{Institution}\\
+            City, Country \\
+            email@example.com
+        }
+    }
+\fi
+
+\ifACM
+    \author{Author Name}
+    \affiliation{%
+      \institution{Institution}
+      \city{City}
+      \country{Country}
+    }
+    \email{email@example.com}
+\fi
+
+\ifUSENIX
+    \date{} % don't want date printed
+    \author{
+      {\rm Author Name}\\
+      Institution\\
+      email@example.com
+    }
+\fi
+
+% ======================================================================
+% 5. ABSTRACT & MAKETITLE ORDERING
+% ======================================================================
+\ifACM
+    % ACM requires abstract BEFORE maketitle
+    \input{sections/abstract.tex}
+    \maketitle
+    \pagenumbering{arabic}
+    \pagestyle{plain} % to remove upper notes
+\else
+    % IEEE and USENIX require maketitle BEFORE abstract
+    \maketitle
+    \input{sections/abstract.tex}
+\fi
+
+% ======================================================================
+% 6. MAIN BODY
+% ======================================================================
+\input{sections/01-introduction.tex}
+\input{sections/02-background.tex}
+\input{sections/03-fast-caspaxos.tex}
+\input{sections/04-correctness.tex}
+\input{sections/05-mode-selection.tex}
+\input{sections/06-evaluation.tex}
+\input{sections/07-summary.tex}
+
+\input{sections/acknowledgement.tex}
+
+% ======================================================================
+% APPENDIX
+% ======================================================================
+\appendix
+\input{sections/A1-tla-specification.tex}
+
+% ======================================================================
+% 7. BIBLIOGRAPHY
+% ======================================================================
+\ifIEEE
+    \bibliographystyle{IEEEtran}
+\fi
+
+\ifACM
+    \bibliographystyle{ACM-Reference-Format}
+\fi
+
+\ifUSENIX
+    \bibliographystyle{plain}
+\fi
+
+\bibliography{ref}
+
+\end{document}

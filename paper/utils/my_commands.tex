@@ -1,0 +1,24 @@
+\newcommand{\red}[1]{\textcolor{red}{#1}}
+\newcommand{\green}[1]{\textcolor{green}{#1}}
+\newcommand{\blue}[1]{\textcolor{blue}{#1}}
+
+\newcommand{\tlide}{$\sim$}
+\newcommand{\mul}{$\times$}
+\newcommand{\eg}{\emph{e.g.}}
+\newcommand{\etal}{\emph{et al.}}
+\newcommand{\summary}[1]{\noindent\textbf{#1}}
+
+\newcommand*\circled[1]{\tikz[baseline=(char.base)]{
+            \node[shape=circle,fill,inner sep=1pt] (char) {\textcolor{white}{#1}};}}
+
+\newenvironment{tightitemize}%
+ {\begin{list}{$\bullet$}{%
+ 		\setlength{\leftmargin}{10pt}
+        \setlength{\itemsep}{0pt}%
+        \setlength{\parsep}{0pt}%
+        \setlength{\topsep}{0pt}%
+        \setlength{\parskip}{0pt}%
+        }%
+ }%
+{\end{list}}
+

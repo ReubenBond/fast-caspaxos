@@ -1,0 +1,25 @@
+% ==============================================================================
+\section{Evaluation}
+\label{sec:evaluation}
+% ==============================================================================
+
+We evaluate Fast CASPaxos using a deterministic simulation framework built on a discrete-event simulation harness called \emph{Clockwork}.
+The simulator models proposers, acceptors, and network links with configurable latency profiles, and supports fault injection including acceptor crashes, suspensions, and network partitions.
+
+All simulation runs are deterministic: given a seed, the sequence of events and random choices is fully reproducible.
+After each run, the simulator emits a structured history of client-visible call/return events, which we check for linearizability using the Porcupine checker.
+
+We evaluate three protocol modes---\emph{fast} (leaderless), \emph{classic} (leadered without a distinguished leader), and \emph{leader} (distinguished leader with request routing)---across three topology profiles:
+\begin{itemize}
+    \item \textbf{LAN}: same datacenter, 1\,ms base latency + 1\,ms jitter.
+    \item \textbf{US 3-region}: East~US, West~US, and West~US~3, with 20--66\,ms RTT between regions.
+    \item \textbf{Geo 5-region}: East~US, France, Southeast~Asia, Brazil, and Australia, with 85--332\,ms RTT between regions.
+\end{itemize}
+
+% TODO: Add figures showing latency time-series, throughput, and CDF comparisons
+% TODO: Add fault-tolerance results (acceptor crashes, partitions)
+% TODO: Add agreement-mode results
+
+Preliminary results show that fast mode achieves the lowest median commit latency in LAN and geo-distributed topologies when contention is low, while leader mode provides the most stable tail latency under sustained load.
+Classic mode without a distinguished leader shows intermediate performance: it avoids the leader bottleneck but pays the cost of a prepare round-trip when leadership changes.
+Under fault injection, all modes maintain linearizability, with fast mode showing faster recovery from single-acceptor failures due to the absence of leader re-election.

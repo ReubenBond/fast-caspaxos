@@ -1,0 +1,45 @@
+% ==============================================================================
+\section{Background}
+\label{sec:background}
+% ==============================================================================
+
+% ------------------------------------------------------------------------------
+\subsection{Paxos and Fast Paxos}
+\label{sec:paxos-fast-paxos}
+% ------------------------------------------------------------------------------
+
+Paxos~\cite{lamport_tcs98,lamport_sigact01} solves single-decree consensus among a set of acceptors coordinated by one or more proposers.
+The protocol proceeds in two phases.
+In the \emph{prepare} phase, a proposer selects a ballot number and sends it to a quorum of acceptors; each acceptor promises not to accept proposals with lower ballot numbers and returns any value it has already accepted.
+In the \emph{accept} phase, the proposer sends a value to a quorum of acceptors using the ballot from the prepare phase; if the quorum accepts, the value is committed.
+Any two quorums must intersect, which is satisfied by majority quorums of size $\lfloor N/2 \rfloor + 1$ for $N$ acceptors.
+
+Multi-Paxos optimizes for sequences of decisions by electing a stable leader.
+Once a leader has completed a prepare phase, it can commit subsequent values in a single round-trip by reusing its ballot.
+This amortized cost makes Multi-Paxos attractive for high-throughput workloads, but the leader becomes a bottleneck and a single point of failure.
+
+Fast Paxos~\cite{lamport_msr05} introduced \emph{fast rounds} in which any proposer may send a value directly to acceptors without prior leader election.
+In a fast round, multiple proposers may propose different values under the same ballot.
+If a sufficiently large \emph{fast quorum} of acceptors all accept the same value, it commits in one round-trip.
+When acceptors receive conflicting values, the protocol falls back to a coordinated classic recovery round.
+
+The fast quorum must be a supermajority---at least $\lceil 3N/4 \rceil$ acceptors---to ensure that any later classic recovery quorum can determine which value, if any, was committed during the fast round.
+This is because a classic quorum that reads the state of a fast round must see enough copies of the committed value to distinguish it from any competing value.
+
+Flexible Paxos~\cite{howard_opodis16} showed that Paxos's quorum intersection requirement can be relaxed: intersection is only needed between phases, not within them.
+Howard et al.~\cite{howard_icdcn21} extended this result to Fast Paxos, showing that the quorum intersection requirements of fast rounds can also be weakened.
+
+% ------------------------------------------------------------------------------
+\subsection{CASPaxos}
+\label{sec:caspaxos}
+% ------------------------------------------------------------------------------
+
+CASPaxos~\cite{rystsov_caspaxos} simplifies single-decree Paxos into a protocol for a replicated, rewritable, linearizable register.
+Rather than choosing a single immutable value, CASPaxos allows proposers to apply an \emph{update function} to the register's current value, providing compare-and-swap (CAS) semantics.
+
+Each acceptor maintains only two fields per register: a \emph{promised ballot} (the highest ballot it has promised to honor) and an \emph{accepted ballot/value} pair (the last value it accepted and the ballot under which it was accepted).
+This minimal metadata footprint---typically 16 to 32 bytes---makes CASPaxos attractive for systems that manage many fine-grained replicated keys.
+
+CASPaxos supports a \emph{piggybacked-prepare} optimization: each accept message includes the ballot for the \emph{next} prepare phase.
+If the acceptor processes the accept successfully, it also promises the piggybacked ballot, effectively amortizing the prepare cost.
+This allows a proposer that ``owns'' the piggybacked ballot to commit its next value in a single round-trip, much like Multi-Paxos's leader optimization but without a separate leader-election mechanism.

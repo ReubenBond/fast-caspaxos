@@ -1,0 +1,34 @@
+\begin{abstract}
+Paxos and its variants underpin the replicated state machines at the heart of many distributed systems.
+CASPaxos simplifies single-decree Paxos into a replicated, rewritable, linearizable register that requires only two metadata fields per key.
+Like most consensus protocols, CASPaxos is \emph{leadered}: a proposer must first obtain exclusive rights before committing a value, giving a fast path of one round-trip (1~RTT) only when leadership is uncontended.
+Fast Paxos introduced \emph{leaderless} fast rounds in which any proposer may commit in 1~RTT without prior leader election, at the cost of larger quorums and a recovery path when concurrent proposals conflict.
+
+In this paper we present \emph{Fast CASPaxos}, a protocol that blends the Fast Paxos fast-round optimization with CASPaxos.
+By letting each piggybacked prepare choose between a shared fast ballot and a proposer-owned classic ballot, Fast CASPaxos allows the same implementation to switch between leadered and leaderless operation on a per-operation basis.
+We describe the protocol, argue its correctness, present a TLA+ specification verified by model checking, and evaluate its performance through deterministic simulation across LAN and geo-distributed topologies with fault injection and linearizability checking.
+\end{abstract}
+
+% ---------------------------------------------
+% Keywords for different formats
+% ---------------------------------------------
+% 1. IEEE: IEEEkeywords
+\ifdefined\IEEEkeywords
+    \begin{IEEEkeywords}
+    distributed consensus, Paxos, leaderless consensus, replicated state machines
+    \end{IEEEkeywords}
+\fi
+
+% 2. ACM: ccsdesc
+\ifdefined\ccsdesc
+    \ccsdesc[500]{Theory of computation~Distributed algorithms}
+    \keywords{distributed consensus, Paxos, leaderless consensus, replicated state machines}
+\fi
+
+% 3. USENIX
+\ifdefined\USENIXtrue
+\ifUSENIX
+    \vspace{0.5cm}
+    \noindent \textbf{Keywords:} distributed consensus, Paxos, leaderless consensus, replicated state machines
+\fi
+\fi
