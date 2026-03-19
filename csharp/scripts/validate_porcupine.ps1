@@ -7,7 +7,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$repoRoot = Split-Path -Parent $PSScriptRoot
+$csharpRoot = Split-Path -Parent $PSScriptRoot
+$repoRoot = Split-Path -Parent $csharpRoot
 $checkerPath = Join-Path $repoRoot "tools\porcupine-checker"
 $outputDirectory = Join-Path $env:TEMP ("fast-caspaxos-porcupine-" + [guid]::NewGuid().ToString("N"))
 $pushedRepoRoot = $false
@@ -20,7 +21,7 @@ if ($Seed -le 0)
 
 try
 {
-    Push-Location $repoRoot
+    Push-Location $csharpRoot
     $pushedRepoRoot = $true
 
     Write-Host "Using randomized validation seed $Seed across $Rounds rounds."
