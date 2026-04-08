@@ -1,0 +1,185 @@
+% ======================================================================
+% 1. TARGET CONFERENCE SELECTION
+% ======================================================================
+\newif\ifIEEE
+\newif\ifACM
+\newif\ifUSENIX
+
+% ----------------------------------------------------------------------
+\ifdefined\ForceACM
+    \ACMtrue
+\else\ifdefined\ForceUSENIX
+    \USENIXtrue
+\else\ifdefined\ForceIEEE
+    \IEEEtrue
+\else
+    \ACMtrue % Default to ACM if no specific conference is forced
+\fi\fi\fi
+% ----------------------------------------------------------------------
+
+% ======================================================================
+% 2. DOCUMENT CLASS & SPECIFIC PACKAGES
+% ======================================================================
+\ifIEEE
+    \documentclass[conference, 10pt]{IEEEtran}
+    \IfFileExists{cmap.sty}{\usepackage{cmap}}{}
+    \IEEEoverridecommandlockouts
+    \usepackage{cite}
+    \usepackage{amsmath,amssymb,amsfonts}
+    \usepackage{algorithmic}
+\fi
+
+\ifACM
+    \documentclass[sigconf,10pt]{acmart}
+    \renewcommand\footnotetextcopyrightpermission[1]{} % remove copyright stuff
+    \settopmatter{printfolios=true,printacmref=false}  % page num
+\fi
+
+\ifUSENIX
+    \documentclass[letterpaper,twocolumn,10pt]{article}
+    \IfFileExists{cmap.sty}{\usepackage{cmap}}{}
+    \usepackage{usenix-2020-09}
+    \usepackage{amsmath,amssymb}
+\fi
+
+% Improve copy/paste/searchability in pdfTeX builds. ACM already enables these
+% hooks in acmart.cls, so only add them for the other targets here.
+\ifACM\else
+    \ifdefined\pdfgentounicode
+        \IfFileExists{glyphtounicode.tex}{\input{glyphtounicode}}{}
+        \pdfgentounicode=1
+    \fi
+\fi
+
+% ======================================================================
+% 3. COMMON PACKAGES
+% ======================================================================
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+\graphicspath{{./figures/}}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,calc,positioning,decorations.pathreplacing,patterns,fit,backgrounds}
+\usepackage{xcolor}
+\usepackage{tcolorbox}
+\usepackage[ruled,lined,noend]{algorithm2e}
+\usepackage{listings}
+\lstdefinestyle{pseudocode}{
+    language=Python,
+    basicstyle=\small\ttfamily,
+    keywordstyle=\bfseries,
+    commentstyle=\itshape\color{black!55},
+    showstringspaces=false,
+    columns=fullflexible,
+    keepspaces=true,
+    xleftmargin=1em,
+    numbers=none,
+    escapeinside={(@}{@)},
+    morekeywords={send,await,to,None,True,False,match},
+    deletekeywords={type},
+    aboveskip=0pt,
+    belowskip=0pt,
+    literate=
+        {!=}{{$\neq$}}1
+        {<=}{{$\leq$}}1
+        {>=}{{$\geq$}}1,
+}
+\usepackage{booktabs}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepgfplotslibrary{statistics}
+
+% Preserve most of microtype's typography benefits while avoiding the spacing
+% adjustments most likely to confuse PDF text extraction.
+\makeatletter
+\@ifpackageloaded{microtype}{\microtypesetup{tracking=false,spacing=false}}{}
+\makeatother
+
+% Prevent overfull \hbox in narrow two-column layout
+\emergencystretch=1em
+% Mildly reduce hyphenation without introducing loose spacing
+\tolerance=1000
+\hyphenpenalty=200
+\hbadness=1000
+
+\begin{document}
+
+\input{utils/my_commands.tex}
+
+% ======================================================================
+% 4. TITLE & AUTHORS
+% ======================================================================
+\title{Fast CASPaxos: Leaderless, Linearizable, Logless}
+
+\ifIEEE
+    \author{
+        \IEEEauthorblockN{Reuben Bond}
+        \IEEEauthorblockA{
+            reuben.bond@microsoft.com
+        }
+    }
+\fi
+
+\ifACM
+    \author{Reuben Bond}
+    \email{reuben.bond@microsoft.com}
+\fi
+
+\ifUSENIX
+    \date{} % don't want date printed
+    \author{
+      {\rm Reuben Bond}\\
+      reuben.bond@microsoft.com
+    }
+\fi
+
+% ======================================================================
+% 5. ABSTRACT & MAKETITLE ORDERING
+% ======================================================================
+\ifACM
+    % ACM requires abstract BEFORE maketitle
+    \input{sections/abstract.tex}
+    \maketitle
+    \pagenumbering{arabic}
+    \pagestyle{plain} % to remove upper notes
+\else
+    % IEEE and USENIX require maketitle BEFORE abstract
+    \maketitle
+    \input{sections/abstract.tex}
+\fi
+
+% ======================================================================
+% 6. MAIN BODY
+% ======================================================================
+\input{sections/01-introduction.tex}
+\input{sections/02-background.tex}
+\input{sections/03-fast-caspaxos.tex}
+\input{sections/04-correctness.tex}
+\input{sections/07-related-work.tex}
+\input{sections/07-summary.tex}
+
+% ======================================================================
+% 7. BIBLIOGRAPHY
+% ======================================================================
+\ifIEEE
+    \bibliographystyle{IEEEtran}
+\fi
+
+\ifACM
+    \bibliographystyle{ACM-Reference-Format}
+\fi
+
+\ifUSENIX
+    \bibliographystyle{plain}
+\fi
+
+\bibliography{ref}
+
+% ======================================================================
+% APPENDIX
+% ======================================================================
+\appendix
+\input{sections/A1-tla-specification.tex}
+\input{sections/A2-python-implementation.tex}
+
+\end{document}

@@ -1,0 +1,34 @@
+% ==============================================================================
+\section{Background}
+\label{sec:background}
+% ==============================================================================
+
+% ------------------------------------------------------------------------------
+\subsection{Paxos and Fast Paxos}
+\label{sec:paxos-fast-paxos}
+% ------------------------------------------------------------------------------
+
+Paxos~\cite{lamport_tcs98,lamport_sigact01} solves single-decree consensus with two phases.
+A proposer first sends \textsc{Prepare}($b$) to a \emph{prepare quorum}, learns the highest accepted ballot/value it intersects, and obtains a promise that lower ballots will be rejected.
+It then sends \textsc{Accept}($b$, $v$) to an \emph{accept quorum}; if that quorum accepts, $v$ is decided.
+We write ballots as tuples $(r, p)$ ordered lexicographically by round then proposer ID.
+In the fixed-quorum system used here, prepare quorums and classic accept quorums both have size $q_p = q_c = \lfloor N/2 \rfloor + 1$.
+
+Fast Paxos~\cite{lamport_msr05} adds shared \emph{fast ballots} that any proposer may use once acceptors have been prepared for them.
+An uncontended fast ballot commits in 1~RTT because proposers send \textsc{Accept} directly, but conflicting proposals require recovery through a later classic \textsc{Prepare}.
+In the fixed-quorum setting, fast accept quorums have size $q_f = \lceil 3N/4 \rceil$, large enough that any later prepare quorum can determine which values could still have been decided.
+Flexible Paxos~\cite{howard_opodis16} and Fast Flexible Paxos~\cite{howard_icdcn21} show that these fixed quorum sizes are not fundamental, but we keep them for clarity.
+The general case is formalised as \emph{epochs by recovery}~\cite{howard_tr19,howard_arxiv19}: when multiple proposers share a ballot, a strengthened quorum intersection requirement ensures that a later prepare can always determine the possible decided values.
+
+% ------------------------------------------------------------------------------
+\subsection{CASPaxos}
+\label{sec:caspaxos}
+% ------------------------------------------------------------------------------
+
+CASPaxos~\cite{rystsov_caspaxos} turns single-decree Paxos into a linearizable rewritable register: a proposer reads the current value with \textsc{Prepare}, applies an update function locally, and commits the result with \textsc{Accept}.
+
+Each acceptor stores only a promised ballot, an accepted ballot, and an accepted value.
+An \textsc{Accept} may also carry \textit{nextBallot}; an acceptor that records the accept atomically promises \textit{nextBallot}, letting the same proposer skip the next standalone \textsc{Prepare}.
+Fast CASPaxos keeps this mechanism and changes only which next ballot is promised.
+
+\input{sections/caspaxos-cheatsheet}

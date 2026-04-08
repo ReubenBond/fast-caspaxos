@@ -1,0 +1,38 @@
+% ==============================================================================
+\section{Correctness}
+\label{sec:correctness}
+% ==============================================================================
+
+Fast CASPaxos must preserve \emph{linearizability}: every completed operation appears to take effect atomically between invocation and response.
+
+\paragraph{Property (First-write-wins).}
+An acceptor accepts at most one distinct value per ballot: it accepts the first valid \textsc{Accept} for a fast ballot and rejects any later request carrying a different value at the same ballot.
+
+\paragraph{Lemma 1 (Single decision per ballot).}
+At most one value can be decided in any ballot~$b$.
+For a classic ballot, only one proposer may use~$b$, so at most one value is proposed.
+For a fast ballot, first-write-wins ensures each acceptor accepts at most one value at~$b$; since any two fast quorums intersect, at most one value can reach a fast quorum.
+
+\paragraph{Lemma 2 (Recovery).}
+When a proposer runs \textsc{Prepare} at ballot~$b$, it must choose a value consistent with any that could have been decided at a lower ballot.
+Any value chosen in a fast ballot was accepted by a fast quorum of $q_f$ acceptors; a prepare quorum of $q_p$ acceptors intersects that fast quorum in at least $q_f + q_p - N \geq \lceil N/4 \rceil + 1$ acceptors, so any chosen value appears in the prepare responses.
+A uniquely chosen value therefore appears strictly more often than any competitor; if several values tie for the maximum, none could have been chosen exclusively, and any tied maximum is safe.
+In the fixed-quorum setting, this reduces to recovering the unique maximum, or any tied maximum, at the highest fast ballot seen by the prepare quorum~\cite{howard_tr19,howard_arxiv19}.
+
+\paragraph{Theorem (Safety).}
+By induction on increasing ballot order: before proposing under ballot~$b$, a proposer must know the register value for~$b$---via \textsc{Prepare}, a reused piggybacked promise, or a learn message.
+If no earlier ballot was accepted, any value is safe.
+Otherwise, Lemma~1 ensures at most one value was decided at the highest earlier ballot, and Lemma~2 ensures the proposer recovers it.
+The proposer applies its update to that value and sends \textsc{Accept} under a higher ballot, so committed register states form a single chain under the update relation, giving linearizability.
+
+\paragraph{Piggybacked promises and duplicate fast accepts.}
+A piggybacked prepare only advances promises for later rounds and does not alter the current accept.
+Acknowledging a duplicate \textsc{Accept}($b$, $v$) is safe because it introduces no new value at~$b$.
+
+\paragraph{Liveness.}
+As with Paxos, FLP precludes guaranteed progress in a fully asynchronous system~\cite{fischer_jacm85}.
+In practice, progress requires eventual message delivery and either a stable proposer completing a classic round or a fast round in which only one value is proposed.
+
+\paragraph{TLA+ specification.}
+We model Fast CASPaxos in TLA+~\cite{lamport_tla} and check safety and liveness with TLC.
+Appendix~\ref{sec:tla-specification} summarizes the model and checked configurations.

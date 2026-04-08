@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/FastCASPaxos.Core/FastCASPaxos.Core.csproj" />
+    <Project Path="src/Clockwork/Clockwork.csproj" />
+    <Project Path="src/FastCASPaxos.Simulation/FastCASPaxos.Simulation.csproj" />
+    <Project Path="src/FastCASPaxos.Simulation.Scenarios/FastCASPaxos.Simulation.Scenarios.csproj" />
+    <Project Path="src/FastCASPaxos.Simulation.Runner/FastCASPaxos.Simulation.Runner.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/FastCASPaxos.Core.Tests/FastCASPaxos.Core.Tests.csproj" />
+    <Project Path="tests/FastCASPaxos.Simulation.Tests/FastCASPaxos.Simulation.Tests.csproj" />
+  </Folder>
+</Solution>

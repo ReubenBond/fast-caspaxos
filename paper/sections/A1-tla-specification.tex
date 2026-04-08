@@ -1,0 +1,28 @@
+% ==============================================================================
+\section{Formal Specification}
+\label{sec:tla-specification}
+% ==============================================================================
+
+We formalize Fast CASPaxos in TLA+~\cite{lamport_tla} and check safety and liveness with TLC.
+The model includes fast and classic ballots, piggybacked prepare, and fast-ballot recovery by possible decided values.
+
+\paragraph{Model.}
+Each acceptor stores \texttt{prepared}, \texttt{accepted}, and \texttt{value}.
+Ballots are records $[\text{round} \mapsto r, \text{proposer} \mapsto p]$, with $\text{proposer} = 0$ denoting fast ballots.
+To keep the state space tractable, message channels are bounded slots rather than growing sets, and fast accepts are modeled directly in the acceptor action rather than as explicit request messages.
+
+\paragraph{Actions.}
+\texttt{PrepareStep} updates a promise and returns accepted state.
+\texttt{AcceptReqStep} installs a classic accept request after either piggybacked prepare or classic recovery.
+\texttt{AcceptRspStep} processes fast or classic accepts and records the piggybacked prepare.
+
+\paragraph{Checked properties.}
+\texttt{Safety} checks typing, single accepted values per classic ballot, single chosen values per ballot, \texttt{accepted} never exceeding \texttt{prepared}, and comparability/reachability of committed values.
+\texttt{Transition\-Safety} adds per-transition monotonicity and request/response consistency.
+\texttt{Progress} asserts that some non-initial value is eventually committed, using a terminating wrapper to keep liveness checking finite.
+
+\paragraph{Configurations.}
+We check safety with 5~acceptors, 3~proposers, 5~values, and 4~rounds, using symmetry reduction and a view projection.
+We check liveness with 4~acceptors, 2~proposers, 3~values, and 3~rounds, using weak fairness and a message-count bound.
+Both runs report no violations.
+The TLA+ source, configurations, and scripts are included in the accompanying repository.

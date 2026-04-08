@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc fd0e973ccd5d687d351f2e95e3d2c349622d7a54d6bc46c23d928f815c9ddb5e # shrinks to ops = [Prepare(Ballot { round: 1, proposer: 0 }), Accept(Ballot { round: 9, proposer: 1 }, 0, None)]

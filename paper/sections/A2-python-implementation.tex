@@ -1,0 +1,150 @@
+% ==============================================================================
+\section{Python Reference Implementation}
+\label{sec:python-implementation}
+% ==============================================================================
+
+We include a simplified Python implementation of the Fast CASPaxos acceptor and proposer as a pedagogical complement to Figure~\ref{fig:fast-caspaxos-summary}.
+A fuller demo harness is available in the accompanying repository.
+
+\paragraph{Ballots and quorums.}
+A ballot is a \texttt{(round, proposer)} pair ordered lexicographically; \texttt{proposer\,=\,0} denotes a fast ballot.
+Classic quorums require $\lfloor N/2 \rfloor + 1$ acceptors; fast quorums require $\lceil 3N/4 \rceil$.
+
+\paragraph{Acceptor.}
+The acceptor handles \textsc{Prepare} and \textsc{Accept} RPCs.
+Its state matches Figure~\ref{fig:fast-caspaxos-summary}: \texttt{promised}, \texttt{accepted\_ballot}, and \texttt{accepted\_value}.
+The \textsc{Accept} handler uses first-write-wins for fast ballots and processes the piggybacked prepare atomically.
+
+\begin{lstlisting}[
+  style=pseudocode,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  xleftmargin=2em,
+  basicstyle=\scriptsize\ttfamily,
+  aboveskip=6pt,
+  belowskip=6pt,
+]
+class Acceptor:
+    def __init__(self, name, initial_value=None):
+        self.promised = Ballot(1, 0)  # initial fast ballot
+        self.accepted_ballot = Ballot(0, 0)
+        self.accepted_value = initial_value
+
+    def prepare(self, ballot):                    # Prepare RPC
+        if ballot < max(self.promised, self.accepted_ballot):
+            return Reject(self.promised)
+        self.promised = ballot
+        return Promise(self.accepted_ballot, self.accepted_value)
+
+    def accept(self, ballot, value, next_ballot=None):
+        # Idempotent replay (same ballot and value)
+        if ballot == self.accepted_ballot \
+                and value == self.accepted_value:
+            return Accepted(self.promised)
+        if ballot < max(self.promised, self.accepted_ballot):
+            return Reject(self.promised)
+        # Same ballot, different value: reject
+        if ballot == self.accepted_ballot:
+            return Reject(self.promised)
+        self.accepted_ballot = ballot
+        self.accepted_value = value
+        # Piggybacked prepare: prepare next round
+        if next_ballot and next_ballot > self.promised:
+            self.promised = next_ballot
+        return Accepted(self.promised)
+\end{lstlisting}
+
+\paragraph{Proposer.}
+The proposer runs the Read--Modify--Write cycle.
+It reuses a piggybacked prepare when available; otherwise it runs a full \textsc{Prepare}.
+The update function is applied locally, and the result is committed with \textsc{Accept}.
+With full responses, fast-ballot recovery in \texttt{\_recover} reduces to choosing the unique maximum, or any tied maximum, at the highest fast ballot observed.
+
+\paragraph{Learning.}
+The reference implementation models inter-proposer learning as a best-effort notification carrying the decided ballot, value, and prepared next ballot.
+If that notification is missing, the proposer falls back to \textsc{Prepare} on its next operation.
+
+\paragraph{Simplifications.}
+This reference implementation assumes that all acceptors respond; a production implementation must handle partial responses and retry with a higher classic ballot when fast-ballot recovery remains ambiguous.
+
+\begin{lstlisting}[
+  style=pseudocode,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  xleftmargin=2em,
+  basicstyle=\scriptsize\ttfamily,
+  aboveskip=6pt,
+  belowskip=6pt,
+]
+class Proposer:
+    def __init__(self, id, acceptors, enable_fast=True):
+        self.id = id
+        self.acceptors = acceptors
+        self.enable_fast = enable_fast
+        self.ballot = Ballot(0, 0)
+        self.cached_value = None
+        self.prepared = None  # piggybacked prepare ballot
+
+    def propose(self, update_fn):
+        while True:
+            # 1. Read: obtain ballot and current value
+            b, need_read = self._choose_ballot()
+            if need_read:
+                ok, val = self._run_read(b)
+                if not ok: continue
+                self.cached_value = val
+            # 2. Modify: apply the client's update function
+            new_val = update_fn(self.cached_value)
+            # 3. Write: commit the new value
+            if self._run_write(b, new_val):
+                self.cached_value = new_val
+                return new_val
+
+    def _choose_ballot(self):
+        if self.prepared and self.prepared > self.ballot:
+            b, self.prepared = self.prepared, None
+            self.ballot = b
+            return b, False         # reuse piggybacked prepare
+        if self.enable_fast \
+                and self.ballot < Ballot(1, 0):  # initial fast
+            self.ballot = Ballot(1, 0)
+            return self.ballot, False  # initial fast ballot
+        self.ballot = Ballot(self.ballot.round + 1, self.id)
+        return self.ballot, True    # classic: read required
+
+    def _run_read(self, ballot):
+        resps = [a.prepare(ballot) for a in self.acceptors]
+        promises = [r for r in resps if isinstance(r, Promise)]
+        N = len(self.acceptors)
+        if len(promises) < N // 2 + 1:
+            return False, None
+        return True, self._recover(promises, N)
+
+    def _recover(self, promises, N):
+        best = max(promises, key=lambda p: p.accepted_ballot)
+        if best.accepted_ballot == Ballot(0, 0):
+            return self.cached_value
+        if best.accepted_ballot.proposer != 0:  # classic
+            return best.accepted_value
+        # Fast ballot: choose any tied maximum at best ballot
+        at_best = [p.accepted_value for p in promises
+                   if p.accepted_ballot == best.accepted_ballot]
+        counts = Counter(at_best)
+        max_count = max(counts.values())
+        tied = [v for v, c in counts.items() if c == max_count]
+        return tied[0]
+
+    def _run_write(self, ballot, value):
+        N = len(self.acceptors)
+        next_b = Ballot(ballot.round + 1,
+                        0 if self.enable_fast else self.id)
+        resps = [a.accept(ballot, value, next_b)
+                 for a in self.acceptors]
+        accepts = [r for r in resps if isinstance(r, Accepted)]
+        needed = -(-3*N//4) if ballot.proposer == 0 \
+                 else N//2 + 1
+        if len(accepts) >= needed:
+            self.prepared = next_b  # cache piggybacked prepare
+            return True
+        return False
+\end{lstlisting}

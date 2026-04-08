@@ -1,0 +1,17 @@
+% ==============================================================================
+\section{Related Work}
+\label{sec:related-work}
+% ==============================================================================
+
+Fast CASPaxos sits between CASPaxos~\cite{rystsov_caspaxos} and Fast Paxos~\cite{lamport_msr05}: CASPaxos contributes rewritable-register semantics over single-decree Paxos, and Fast Paxos contributes shared fast ballots.
+Fast CASPaxos combines them by letting CASPaxos's piggybacked prepare promise either a proposer-owned classic ballot or a shared fast ballot.
+
+The \emph{epochs-by-recovery} framework~\cite{howard_tr19,howard_arxiv19} provides the general theory: multiple proposers may share a ballot provided fast quorums intersect and a strengthened cross-phase intersection lets recovery determine the possible decided values.
+Fast CASPaxos is an instance of this framework applied to a rewritable register.
+Flexible Paxos~\cite{howard_opodis16} and Fast Flexible Paxos~\cite{howard_icdcn21} show that quorum sizes are a separate design dimension; the recovery rule in Section~\ref{sec:value-recovery} is the natural starting point for a flexible-quorum variant.
+
+EPaxos~\cite{moraru_sosp13} also targets leaderless operation, but for replicated logs rather than a single rewritable register.
+Its fast path depends on command commutativity and dependency tracking, whereas Fast CASPaxos treats all writes to one register as conflicting and recovers with ordinary prepare/accept structure.
+
+Rapid~\cite{suresh_atc18} is closer in spirit: it uses Fast Paxos for cluster membership updates in an almost-everywhere-agreement workload where many proposers independently converge on the same value.
+Fast CASPaxos benefits from the same pattern via idempotent duplicate fast accepts, but for general read--modify--write register operations.

@@ -1,0 +1,35 @@
+\begin{abstract}
+CASPaxos is a linearizable rewritable register built on single-decree Paxos.
+It achieves 1~RTT steady-state writes via a piggybacked prepare, but only for the proposer that already holds the next ballot.
+
+\emph{Fast CASPaxos} lets the piggybacked prepare designate either a proposer-owned classic ballot or a shared fast ballot, bringing Fast Paxos-style fast rounds to the register setting without changing acceptor state.
+
+In the fixed-quorum setting, recovery after a failed fast round reduces to recovering the unique maximum, or any tied maximum, among values at the highest fast ballot seen by a prepare quorum.
+The register therefore commits in 1~RTT without a leader when contention is low and otherwise falls back to classic recovery.
+
+We give the protocol, a short safety sketch, and a TLC-checked TLA\textsuperscript{+} specification.
+\end{abstract}
+
+% ---------------------------------------------
+% Keywords for different formats
+% ---------------------------------------------
+% 1. IEEE: IEEEkeywords
+\ifdefined\IEEEkeywords
+    \begin{IEEEkeywords}
+    distributed consensus, Paxos, leaderless consensus, rewritable registers
+    \end{IEEEkeywords}
+\fi
+
+% 2. ACM: ccsdesc
+\ifdefined\ccsdesc
+    \ccsdesc[500]{Theory of computation~Distributed algorithms}
+    \keywords{distributed consensus, Paxos, leaderless consensus, rewritable registers}
+\fi
+
+% 3. USENIX
+\ifdefined\USENIXtrue
+\ifUSENIX
+    \vspace{0.5cm}
+    \noindent \textbf{Keywords:} distributed consensus, Paxos, leaderless consensus, rewritable registers
+\fi
+\fi

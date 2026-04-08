@@ -1,0 +1,109 @@
+\begin{figure*}[t]
+\centering
+{\footnotesize
+\protsetup
+\noindent
+\begin{minipage}[t]{\protcolwidth}
+\begin{protbox}{State}
+\protsubhdr{Proposer state \textit{(volatile):}}
+\begin{protfields}
+\textbf{id} & unique proposer identifier ($\textit{id} > 0$)\\
+\textbf{round} & monotonically increasing, initially 0\\
+\textbf{prepared} & most recently prepared ballot, initially $(1, 0)$\\
+\textbf{cachedVal} & last decided value, initially \texttt{null}\\
+\end{protfields}
+\protsubhdr{Acceptor state \textit{(persistent):}}
+\begin{protfields}
+\textbf{promised} & highest ballot promised, initially $(1, 0)$\\
+\textbf{accepted} & last accepted ballot, or \texttt{null}\\
+\textbf{value} & last accepted value, or \texttt{null}\\
+\end{protfields}
+\end{protbox}
+\vspace{\protboxvgap}
+\begin{protbox}{Rules for Proposers}
+\protsubhdr{Quorums:}
+$q_p = q_c = \lfloor N/2 \rfloor + 1$ (prepare and classic accept),\; $q_f = \lceil 3N/4 \rceil$ (fast accept).
+\protsubhdr{Procedure:}
+\textit{To execute an operation with update function $f$:}
+\begin{protimpl}
+\item \textbf{Read.}\; Obtain ballot $b$ and \textit{cachedVal}:
+  \begin{protrules}
+  \item If \textit{prepared} is not \texttt{null}: let $b = \textit{prepared}$;\; set \textit{prepared} to \texttt{null}.
+  \item Else: increment \textit{round}; let $b = (\textit{round}, \textit{id})$; send \textsc{Prepare}($b$) to all acceptors. Wait for $q_p$~promises; set \textit{cachedVal} per Value Recovery below. If fewer than $q_p$ promises: set \textit{round} above highest round from any rejections; retry step 1.
+  \end{protrules}
+\item \textbf{Modify.}\; let $\textit{newVal} = f(\textit{cachedVal})$.
+\item \textbf{Write.}\; Choose \textit{nextBallot}: $(b.r{+}1,\, 0)$ to prepare a fast round;\; $(b.r{+}1,\, \textit{id})$ to prepare a classic round.
+\item Send \textsc{Accept}($b$, \textit{newVal}, \textit{nextBallot}) to all acceptors. Wait for $q_f$~responses if $b$ is a fast ballot; $q_c$ if $b$ is a classic ballot.
+\item On \textsc{Accept} response:
+  \begin{protrules}
+  \item Quorum success: $\textit{cachedVal} = \textit{newVal}$;\; if a quorum of successful responses reports $\textit{promised} \ge \textit{nextBallot}$ then set $\textit{prepared} = \textit{nextBallot}$, else set \textit{prepared} to \texttt{null}.
+  \item Otherwise (rejection or timeout): set \textit{prepared} to \texttt{null}; set \textit{round} above highest round from any rejections; retry from step 1.
+  \end{protrules}
+\end{protimpl}
+\protsubhdr{Value Recovery:}
+\textit{When \textsc{Prepare} returns accepted values from a prepare quorum:}
+\begin{protrules}
+\item If no response contains an \textit{accepted} ballot: set \textit{cachedVal} to \texttt{null}.
+\item If the highest \textit{accepted} ballot is \textbf{classic}: $\textit{cachedVal}$ = the corresponding \textit{value}. Only one value can exist at a classic ballot.
+\item If the highest \textit{accepted} ballot is \textbf{fast}: tally responses by \textit{value} at that ballot. Let \texttt{maxCount} be the highest tally and set \textit{cachedVal} to the unique maximum, or any tied maximum.
+\end{protrules}
+\end{protbox}
+\end{minipage}%
+\hfill
+\begin{minipage}[t]{\protcolwidth}
+\begin{protbox}{Ballots}
+A ballot is a tuple $(r, p)$ where $r$ is a round number and $p$ is the proposer's \textbf{id}. \textbf{Classic} ($p \neq 0$): only proposer $p$ may use; a classic ballot corresponds to at most one value. \textbf{Fast} ($p = 0$): any proposer may propose.
+\par\smallskip\noindent
+Ordering: $(r_1, p_1) > (r_2, p_2)$ iff $r_1 > r_2$, or $r_1{=}r_2$ and $p_1 > p_2$.
+\end{protbox}
+\vspace{\protboxvgap}
+\begin{protbox}{Prepare RPC}
+\textit{Invoked by proposer to read the current value and acquire exclusive write access.}
+\protsubhdr{Arguments:}
+\begin{protfields}
+\textbf{ballot} & ballot $(r, p)$ for this operation\\
+\end{protfields}
+\protsubhdr{Results:}
+\begin{protfields}
+\textbf{success} & \texttt{Promise(accepted, value)}\\
+\textbf{failure} & \texttt{Reject(promised)}\\
+\end{protfields}
+\protsubhdr{Acceptor implementation:}
+\begin{protimpl}
+\item If $\textit{ballot} < \textit{promised}$, reply \texttt{Reject(promised)}.
+\item $\textit{promised} = \textit{ballot}$.
+\item Reply \texttt{Promise(accepted, value)}.
+\end{protimpl}
+\end{protbox}
+\vspace{\protboxvgap}
+\begin{protbox}{Accept RPC}
+\textit{Invoked by proposer to commit a value to the register.}
+\protsubhdr{Arguments:}
+\begin{protfields}
+\textbf{ballot} & ballot to write under\\
+\textbf{value} & the value to write\\
+\textbf{nextBallot} & optional piggybacked prepare; \texttt{null} skips it\\
+\end{protfields}
+\protsubhdr{Results:}
+\begin{protfields}
+\textbf{success} & \texttt{Accepted(promised)}\\
+\textbf{failure} & \texttt{Reject(promised)}\\
+\end{protfields}
+\protsubhdr{Acceptor implementation:}
+\begin{protimpl}
+\item If $\textit{ballot} < \textit{promised}$, reply \texttt{Reject(promised)}.
+\item If $\textit{ballot} = \textit{accepted}$:
+  \begin{protrules}
+  \item If $\textit{value} = v$: reply \texttt{Accepted(promised)} (state unchanged).
+  \item If $\textit{value} \neq v$: reply \texttt{Reject(promised)}.
+  \end{protrules}
+\item $\textit{accepted} = \textit{ballot}$;\; $\textit{value} = v$.
+\item $\textit{promised} = \max(\textit{ballot},\, \textit{nextBallot})$.
+\item Reply \texttt{Accepted(promised)}.
+\end{protimpl}
+\end{protbox}
+\end{minipage}%
+}% footnotesize
+\caption{Fast CASPaxos summary. Relative to CASPaxos (Figure~\ref{fig:caspaxos-summary}), ballots with $p = 0$ are shared fast rounds, fast accepts require $\lceil 3N/4 \rceil$ acceptors, fast ballots use first-write-wins with idempotent duplicates, and Value Recovery chooses the unique maximum or any tied maximum.}
+\label{fig:fast-caspaxos-summary}
+\end{figure*}

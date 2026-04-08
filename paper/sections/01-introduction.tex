@@ -1,0 +1,22 @@
+% ==============================================================================
+\section{Introduction}
+\label{sec:introduction}
+% ==============================================================================
+
+Distributed consensus allows a set of processes to agree on a single value despite failures and underpins many distributed systems~\cite{schneider_cs90,chandra_podc07}.
+Most replicated state machines maintain a totally ordered log of commands, but for workloads that manage only a small amount of state---cluster metadata, configuration, or leader leases---a replicated log introduces unnecessary complexity.
+In these settings, directly replicating the value as a single register offers a simpler alternative; FoundationDB's control plane~\cite{zhou_sigmod21,chockler_podc02}, the MetaStore component in Delos~\cite{balakrishnan_osdi20}, and PaxosLease~\cite{trencseni_paxoslease} each adopt this approach.
+
+CASPaxos~\cite{rystsov_caspaxos} provides a rewritable, linearizable register.
+Like Paxos, its fast steady state is still \emph{leadered}: a proposer can skip \textsc{Prepare} only after it previously prepared a proposer-owned next ballot.
+If the client is routed to another proposer, or that proposer fails, the next operation falls back to a full prepare--accept round.
+
+Fast Paxos~\cite{lamport_msr05} introduced shared \emph{fast rounds}, allowing any proposer to send an \textsc{Accept} directly and commit in a single round-trip\footnote{Round-trip time (RTT): one message delay from sender to receivers and back.} (1~RTT) when there is no conflicting proposal.
+Rapid~\cite{suresh_atc18}, for example, uses this idea for cluster membership updates where many proposers independently propose the same value.
+To our knowledge, prior work has not combined CASPaxos-style rewritable-register semantics with Fast-Paxos-style shared fast rounds.
+
+We present \emph{Fast CASPaxos}, a minimal extension to CASPaxos: the piggybacked prepare becomes an atomic promise for the next ballot, which may be proposer-owned or shared.
+Acceptors keep the same three per-register fields.
+Recovery after a failed fast round is phrased in terms of possible decided values~\cite{howard_tr19}: in the fixed-quorum setting, a proposer recovers the unique maximum, or any tied maximum, at the highest fast ballot seen by a prepare quorum.
+
+The result is a rewritable register that commits in 1~RTT without a leader when contention is low and otherwise falls back to classic recovery.

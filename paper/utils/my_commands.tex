@@ -1,0 +1,205 @@
+\newcommand{\red}[1]{\textcolor{red}{#1}}
+\newcommand{\green}[1]{\textcolor{green}{#1}}
+\newcommand{\blue}[1]{\textcolor{blue}{#1}}
+
+\newcommand{\tlide}{$\sim$}
+\newcommand{\mul}{$\times$}
+\newcommand{\eg}{\emph{e.g.}}
+\newcommand{\etal}{\emph{et al.}}
+\newcommand{\summary}[1]{\noindent\textbf{#1}}
+
+\newcommand*\circled[1]{\tikz[baseline=(char.base)]{
+            \node[shape=circle,fill,inner sep=1pt] (char) {\textcolor{white}{#1}};}}
+
+\newenvironment{tightitemize}%
+ {\begin{list}{$\bullet$}{%
+ 		\setlength{\leftmargin}{10pt}
+        \setlength{\itemsep}{0pt}%
+        \setlength{\parsep}{0pt}%
+        \setlength{\topsep}{0pt}%
+        \setlength{\parskip}{0pt}%
+        }%
+ }%
+{\end{list}}
+
+% ------------------------------------------------------------------
+% Raft-style protocol summary figures  (tcolorbox-based)
+% ------------------------------------------------------------------
+\definecolor{prothdrcolor}{HTML}{1F4799}
+\definecolor{protsubcolor}{HTML}{A3001F}
+
+% Helvetica for protocol-figure headers (matches the Raft cheatsheet)
+\newcommand{\protsfamily}{\fontfamily{phv}\selectfont}
+
+% Layout dimensions
+\newlength{\protboxgap}              % horizontal gap between columns
+\setlength{\protboxgap}{8pt}
+\newlength{\protboxvgap}             % vertical gap between boxes
+\setlength{\protboxvgap}{8pt}
+\newlength{\protcolwidth}            % column width (set by \protsetup)
+\newlength{\protfieldwd}             % field-name column width (set by \protsetup)
+
+% Compute column and field widths.  Call once per figure,
+% inside the \footnotesize group so em is relative to body text.
+% The -1pt avoids dimexpr rounding that can exceed \textwidth.
+\newcommand{\protsetup}{%
+  \setlength{\protcolwidth}{\dimexpr(\textwidth - \protboxgap)/2 - 1pt\relax}%
+  \setlength{\protfieldwd}{6.5em}%
+}
+
+% Protocol box: rounded corners, colored border = header color.
+% Width defaults to \linewidth, which is set by the enclosing minipage.
+\newtcolorbox{protbox}[1]{%
+  title={#1},
+  colframe=prothdrcolor,
+  colback=white,
+  colbacktitle=prothdrcolor,
+  coltitle=white,
+  fonttitle=\protsfamily\bfseries,
+  halign title=center,
+  rounded corners,
+  arc=2pt,
+  boxrule=0.8pt,
+  left=4pt,
+  right=4pt,
+  top=2pt,
+  bottom=3pt,
+  toptitle=1pt,
+  bottomtitle=1pt,
+  titlerule=0pt,
+  nobeforeafter,
+  box align=top,
+  after=\par,
+  before upper={\setlength{\parskip}{0pt}\setlength{\parindent}{0pt}},
+}
+
+% Sub-header in dark red, Helvetica bold
+\newcommand{\protsubhdr}[1]{%
+  \par\smallskip\noindent\textcolor{protsubcolor}{\protsfamily\bfseries #1}\par\noindent}
+
+% Two-column field table — fixed left column for names,
+% flexible right column for descriptions.  Keeps descriptions
+% aligned across sub-headers and across boxes.
+\newenvironment{protfields}{%
+  \begin{tabular}{@{}p{\protfieldwd}@{\hspace{0.5em}}p{\dimexpr\linewidth-\protfieldwd-0.5em}@{}}%
+}{%
+  \end{tabular}%
+}
+
+% Tight numbered list for receiver-implementation steps
+\newcounter{rpcstep}
+\newenvironment{protimpl}{%
+  \setcounter{rpcstep}{0}%
+  \begin{list}{\arabic{rpcstep}.}{%
+    \usecounter{rpcstep}%
+    \setlength{\leftmargin}{1.5em}%
+    \setlength{\rightmargin}{0pt}%
+    \setlength{\itemsep}{1pt}%
+    \setlength{\parsep}{0pt}%
+    \setlength{\topsep}{2pt}%
+    \setlength{\partopsep}{0pt}%
+  }%
+}{%
+  \end{list}%
+}
+
+% Tight bulleted list for proposer rules
+\newenvironment{protrules}{%
+  \begin{list}{$\bullet$}{%
+    \setlength{\leftmargin}{1.5em}%
+    \setlength{\rightmargin}{0pt}%
+    \setlength{\itemsep}{1pt}%
+    \setlength{\parsep}{0pt}%
+    \setlength{\topsep}{2pt}%
+    \setlength{\partopsep}{0pt}%
+  }%
+}{%
+  \end{list}%
+}
+
+% ------------------------------------------------------------------
+% Compact space-time figures (space on y-axis, time on x-axis)
+% ------------------------------------------------------------------
+\definecolor{streqfill}{HTML}{FFF2CC}
+\definecolor{strspfill}{HTML}{DDEBF7}
+\definecolor{stcommitfill}{HTML}{D9EAD3}
+\definecolor{stmodefill}{HTML}{E8F1FF}
+\definecolor{stnotefill}{HTML}{F3F3F3}
+
+\tikzset{
+  stproc/.style={font=\footnotesize\bfseries, anchor=east},
+  stlane/.style={densely dotted, gray!55, thin},
+  streq/.style={->, line width=0.85pt, shorten <=1pt, shorten >=1pt},
+  strsp/.style={->, dashed, line width=0.85pt, shorten <=1pt, shorten >=1pt},
+  staxis/.style={->, line width=0.85pt},
+  streqbox/.style={
+    draw=black!50,
+    fill=streqfill,
+    rounded corners=1.5pt,
+    inner xsep=2pt,
+    inner ysep=1.2pt,
+    font=\scriptsize\protsfamily,
+    align=center,
+  },
+  strspbox/.style={
+    draw=black!50,
+    fill=strspfill,
+    rounded corners=1.5pt,
+    inner xsep=2pt,
+    inner ysep=1.2pt,
+    font=\scriptsize\protsfamily,
+    align=center,
+  },
+  stcommitbox/.style={
+    draw=green!50!black,
+    fill=stcommitfill,
+    rounded corners=1.5pt,
+    inner xsep=2pt,
+    inner ysep=1.2pt,
+    font=\scriptsize\protsfamily,
+    align=center,
+  },
+  stnotebox/.style={
+    draw=gray!40,
+    fill=stnotefill,
+    rounded corners=1.5pt,
+    inner xsep=2pt,
+    inner ysep=1.2pt,
+    font=\scriptsize\protsfamily,
+    align=center,
+  },
+  stbluebox/.style={
+    draw=blue!35,
+    fill=blue!6,
+    rounded corners=1.5pt,
+    inner xsep=2.5pt,
+    inner ysep=1.5pt,
+    font=\scriptsize,
+    text=blue!70!black,
+    align=center,
+  },
+  stwarnbox/.style={
+    draw=red!45!black,
+    fill=red!8,
+    rounded corners=1.5pt,
+    inner xsep=2pt,
+    inner ysep=1.2pt,
+    font=\scriptsize,
+    text=red!70!black,
+    align=center,
+  },
+  stmodebox/.style={
+    draw=blue!35,
+    fill=stmodefill,
+    rounded corners=1.5pt,
+    inner xsep=2pt,
+    inner ysep=1.2pt,
+    font=\scriptsize\itshape,
+    text=blue!65!black,
+    align=center,
+  },
+  stsection/.style={font=\scriptsize\itshape, text=gray!75!black, align=center},
+  stquiet/.style={font=\scriptsize, text=gray!70!black},
+  stfail/.style={font=\scriptsize, text=red!65!black},
+}
+

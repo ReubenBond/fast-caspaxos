@@ -1,0 +1,96 @@
+\begin{figure*}[t]
+\centering
+{\footnotesize
+\protsetup
+\noindent
+\begin{minipage}[t]{\protcolwidth}
+\begin{protbox}{State}
+\protsubhdr{Proposer state \textit{(volatile):}}
+\begin{protfields}
+\textbf{id} & unique proposer identifier\\
+\textbf{round} & monotonically increasing, initially 0\\
+\textbf{prepared} & most recently prepared ballot, initially \texttt{null}\\
+\textbf{cachedVal} & last decided value, initially \texttt{null}\\
+\end{protfields}
+\protsubhdr{Acceptor state \textit{(persistent):}}
+\begin{protfields}
+\textbf{promised} & highest ballot promised\\
+\textbf{accepted} & last accepted ballot, or \texttt{null}\\
+\textbf{value} & last accepted value, or \texttt{null}\\
+\end{protfields}
+\end{protbox}
+\vspace{\protboxvgap}
+\begin{protbox}{Rules for Proposers}
+\protsubhdr{Quorum:}
+Majority of $N$ acceptors, $q = \lfloor N/2 \rfloor + 1$.
+\protsubhdr{Procedure:}
+\textit{To execute an operation with update function $f$:}
+\begin{protimpl}
+\item \textbf{Read.}\; Obtain ballot $b$ and \textit{cachedVal}:
+  \begin{protrules}
+  \item If \textit{prepared} is not \texttt{null}: let $b = \textit{prepared}$;\; set \textit{prepared} to \texttt{null}.
+  \item Else: increment \textit{round}; let $b = (\textit{round}, \textit{id})$; send \textsc{Prepare}($b$) to all acceptors. Wait for $q$~promises; set \textit{cachedVal} to the \textit{value} with the highest \textit{accepted} ballot among responses (\texttt{null} if none). If fewer than $q$ promises: set \textit{round} above highest round from any rejections; retry step 1.
+  \end{protrules}
+\item \textbf{Modify.}\; let $\textit{newVal} = f(\textit{cachedVal})$.
+\item \textbf{Write.}\; let $\textit{nextBallot} = (b.r{+}1,\, \textit{id})$. Send \textsc{Accept}($b$, \textit{newVal}, \textit{nextBallot}) to all acceptors; wait for $q$~acceptances.
+\item On \textsc{Accept} response:
+  \begin{protrules}
+  \item Quorum success: $\textit{cachedVal} = \textit{newVal}$;\; $\textit{prepared} = \textit{nextBallot}$.
+  \item Otherwise (rejection or timeout): set \textit{prepared} to \texttt{null}; set \textit{round} above highest round from any rejections; retry from step 1.
+  \end{protrules}
+\end{protimpl}
+\end{protbox}
+\end{minipage}%
+\hfill
+\begin{minipage}[t]{\protcolwidth}
+\begin{protbox}{Ballots}
+A ballot is a tuple $(r, p)$ where $r$ is a round number and $p$ is the proposer's \textbf{id}. Each ballot is owned by proposer $p$; only proposer $p$ may use it.
+\par\smallskip\noindent
+Ordering: $(r_1, p_1) > (r_2, p_2)$ iff $r_1 > r_2$, or $r_1{=}r_2$ and $p_1 > p_2$.
+\end{protbox}
+\vspace{\protboxvgap}
+\begin{protbox}{Prepare RPC}
+\textit{Invoked by proposer to read the current value and acquire exclusive write access.}
+\protsubhdr{Arguments:}
+\begin{protfields}
+\textbf{ballot} & ballot $(r, p)$ for this operation\\
+\end{protfields}
+\protsubhdr{Results:}
+\begin{protfields}
+\textbf{success} & \texttt{Promise(accepted, value)}\\
+\textbf{failure} & \texttt{Reject(promised)}\\
+\end{protfields}
+\protsubhdr{Acceptor implementation:}
+\begin{protimpl}
+\item If $\textit{ballot} < \textit{promised}$, reply \texttt{Reject(promised)}.
+\item $\textit{promised} = \textit{ballot}$.
+\item Reply \texttt{Promise(accepted, value)}.
+\end{protimpl}
+\end{protbox}
+\vspace{\protboxvgap}
+\begin{protbox}{Accept RPC}
+\textit{Invoked by proposer to commit a value to the register.}
+\protsubhdr{Arguments:}
+\begin{protfields}
+\textbf{ballot} & ballot to write under\\
+\textbf{value} & the value to write\\
+\textbf{nextBallot} & optional piggybacked prepare; \texttt{null} skips it\\
+\end{protfields}
+\protsubhdr{Results:}
+\begin{protfields}
+\textbf{success} & \texttt{Accepted(promised)}\\
+\textbf{failure} & \texttt{Reject(promised)}\\
+\end{protfields}
+\protsubhdr{Acceptor implementation:}
+\begin{protimpl}
+\item If $\textit{ballot} < \textit{promised}$, reply \texttt{Reject(promised)}.
+\item $\textit{accepted} = \textit{ballot}$;\; $\textit{value} = v$.
+\item $\textit{promised} = \max(\textit{ballot},\, \textit{nextBallot})$.
+\item Reply \texttt{Accepted(promised)}.
+\end{protimpl}
+\end{protbox}
+\end{minipage}%
+}% footnotesize
+\caption{CASPaxos protocol summary~\cite{rystsov_caspaxos}, including the piggybacked-prepare optimization. Acceptors are standard Paxos acceptors; the read-modify-write function is applied by the proposer.}
+\label{fig:caspaxos-summary}
+\end{figure*}

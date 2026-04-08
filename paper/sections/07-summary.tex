@@ -1,0 +1,15 @@
+% ==============================================================================
+\section{Conclusion}
+\label{sec:summary}
+% ==============================================================================
+
+Fast CASPaxos is a small extension to CASPaxos.
+The piggybacked prepare is reinterpreted as an atomic promise for the next ballot, which may be either proposer-owned or shared.
+That is enough to add Fast Paxos-style leaderless fast rounds to a rewritable register without changing acceptor state.
+
+Recovery is best described in terms of possible decided values.
+A later prepare recovers the unique maximum, or any tied maximum, at the highest fast ballot it observes.
+We validate the resulting protocol with a TLA+ model checked by TLC.
+
+\paragraph{Future work.}
+Natural next steps are flexible quorums~\cite{howard_icdcn21} and reconfiguration for shared fast ballots.

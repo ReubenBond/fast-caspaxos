@@ -1,0 +1,78 @@
+name: Rust CI
+
+on:
+  push:
+    paths:
+      - 'rust/**'
+  pull_request:
+    paths:
+      - 'rust/**'
+
+defaults:
+  run:
+    working-directory: rust
+
+jobs:
+  check:
+    name: Check & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rust/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Test (default features)
+        run: cargo test --workspace
+
+      - name: Test (turmoil feature)
+        run: cargo test -p fast-caspaxos-simulation --features turmoil
+
+      - name: Bench compile check
+        run: cargo bench -p fast-caspaxos-core --no-run
+
+  chaos-nightly:
+    name: Chaos Seed Sweep
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rust/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+
+      - name: Run chaos tests
+        run: cargo test -p fast-caspaxos-simulation --test chaos_tests -- --nocapture
+
+      - name: Run turmoil DST tests
+        run: cargo test -p fast-caspaxos-simulation --features turmoil --test turmoil_tests -- --nocapture
