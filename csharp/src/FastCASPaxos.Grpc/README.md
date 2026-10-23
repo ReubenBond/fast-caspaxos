@@ -23,6 +23,10 @@ and uses a single-member cluster. Its durable files live in the host project's
 serving requests. This is process liveness; a register operation establishes
 quorum availability.
 
+The same HTTP listener provides [per-node administrative diagnostics](../FastCASPaxos.Host/README.md):
+explicit peer discovery, read-only local state, and directly subscribed SSE
+streams for protocol traffic, durable acceptor changes, and register outcomes.
+
 ### Three-process example
 
 Build once as above. In three terminals, run these commands respectively,
@@ -82,7 +86,7 @@ settings fail startup with diagnostics.
 | `AcceptorDatabase` | Durable local acceptor file; default `data/acceptor-a.db`. |
 | `ProposerId` | Cluster-unique positive proposer identity; default `1`. |
 | `ProposerDatabase` | Dedicated retained allocator file; default `data/proposer-1.db`. |
-| `Peers` | Array of `{ "Id": "a", "Endpoint": "https://host:port" }`; unique ordinal ids and unique HTTP(S) origins. |
+| `Peers` | Array of `{ "Id": "a", "Endpoint": "https://host:grpc-port", "HttpEndpoint": "https://host:admin-port" }`; unique ordinal ids and unique origins per endpoint family. The advertised HTTP origin is browser-reachable. |
 | `Mode` | `classic` (default), `fast`, `leader`, `fast+leader`, or `adaptive`. |
 | `QueueCapacity`, `MaxBatchSize` | SQLite admission capacity `256` and transaction batch maximum `64`. |
 | `Capacity` | Register active-plus-queued admission bound, `256`. |
@@ -93,6 +97,8 @@ settings fail startup with diagnostics.
 | `MaxReceiveMessageBytes`, `MaxSendMessageBytes` | Serialized gRPC message limits, each `4194304`, for servers and peer channels. Allow for protobuf and register-envelope overhead. |
 | `MaxConcurrentConnections`, `MaxStreamsPerConnection` | Kestrel bounds, `256` and `128`. |
 | `MaxRequestBodyBytes` | Per-request Kestrel body bound on REST PUT, `4194304`; gRPC retains its independent message bounds. Configure peer message limits for envelope/framing overhead. |
+| `TrustedAdminOrigins` | Additional exact workbench origins for admin/REST CORS, default `[]`; advertised host origins are included. |
+| `EventHistoryCapacity`, `MaxEventStreams`, `HeartbeatInterval` | Retained event count `1024`, concurrent SSE stream limit `64`, quiet-stream heartbeat `00:00:15`. |
 
 Durations are positive and at most one day. File paths resolve relative to the
 ASP.NET content root; parent directories are created on startup. Acceptor and

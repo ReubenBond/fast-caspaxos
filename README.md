@@ -218,7 +218,10 @@ This repository includes TLA+ and [Quint models](quint/README.md), plus a determ
 `FastCASPaxos.Host` serves the protocol and replicated register APIs over
 gRPC, plus raw-byte conditional register APIs over HTTP/REST, backed by SQLite
 and a configured fixed peer set. The gRPC package includes remote adapters for
-both interfaces. The [REST guide](csharp/src/FastCASPaxos.Rest/README.md) covers
+both interfaces. [Per-node diagnostics](csharp/src/FastCASPaxos.Host/README.md)
+provide peer discovery, read-only local snapshots, and SSE streams for protocol
+messages, durable state changes, and quorum operation outcomes.
+The [REST guide](csharp/src/FastCASPaxos.Rest/README.md) covers
 ETags, conditional PUT, pagination, and curl/PowerShell usage.
 See the [gRPC server guide](csharp/src/FastCASPaxos.Grpc/README.md)
 for executable setup, a three-process example, client usage, and operational

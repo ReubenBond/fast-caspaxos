@@ -12,6 +12,8 @@ $null = New-Item -ItemType Directory -Path $data
 $processes = @{}
 $output = @{}
 $errors = @{}
+$streams = @{}
+$cursors = @{}
 $http = [Net.Http.HttpClient]::new()
 $http.DefaultRequestVersion = [Version]::new(2, 0)
 $http.DefaultVersionPolicy = [Net.Http.HttpVersionPolicy]::RequestVersionExact
@@ -59,12 +61,109 @@ function Start-Node([int]$index) {
 }
 
 function Stop-Node([int]$index) {
+    Stop-Events $index
     $process = $processes[$index]
     if ($null -eq $process) { return }
     if (-not $process.HasExited) { $process.Kill($true) }
     $process.WaitForExit()
     $process.Dispose()
     $processes.Remove($index)
+}
+
+function Read-Event([int]$node) {
+    $fields = @{}
+    while ($true) {
+        $line = $streams[$node].Reader.ReadLineAsync().WaitAsync([TimeSpan]::FromSeconds(15)).GetAwaiter().GetResult()
+        if ($null -eq $line) { throw "Node $node closed its event stream." }
+        if ($line.Length -eq 0) {
+            if ($fields.ContainsKey('data')) { break }
+            continue
+        }
+        $separator = $line.IndexOf(':')
+        if ($separator -gt 0) { $fields[$line.Substring(0, $separator)] = $line.Substring($separator + 1).TrimStart() }
+    }
+    $event = $fields.data | ConvertFrom-Json
+    if ($event.schemaVersion -ne 1 -or $event.nodeId -cne @('a', 'b', 'c')[$node] -or $fields.event -cne $event.kind) {
+        throw "Node $node returned an invalid SSE envelope."
+    }
+    if ($event.kind -ne 'heartbeat') {
+        if ($fields.id -cne "$($event.bootId):$($event.sequence)") { throw 'SSE id must identify boot and exact sequence.' }
+        $cursors[$node] = $fields.id
+    }
+    return $event
+}
+
+function Start-Events([int]$node, [string]$after) {
+    $origin = "http://127.0.0.1:$($BasePort + 3 + $node)"
+    $status = Invoke-Rest $node 'GET' '/v1/admin/node'
+    $discovery = $status.Text | ConvertFrom-Json
+    if ($status.Status -ne 200 -or $discovery.peers.Count -ne 3 -or $discovery.storage.status -ne 'ready') {
+        throw "Node $node discovery/storage initialization failed."
+    }
+    for ($i = 0; $i -lt 3; $i++) {
+        if ($discovery.peers[$i].httpEndpoint -cne "http://127.0.0.1:$($BasePort + 3 + $i)" -or
+            $discovery.peers[$i].eventsUrl -cne "$($discovery.peers[$i].httpEndpoint)/v1/admin/events") {
+            throw 'Discovery must advertise every explicit browser endpoint.'
+        }
+    }
+    $request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Get, "$origin/v1/admin/events")
+    if ($after) { $request.Headers.Add('Last-Event-ID', $after) }
+    $response = $rest.SendAsync($request, [Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+    if (-not $response.IsSuccessStatusCode -or $response.Content.Headers.ContentType.MediaType -ne 'text/event-stream' -or
+        -not $response.Headers.CacheControl.NoStore -or $response.Headers.GetValues('X-Accel-Buffering') -notcontains 'no') {
+        $response.Dispose()
+        $request.Dispose()
+        throw "Node $node SSE response contract failed."
+    }
+    $streams[$node] = @{
+        Request = $request
+        Response = $response
+        Reader = [IO.StreamReader]::new($response.Content.ReadAsStream())
+    }
+    $first = Read-Event $node
+    $reason = if ($after) { 'restarted' } else { 'initial' }
+    if ($first.kind -ne 'reset' -or $first.data.reason -ne $reason) {
+        throw "Node $node must establish an explicit $reason reset."
+    }
+}
+
+function Stop-Events([int]$node) {
+    if (-not $streams.ContainsKey($node)) { return }
+    $streams[$node].Reader.Dispose()
+    $streams[$node].Response.Dispose()
+    $streams[$node].Request.Dispose()
+    $streams.Remove($node)
+}
+
+function Verify-Events([string]$key, [int[]]$nodes) {
+    foreach ($node in $nodes) {
+        $seen = @{}
+        for ($count = 0; $count -lt 1000 -and $seen.Count -lt 3; $count++) {
+            $event = Read-Event $node
+            if ($event.kind -eq 'reset') { throw 'Smoke observations unexpectedly overran retained history.' }
+            if ($event.data.key.text -cne $key) { continue }
+            if ($event.kind -eq 'protocol' -and $event.data.direction -eq 'inbound') {
+                if (-not $event.data.peerId -or -not $event.data.callId -or -not $event.data.operationId) {
+                    throw 'Cross-host protocol observations must carry peer and invocation correlation.'
+                }
+                $seen.protocol = $true
+            }
+            if ($event.kind -eq 'acceptor-state') {
+                if ($null -eq $event.data.acceptedBallot.round -or $null -eq $event.data.promisedBallot.proposer) {
+                    throw 'Local durable state must preserve full ballots.'
+                }
+                $seen.state = $true
+            }
+            if ($event.kind -eq 'operation') { $seen.operation = $true }
+        }
+        if ($seen.Count -ne 3) { throw "Node $node must expose protocol, durable state, and quorum outcomes." }
+        $snapshot = Invoke-Rest $node 'GET' "/v1/admin/state?key=$([Uri]::EscapeDataString($key))"
+        $state = $snapshot.Text | ConvertFrom-Json
+        if ($snapshot.Status -ne 200 -or $state.entry.key -cne $key -or
+            -not $state.entry.register.isPresent -or $state.entry.register.value.length -ne 0) {
+            throw 'Read-only local inspection must expose the accepted register envelope.'
+        }
+    }
 }
 
 function Invoke-Smoke([string]$mode, [string]$key, [int[]]$nodes) {
@@ -141,19 +240,23 @@ function Verify-RestRegister([string]$key, [string]$etag, [int[]]$nodes) {
 
 try {
     0..2 | ForEach-Object { Start-Node $_ }
+    0..2 | ForEach-Object { Start-Events $_ }
     Invoke-Smoke 'write' 'smoke/initial' @(0, 1, 2)
+    Verify-Events 'smoke/initial' @(0, 1, 2)
     $restKey = "rest/../% space/$([char]::ConvertFromUtf32(0x1F600))"
     $restVersion = Write-RestRegister $restKey @(0, 1, 2)
     Stop-Node 2
     Invoke-Smoke 'write' 'smoke/degraded' @(0, 1)
+    Verify-Events 'smoke/degraded' @(0, 1)
     $degradedVersion = Write-RestRegister 'rest/degraded' @(0, 1)
     0..1 | ForEach-Object { Stop-Node $_ }
     0..2 | ForEach-Object { Start-Node $_ }
+    0..2 | ForEach-Object { Start-Events $_ $cursors[$_] }
     Invoke-Smoke 'verify' 'smoke/initial' @(0, 1, 2)
     Invoke-Smoke 'verify' 'smoke/degraded' @(0, 1, 2)
     Verify-RestRegister $restKey $restVersion @(0, 1, 2)
     Verify-RestRegister 'rest/degraded' $degradedVersion @(0, 1, 2)
-    Write-Host 'HTTP/1.1 REST and HTTP/2 gRPC smoke, outage, and restart succeeded.'
+    Write-Host 'REST, gRPC, and per-host SSE smoke, outage, discovery, and restart succeeded.'
 }
 catch {
     foreach ($index in @($processes.Keys)) { Stop-Node $index }
