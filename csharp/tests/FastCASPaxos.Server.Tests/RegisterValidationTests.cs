@@ -6,6 +6,33 @@ namespace FastCASPaxos.Server.Tests;
 public sealed class RegisterValidationTests
 {
     [Fact]
+    public async Task NativeVersionShape_UsesTheSameRuleAsRegisterAdmission()
+    {
+        Assert.Throws<ArgumentNullException>(() => RegisterVersion.IsValid(null!));
+        var peers = Peers();
+        await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(1), Options());
+        ByteString[] invalid = [ByteString.Empty, new(new byte[7]), new(new byte[9]),
+            Version(0, 1), Version(-1, 1), Version(1, 0), Version(1, -1)];
+        foreach (var version in invalid)
+        {
+            Assert.False(RegisterVersion.IsValid(version));
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                service.CompareExchangeAsync("key", version, Payload).AsTask());
+        }
+        Assert.All(peers, peer => Assert.Empty(peer.Accepts));
+        Assert.All(peers, peer => Assert.Empty(peer.Prepares));
+
+        foreach (var version in new[] { Version(1, 1), Version(1, int.MaxValue),
+            Version(int.MaxValue, 1), Version(int.MaxValue, int.MaxValue) })
+        {
+            Assert.True(RegisterVersion.IsValid(version));
+            var result = await service.CompareExchangeAsync("absent", version, Payload);
+            Assert.Equal(CompareExchangeStatus.Mismatch, result.Status);
+            Assert.Equal(new RegisterValue(null, null), result.Current);
+        }
+    }
+
+    [Fact]
     public void Constructor_RejectsInvalidMembershipWithoutContactingPeers()
     {
         var peers = Peers();

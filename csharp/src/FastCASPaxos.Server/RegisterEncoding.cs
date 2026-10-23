@@ -20,9 +20,7 @@ internal static class RegisterEncoding
 
     public static void ValidateVersion(ByteString version)
     {
-        var bytes = version.ToArray();
-        if (bytes.Length != 8 || BinaryPrimitives.ReadInt32BigEndian(bytes) <= 0
-            || BinaryPrimitives.ReadInt32BigEndian(bytes.AsSpan(4)) <= 0)
+        if (!RegisterVersion.IsValid(version))
         {
             throw new ArgumentException("A register version must be a token returned by this register cluster.", nameof(version));
         }

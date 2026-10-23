@@ -1,0 +1,3 @@
+<Project>
+  <!-- Terminate Directory.Build.targets discovery at the upstream source boundary. -->
+</Project>
