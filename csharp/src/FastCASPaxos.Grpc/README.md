@@ -119,7 +119,11 @@ protocol access permits arbitrary ballot and opaque-value operations.
 
 Reference `FastCASPaxos.Grpc` from the application. Applications own and dispose
 their channels; adapters own individual calls. A call timeout defaults to
-30 seconds and can be supplied to either adapter.
+30 seconds and can be supplied to either adapter. Both constructors also accept
+an optional `TimeProvider` (default `TimeProvider.System`), which supplies the
+UTC instant used to calculate each call's absolute gRPC deadline. Deterministic
+tests can supply a controlled provider and call invoker; the gRPC channel owns
+transport deadline enforcement.
 
 ```csharp
 using FastCASPaxos.Grpc;

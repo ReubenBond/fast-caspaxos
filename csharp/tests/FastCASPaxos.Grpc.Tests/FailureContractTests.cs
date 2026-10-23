@@ -91,23 +91,45 @@ public sealed class FailureContractTests
     [InlineData(RequestValidationTests.Operation.Read)]
     [InlineData(RequestValidationTests.Operation.CompareExchange)]
     [InlineData(RequestValidationTests.Operation.RegisterList)]
-    public async Task Deadline_IsPassedToCallInvoker(RequestValidationTests.Operation operation)
+    public async Task Deadline_UsesInjectedTimeProviderForEachCall(RequestValidationTests.Operation operation)
     {
         using var cancellation = new CancellationTokenSource();
         var timeout = TimeSpan.FromMinutes(2);
+        var clock = new FixedTimeProvider(new DateTimeOffset(2040, 1, 2, 3, 4, 5, TimeSpan.Zero));
         var invoker = StubCallInvoker.Fail(new RpcException(new Status(StatusCode.DeadlineExceeded, "deadline")));
-        var before = DateTime.UtcNow;
-        var error = await Record.ExceptionAsync(() => RequestValidationTests.Invoke(operation,
-            new(invoker, timeout), new(invoker, timeout), token: cancellation.Token));
-        var after = DateTime.UtcNow;
+        var acceptor = new GrpcKeyedAcceptor(invoker, timeout, clock);
+        var register = new GrpcRegisterService(invoker, timeout, clock);
+        for (var index = 0; index < 2; index++)
+        {
+            var error = await Record.ExceptionAsync(() => RequestValidationTests.Invoke(operation,
+                acceptor, register, token: cancellation.Token));
+            var call = invoker.Calls.Last();
+            Assert.Equal(index + 1, invoker.Calls.Count);
+            Assert.Equal(index + 1, clock.Reads);
+            Assert.Equal(cancellation.Token, call.Options.CancellationToken);
+            Assert.Equal(clock.UtcNow.UtcDateTime + timeout, call.Options.Deadline);
+            Assert.Equal(DateTimeKind.Utc, call.Options.Deadline!.Value.Kind);
+            if (operation == RequestValidationTests.Operation.CompareExchange)
+                Assert.Null(error); // Its dedicated tests require Unknown + DeadlineExceeded.
+            else
+                Assert.Equal(StatusCode.DeadlineExceeded, Assert.IsType<RemoteCallException>(error).StatusCode);
+            clock.UtcNow += TimeSpan.FromDays(1);
+        }
+    }
+
+    [Theory]
+    [InlineData(RequestValidationTests.Operation.Prepare)]
+    [InlineData(RequestValidationTests.Operation.Read)]
+    public async Task DefaultDeadline_UsesThirtySecondsFromInjectedTimeProvider(RequestValidationTests.Operation operation)
+    {
+        var clock = new FixedTimeProvider(new DateTimeOffset(2040, 1, 2, 3, 4, 5, TimeSpan.Zero));
+        var invoker = StubCallInvoker.Fail(new RpcException(new Status(StatusCode.Unavailable, "offline")));
+        await Assert.ThrowsAsync<RemoteCallException>(() => RequestValidationTests.Invoke(operation,
+            new(invoker, timeProvider: clock), new(invoker, timeProvider: clock)));
         var call = Assert.Single(invoker.Calls);
-        Assert.Equal(cancellation.Token, call.Options.CancellationToken);
-        Assert.True(call.Options.Deadline.HasValue);
-        Assert.InRange(call.Options.Deadline.Value, before + timeout, after + timeout);
-        if (operation == RequestValidationTests.Operation.CompareExchange)
-            Assert.Null(error); // Its dedicated tests require Unknown + DeadlineExceeded.
-        else
-            Assert.Equal(StatusCode.DeadlineExceeded, Assert.IsType<RemoteCallException>(error).StatusCode);
+        Assert.Equal(clock.UtcNow.UtcDateTime.AddSeconds(30), call.Options.Deadline);
+        Assert.Equal(DateTimeKind.Utc, call.Options.Deadline!.Value.Kind);
+        Assert.Equal(1, clock.Reads);
     }
 
     [Fact]
@@ -349,5 +371,16 @@ public sealed class FailureContractTests
             _ = new GrpcRegisterService(invoker, valid);
         }
         Assert.Empty(invoker.Calls);
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        public DateTimeOffset UtcNow { get; set; } = utcNow;
+        public int Reads { get; private set; }
+        public override DateTimeOffset GetUtcNow()
+        {
+            Reads++;
+            return UtcNow;
+        }
     }
 }
