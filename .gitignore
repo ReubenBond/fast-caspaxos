@@ -343,6 +343,9 @@ ASALocalRun/
 # BeatPulse healthcheck temp database
 healthchecksdb
 
+# Default durable gRPC host data
+csharp/src/FastCASPaxos.Host/data/
+
 # Backup folder for Package Reference Convert tool in Visual Studio 2017
 MigrationBackup/
 

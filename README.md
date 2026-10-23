@@ -215,6 +215,12 @@ This repository includes TLA+ and [Quint models](quint/README.md), plus a determ
 
 ## C# durable keyed acceptors
 
+`FastCASPaxos.Host` serves both the protocol and replicated register APIs over
+gRPC, backed by SQLite and a configured fixed peer set. The gRPC package includes
+remote adapters for both interfaces. See the [gRPC server guide](csharp/src/FastCASPaxos.Grpc/README.md)
+for executable setup, a three-process example, client usage, and operational
+configuration.
+
 `ReplicatedRegisterService` provides quorum-backed `Read`, `CompareExchange`,
 and paginated logical key listing over those acceptors. It uses stable opaque
 versions, durable proposer ballot allocation, and explicit uncertain write
