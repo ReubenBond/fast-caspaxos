@@ -26,7 +26,8 @@ TypeScript checking and the Vite production build, and copies assets into
 
 ```powershell
 dotnet publish csharp\src\FastCASPaxos.Host -c Release
-dotnet csharp\src\FastCASPaxos.Host\bin\Release\net10.0\publish\FastCASPaxos.Host.dll
+Set-Location csharp\src\FastCASPaxos.Host\bin\Release\net10.0\publish
+dotnet .\FastCASPaxos.Host.dll
 ```
 
 Run the published executable with its publish directory as the working directory,
@@ -76,7 +77,8 @@ ETag. UTF-8 decoding is strict; binary values use Base64. Switching representati
 preserves bytes, including a UTF-8 BOM and original line endings. The editor
 captures its own expected ETag, keeping drafts stable when newer observations
 arrive. Create uses `If-None-Match: *`; compare-and-swap uses the captured strong
-`If-Match` value.
+`If-Match` value. Pending and unknown writes retain their editor; navigating away
+from an unsaved draft requires explicit discard confirmation.
 
 **Conflicts and uncertainty:** a 412 conflict preserves the draft and precondition.
 A response declaring an unknown outcome, a transport interruption, or an

@@ -26,6 +26,11 @@ test('real hosts stream changes, preserve conditional bytes, and recover one dis
     });
     const pageResponse = await page.goto(`${cluster.origin(0)}/admin/`);
     expect(pageResponse?.status()).toBe(200);
+    expect(pageResponse?.headers()['cache-control']).toBe('no-store');
+    const redirect = await request.get(`${cluster.origin(0)}/admin`, { maxRedirects: 0 });
+    expect(redirect.status()).toBe(302);
+    expect(redirect.headers().location).toBe('/admin/');
+    expect((await request.get(`${cluster.origin(0)}/admin/missing-route`)).status()).toBe(404);
     await expect(page.getByRole('heading', { name: 'Register inspector' })).toBeVisible();
     for (const id of cluster.ids) await expect(page.getByTestId(`node-${id}`).locator('.node-heading .badge')).toHaveText('connected');
     await expect.poll(() => streams.size).toBe(3);
