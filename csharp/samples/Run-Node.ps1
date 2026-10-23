@@ -4,6 +4,7 @@ param(
     [int]$BasePort = 5001
 )
 $ErrorActionPreference = 'Stop'
+$Node = $Node.ToLowerInvariant()
 $source = Join-Path $PSScriptRoot '..\src\FastCASPaxos.Host'
 $dll = Join-Path $source 'bin\Release\net10.0\FastCASPaxos.Host.dll'
 if (-not (Test-Path $dll)) { throw 'Build csharp\FastCASPaxos.slnx in Release before running the sample.' }
