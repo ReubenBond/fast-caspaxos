@@ -159,6 +159,92 @@ var current = await registers.ReadAsync("catalog/item");
 var page = await registers.ListKeysAsync("catalog/", limit: 100);
 ```
 
+### Fixed endpoint client
+
+`GrpcRegisterClient` implements `IRegisterService` over a fixed set of register
+server origins. Server-side proposers retain their allocation state; an application
+client only owns its transport connections:
+
+```csharp
+using var registers = new GrpcRegisterClient(
+    [
+        new Uri("https://register-a.example:5001"),
+        new Uri("https://register-b.example:5001"),
+        new Uri("https://register-c.example:5001"),
+    ],
+    new GrpcRegisterClientOptions
+    {
+        CallTimeout = TimeSpan.FromSeconds(30),
+        AttemptTimeout = TimeSpan.FromSeconds(10),
+        MaxReceiveMessageBytes = 4 * 1024 * 1024,
+        MaxSendMessageBytes = 4 * 1024 * 1024,
+    });
+var current = await registers.ReadAsync("catalog/item");
+var result = await registers.CompareExchangeAsync("catalog/item", current.Version, ByteString.Empty);
+```
+
+The constructor validates distinct HTTP(S) origins and owns one SDK channel per
+origin. Each channel uses the endpoint's HTTPS authority and normal certificate
+validation. The SDK manages each connection pool; separate channels preserve
+distinct TLS identities across endpoints. `Dispose` closes owned channels.
+The `IEnumerable<CallInvoker>` overload accepts caller-owned channels for
+authentication or custom transport setup. Those invokers must enforce call
+deadlines and use application-controlled mutation retries.
+
+Each logical call starts at the last successful endpoint and attempts each
+endpoint at most once. This affinity keeps healthy concurrent requests on one
+server-side proposer, reducing avoidable contention and uncertainty.
+Successful reads, listing, and definite write outcomes update that affinity.
+`CallTimeout` bounds the overall budget (default 30 seconds), measured
+with the injected `TimeProvider`'s monotonic timestamps. Every attempt gets a
+gRPC deadline bounded by the remaining budget and `AttemptTimeout` (default
+5 seconds). The transport enforces that deadline; `TimeProvider` also supplies its
+UTC origin. Configure attempt timeouts to accommodate the server's operation
+deadline and expected network latency.
+
+Reads and listing try a surviving endpoint after `Unavailable` or
+`DeadlineExceeded`. Writes try another endpoint only after the server's typed
+pre-mutation `unavailable` failure. `Applied`, `Mismatch`, and `Unknown` return
+unchanged. An ambiguous failed write retains its diagnostic `Error` in `Unknown`,
+so the application can reconcile its intended state. Overload, authorization,
+validation, and corruption remain explicit errors or uncertainty causes.
+Pre-cancelled calls fail before dispatch; in-flight write cancellation retains
+uncertainty. Owned channels use application-controlled retries, preserving the
+one-dispatch-per-attempt contract.
+
+Adapters that expose a broader version-token domain can use
+`FastCASPaxos.Server.RegisterVersion.IsValid(ByteString)` to recognize native
+token syntax before issuing a CAS. Treat a foreign or malformed expected token
+as a known mismatch in that adapter's contract. Native versions remain opaque:
+compare them for equality and preserve their bytes. A syntactically valid token
+matches only when it equals the register's current version.
+
+Endpoint selection accesses the register API independently of acceptor membership.
+Configure the same fixed membership on every server. For five members in `fast`
+mode, the fast quorum is four and recovery quorum is three; Fast CASPaxos recovers
+through a classic ballot when a fast quorum is unavailable. The same client
+supports three-member and other configured memberships.
+
+### Embedding an immutable source revision
+
+Applications can pin an upstream commit and reference
+`csharp/src/FastCASPaxos.Grpc/FastCASPaxos.Grpc.csproj`. Its library closure is
+`FastCASPaxos.Grpc -> FastCASPaxos.Server -> FastCASPaxos.Core`, plus declared
+NuGet dependencies and the ASP.NET Core shared framework. The project enables
+trim/AOT compatibility analysis. The client closure builds independently of
+the executable host and administrative frontend.
+
+The `csharp/Directory.Build.props`, `Directory.Build.targets`, and
+`Directory.Packages.props` files form the upstream source build boundary. Retain
+these files with the selected projects: they terminate parent-repository build
+policy discovery and keep package versions declared in upstream project files.
+The embedding application's own build and analyzers retain its local policy.
+CI's `Test-SourceBoundary.ps1` checks this contract beneath deliberately
+incompatible parent build/central-package settings and publishes an AOT client.
+
+For framework-neutral consumer tests, also reference
+[`FastCASPaxos.Testing`](../FastCASPaxos.Testing/README.md).
+
 An application can instead own its proposer and use protocol adapters:
 
 ```csharp

@@ -1,6 +1,7 @@
 using System.Net;
 using FastCASPaxos.Host;
 using FastCASPaxos.Model;
+using FastCASPaxos.Protocol;
 using FastCASPaxos.Server;
 using FastCASPaxos.Sqlite;
 using Grpc.Core;
@@ -21,6 +22,111 @@ namespace FastCASPaxos.Grpc.Tests;
 
 public sealed class Http2IntegrationTests
 {
+    [Fact]
+    public async Task MultiEndpointClientOverHttp2_HealthyFastContentionHasOneWinner()
+    {
+        using var directory = new TestDirectory();
+        var acceptors = new List<SqliteAcceptorServer>();
+        var ballots = new List<SqliteProposerBallotSource>();
+        var registers = new List<ReplicatedRegisterService>();
+        var endpoints = new List<Http2Endpoint>();
+        var entered = 0;
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            for (var index = 0; index < 5; index++)
+                acceptors.Add(await SqliteAcceptorServer.OpenAsync(directory.Database($"member-{index}")));
+            for (var index = 0; index < 3; index++)
+            {
+                var allocator = new SqliteProposerBallotSource(directory.Database($"proposer-{index}"), index + 1);
+                ballots.Add(allocator);
+                var service = new ReplicatedRegisterService(
+                    acceptors.Select((acceptor, id) => new AcceptorPeer($"member-{id}", acceptor)), allocator,
+                    new() { Mode = ProposerModePolicy.Parse("fast"), Capacity = 64 });
+                registers.Add(service);
+                var delayed = new DelegateRegister
+                {
+                    Read = service.ReadAsync,
+                    List = service.ListKeysAsync,
+                    CompareExchange = async (key, expected, value, token) =>
+                    {
+                        if (Interlocked.Increment(ref entered) == 32) release.TrySetResult();
+                        await release.Task.WaitAsync(Watchdog);
+                        return await service.CompareExchangeAsync(key, expected, value, token);
+                    },
+                };
+                endpoints.Add(await Http2Endpoint.StartAsync(acceptors[0], delayed));
+            }
+            using var client = new GrpcRegisterClient(endpoints.Select(endpoint => new Uri(endpoint.Address)),
+                new() { CallTimeout = Watchdog, AttemptTimeout = Watchdog });
+            ByteString? version = null;
+            for (var round = 0; round < 2; round++)
+            {
+                var results = await Task.WhenAll(Enumerable.Range(0, 32).Select(_ =>
+                    client.CompareExchangeAsync("contended", version, Payload).AsTask())).WaitAsync(Watchdog);
+                var applied = Assert.Single(results, result => result.Status == CompareExchangeStatus.Applied);
+                Assert.Equal(31, results.Count(result => result.Status == CompareExchangeStatus.Mismatch));
+                Assert.All(results, result => Assert.Equal(applied.Current, result.Current));
+                Assert.NotEqual(version, applied.Current!.Version);
+                version = applied.Current.Version;
+                entered = 0;
+                release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+            Assert.Equal(version, (await client.ReadAsync("contended")).Version);
+        }
+        finally
+        {
+            release.TrySetResult();
+            foreach (var endpoint in endpoints) await endpoint.DisposeAsync();
+            foreach (var register in registers) await register.DisposeAsync();
+            foreach (var allocator in ballots) allocator.Dispose();
+            foreach (var acceptor in acceptors) await acceptor.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task MultiEndpointClientOverHttp2_ReadsSurvivorAndWritesThroughServerProposer()
+    {
+        using var directory = new TestDirectory();
+        await using var node = await RunningNode.StartAsync(directory);
+        await using var surviving = await Http2Endpoint.StartAsync(node.Runtime.Acceptor, node.Runtime.Registers);
+        var created = await node.Endpoint.Register.CompareExchangeAsync("multi", null, Payload);
+        Assert.Equal(CompareExchangeStatus.Applied, created.Status);
+        using var client = new GrpcRegisterClient(
+            [new Uri(node.Endpoint.Address), new Uri(surviving.Address)]);
+        await node.Endpoint.StopAsync();
+
+        Assert.Equal(created.Current, await client.ReadAsync("multi"));
+        var update = await client.CompareExchangeAsync("multi", created.Current!.Version, ByteString.Empty);
+        Assert.Equal(CompareExchangeStatus.Applied, update.Status);
+        Assert.NotEqual(created.Current.Version, update.Current!.Version);
+        Assert.Equal(ByteString.Empty, update.Current.Value);
+        Assert.Equal(["multi"], (await client.ListKeysAsync()).Keys);
+        Assert.Equal(update.Current, await surviving.Register.ReadAsync("multi"));
+    }
+
+    [Fact]
+    public async Task MultiEndpointClientOverHttp2_EnforcesConfiguredMessageBounds()
+    {
+        using var directory = new TestDirectory();
+        await using var node = await RunningNode.StartAsync(directory);
+        using (var client = new GrpcRegisterClient([new Uri(node.Endpoint.Address)],
+            new() { MaxSendMessageBytes = 1 }))
+        {
+            var result = await client.CompareExchangeAsync("oversize", null, Payload);
+            Assert.Equal(CompareExchangeStatus.Unknown, result.Status);
+            Assert.Equal(StatusCode.ResourceExhausted, Assert.IsType<RemoteCallException>(result.Error).StatusCode);
+            Assert.False((await node.Endpoint.Register.ReadAsync("oversize")).IsPresent);
+        }
+
+        Assert.Equal(CompareExchangeStatus.Applied,
+            (await node.Endpoint.Register.CompareExchangeAsync("present", null, Payload)).Status);
+        using var bounded = new GrpcRegisterClient([new Uri(node.Endpoint.Address)],
+            new() { MaxReceiveMessageBytes = 1 });
+        var error = await Assert.ThrowsAsync<RemoteCallException>(() => bounded.ReadAsync("present").AsTask());
+        Assert.Equal(StatusCode.ResourceExhausted, error.StatusCode);
+    }
+
     [Fact]
     public async Task ProtocolOverHttp2_PreservesBallotsRetriesAndAbsentEmpty()
     {

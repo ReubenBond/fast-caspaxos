@@ -1,0 +1,7 @@
+<Project>
+  <!-- This source dependency owns its build policy even when nested in another repository. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <DirectoryPackagesPropsPath>$(MSBuildThisFileDirectory)Directory.Packages.props</DirectoryPackagesPropsPath>
+  </PropertyGroup>
+</Project>
