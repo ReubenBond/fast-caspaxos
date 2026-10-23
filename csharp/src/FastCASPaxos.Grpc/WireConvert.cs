@@ -101,6 +101,21 @@ internal static class WireConvert
         return result;
     }
 
+    public static AcceptedDigest Digest(Wire.AcceptedDigest? value)
+    {
+        Require(value is not null, "An accepted digest is required.");
+        var result = new AcceptedDigest(Ballot(value!.Ballot), new(value.Sha256.Span));
+        result.Validate();
+        return result;
+    }
+
+    public static Wire.AcceptedDigest ToWire(AcceptedDigest value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        value.Validate();
+        return new() { Ballot = ToWire(value.AcceptedBallot), Sha256 = ToWire(value.ValueHash) };
+    }
+
     public static void ValidatePage(IReadOnlyList<string> keys, string? continuation, Wire.ListKeysRequest request)
     {
         Require(keys.Count <= request.Limit, "The page exceeds its requested limit.");

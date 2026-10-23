@@ -3,7 +3,8 @@
 `SqliteAcceptorServer` implements the transport-independent
 `FastCASPaxos.Server.IKeyedAcceptor` protocol API. One SQLite file holds the
 promised ballot and optional accepted ballot/value for every key belonging to
-one logical acceptor.
+one logical acceptor. Each accepted value has a persisted SHA-256 fingerprint,
+committed in the same transaction as its ballot and bytes.
 
 ```csharp
 using FastCASPaxos.Messages;
@@ -52,6 +53,13 @@ SQLite WAL locking and durable-flush support, and retain the database and its
 WAL together through crashes. File access and backups follow SQLite's
 [WAL](https://www.sqlite.org/wal.html) and
 [backup](https://www.sqlite.org/backup.html) requirements.
+
+Schema version 2 adds `value_hash`. Opening a version-1 database migrates its
+rows and computes SHA-256 over the complete accepted bytes, including any
+register envelope, in one immediate transaction. Promises, accepted ballots,
+keys, and payloads retain their exact values. Migration performs a full value
+scan and requires temporary disk space for the replacement table. Retain an
+online backup before upgrading; version-2 files require version-2-aware binaries.
 
 A dedicated thread owns each server's connection and performs all synchronous
 SQLite work. A bounded queue applies backpressure (default capacity 256).
@@ -103,6 +111,21 @@ Each page observes one local transaction snapshot. Concurrent writes can affect
 later pages; a key first accepted at or below the cursor appears on a subsequent
 scan. An accepted record is evidence about this acceptor; cluster-level register
 visibility and replicated enumeration are established by the register service.
+
+## Digest inventory and conditional transfer
+
+`IAcceptorDigestSource.ListDigestsAsync` uses the same ordinal prefix, cursor,
+and snapshot rules as inventory. Each entry contains the key, accepted ballot,
+and 32-byte SHA-256; the query reads persisted fingerprints. Promise-only rows
+are excluded, and accepted empty bytes have the SHA-256 of the empty byte string.
+Promise updates retain the existing hash.
+
+`FetchIfDifferentAsync(key, known)` compares both accepted ballot and hash in
+one transaction. `Unchanged` carries only its status. `Different` carries the
+complete accepted state, including the current promise. `Missing` identifies
+a key with no accepted value. Passing null for `known` fetches any accepted
+state. A transfer verifies its bytes against the stored hash and reports an
+integrity failure through the writer's normal failure boundary.
 
 `ILocalAcceptorInspection.InspectAsync(key)` returns the persisted local row or
 null. `InspectKeysAsync(prefix, afterKey, limit)` uses the same ordering and

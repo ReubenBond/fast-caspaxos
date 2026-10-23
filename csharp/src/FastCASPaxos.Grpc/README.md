@@ -98,6 +98,9 @@ settings fail startup with diagnostics.
 | `AttemptTimeout` | Register phase attempt deadline, `00:00:01`. |
 | `RetryBackoff` | Base retry delay, `00:00:00.010`. |
 | `PeerCallTimeout` | Outgoing protocol RPC deadline, `00:00:05`; attempts also pass cancellation. |
+| `TargetReplicationFactor` | `0` selects a majority (F+1 for 2F+1 members); positive values select an explicit target up to membership size. |
+| `RepairInterval`, `RepairRetryInterval` | Periodic scan interval `00:01:00` and pending shutdown-pass retry delay `00:00:01`. |
+| `RepairPageSize` | Digest entries per member per inventory range, `128`. |
 | `MaxReceiveMessageBytes`, `MaxSendMessageBytes` | Serialized gRPC message limits, each `4194304`, for servers and peer channels. Allow for protobuf and register-envelope overhead. |
 | `MaxConcurrentConnections`, `MaxStreamsPerConnection` | Kestrel bounds, `256` and `128`. |
 | `MaxRequestBodyBytes` | Per-request Kestrel body bound on REST PUT, `4194304`; gRPC retains its independent message bounds. Configure peer message limits for envelope/framing overhead. |
@@ -246,11 +249,42 @@ only after the underlying durable operation completes.
 
 ## Lifecycle and durable operations
 
-Ctrl+C or the normal ASP.NET host shutdown sequence stops request admission
-and drains HTTP work. The node then disposes the register service, outbound
-channels, proposer allocator, and SQLite acceptor in dependency order. SQLite
-drains admitted transactions. Shutdown failures propagate and retain their
-diagnostics.
+Each host stages bounded durability passes periodically, with an initial
+membership-ordered offset to spread work. `POST /v1/admin/repair` stages a pass
+on every configured host through `Repair.Stage`; repeated commands coalesce.
+HTTP 202 confirms all hosts accepted staging. HTTP 503 reports partial staging,
+and reachable hosts retain their work. `repair` diagnostic events expose staging,
+running, completion, pending replication, cancellation, and failures.
+
+The `AcceptorDigests` gRPC service exposes `ListDigests` and `FetchIfDifferent`.
+`GrpcAcceptorDigestSource` implements the domain `IAcceptorDigestSource` client.
+Digest pages contain ordinal keys, accepted ballots, and 32-byte SHA-256 values.
+Conditional fetch has explicit `missing`, `unchanged`, and `different` outcomes;
+only `different` transfers accepted bytes. These APIs use the same trusted
+network and transport validation boundaries as the protocol APIs.
+
+Ctrl+C or the normal ASP.NET host shutdown invokes the repair lifecycle barrier
+before Kestrel stops. The node seals incoming prepare/accept admission, closes
+the register service, and waits for admitted mutations to reach their durable
+outcomes. Digest and inspection endpoints remain readable while the final
+local-key scan restores the target replica count **on the remaining hosts**.
+Internal repair retains local protocol access through this barrier.
+
+For three hosts and target 2, both surviving hosts must durably acknowledge
+each local key. The departing host's disk is excluded from this target.
+Simultaneous shutdowns, a target equal to membership size, a populated
+single-member cluster, or insufficient surviving peers can keep the barrier
+pending. The `StopAsync` cancellation token ends replication waiting promptly;
+ASP.NET's `HostOptions.ShutdownTimeout` supplies the normal host deadline
+(30 seconds by default). Configure the generic-host deadline for the deployment
+and retain node storage after an interrupted drain. Cancellation emits a warning
+and a `repair` cancellation event with the incomplete-durability outcome.
+
+After the barrier completes or is canceled, HTTP shuts down and the node
+disposes channels, proposer allocation, and SQLite in dependency order.
+SQLite drains already selected transactions. Embedders call `NodeRuntime.StopAsync`
+before `DisposeAsync` to request the replication barrier; disposal releases
+resources and retains its existing durable queue-drain semantics.
 
 Keep acceptor databases and their WAL state for each acceptor identity's
 lifetime. Keep the allocator for each proposer identity's lifetime, including

@@ -15,6 +15,39 @@ service Register {
   rpc ListKeys(ListKeysRequest) returns (RegisterKeyPage);
 }
 
+service AcceptorDigests {
+  rpc ListDigests(ListKeysRequest) returns (AcceptorDigestPage);
+  rpc FetchIfDifferent(FetchIfDifferentRequest) returns (ConditionalAcceptorState);
+}
+
+service Repair {
+  rpc Stage(Empty) returns (Empty);
+}
+
+message AcceptedDigest {
+  Ballot ballot = 1;
+  bytes sha256 = 2;
+}
+message KeyDigest {
+  optional string key = 1;
+  AcceptedDigest digest = 2;
+}
+message AcceptorDigestPage {
+  repeated KeyDigest entries = 1;
+  optional string continuation_key = 2;
+}
+message FetchIfDifferentRequest {
+  optional string key = 1;
+  AcceptedDigest known = 2;
+}
+message ConditionalAcceptorState {
+  oneof outcome {
+    Empty missing = 1;
+    Empty unchanged = 2;
+    AcceptorEntry different = 3;
+  }
+}
+
 message Empty {}
 message Ballot {
   int32 round = 1;

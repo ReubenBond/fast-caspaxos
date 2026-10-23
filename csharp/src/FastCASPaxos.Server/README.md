@@ -135,3 +135,37 @@ these bytes opaquely. Protocol clients sharing register keys preserve this
 envelope and the register's conditional-update rules. Malformed accepted
 envelopes produce explicit errors. Application namespaces and peer identity
 configuration belong to the hosting layer.
+
+## Durability repair
+
+`DurabilityRepair` merges bounded digest pages from reachable fixed members.
+Matching accepted ballots and SHA-256 fingerprints establish which replicas
+hold identical accepted bytes. A matching set must satisfy the ballot's commit
+quorum as well as the configured replica target before the pass skips a key.
+Reachable members with missing or divergent state trigger an identity proposal.
+
+Repair uses the existing proposer's fast-ballot recovery rules and a freshly
+reserved classic ballot, then sends the recovered bytes to every member.
+This preserves logical register versions and supports opaque protocol values.
+The scan's source bytes are a candidate only when prepare observes an entirely
+unaccepted quorum; accepted quorum evidence determines recovery otherwise.
+Higher promises cause another recovery above their ballot floor.
+
+`DurabilityRepairOptions.TargetReplicas = 0` selects a majority, or F+1 for
+2F+1 members. Each successful repair requires both a classic quorum and the
+target count of durable acknowledgements. Periodic passes attempt all reachable
+replicas, including those beyond the target, and revisit returning members.
+Unavailable members retain their membership slots. A pass reports examined,
+repaired, pending counts and bounded peer diagnostics.
+
+`RunPassAsync(departing: true)` scans the local accepted keys and counts remote
+acknowledgements toward the target. Its caller seals external mutation admission
+and drains admitted work first, establishing the departure scan's finite key set.
+Each key is established independently; ongoing cluster writes use the same
+consensus guarantees as application operations.
+
+Pages bound inventory memory. One outstanding call slot per peer bounds retained
+work even when a transport ignores cancellation; per-attempt and per-key deadlines
+bound waiting. Cancellation ends the scan promptly. Endpoint implementations
+complete any already selected durable transaction according to their storage
+contract.
