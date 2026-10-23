@@ -99,6 +99,13 @@ runs the larger checks on Linux and retains simulation traces and failure
 diagnostics as artifacts. Repository-level recipes are `just quint-test`,
 `just quint-simulate`, and `just quint-verify`.
 
+Automatic Quint/TLC checks run for changes under `quint/**` or to
+`.github/workflows/quint.yml`, on pushes to `main` and on pull requests.
+Feature branches use their pull-request diff for formal-check selection, so
+ordinary code changes and feature-branch rebases retain their code-only checks.
+Use the commands above for local formal checking; `workflow_dispatch` provides
+deliberate manual CI runs.
+
 | Module | Acceptors | Owners | Rounds | Update depth | Classic / fast quorum | CI check |
 | --- | ---: | ---: | ---: | ---: | --- | --- |
 | `FastCASPaxosSmall` | 3 | 1 | 2 | 1 | 2 / 3 | Simulation |
