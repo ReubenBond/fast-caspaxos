@@ -2,6 +2,7 @@ name: Quint
 
 on:
   push:
+    branches: [main]
     paths:
       - 'quint/**'
       - '.github/workflows/quint.yml'
