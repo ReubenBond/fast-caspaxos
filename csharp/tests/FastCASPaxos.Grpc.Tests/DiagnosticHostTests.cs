@@ -6,6 +6,7 @@ using FastCASPaxos.Model;
 using FastCASPaxos.Rest;
 using FastCASPaxos.Server;
 using FastCASPaxos.Server.Diagnostics;
+using FastCASPaxos.Sqlite;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -190,6 +191,85 @@ public sealed class DiagnosticHostTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Snapshot_PreReadWatermarkReplaysBlockedWriteAndRefetchesCommittedState(bool list)
+    {
+        using var directory = new TestDirectory();
+        using var barrier = new SnapshotCommitBarrier();
+        await using var host = await DiagnosticHost.Start(DiagnosticHost.Options(directory));
+        var sqlite = Assert.IsType<SqliteAcceptorServer>(host.Node.Inspection);
+        Assert.True((await sqlite.AcceptAsync("key", new(new(2, 1), new([7]), new(3, 1)))).IsAccepted);
+        var beforeRead = host.Node.Diagnostics.Cursor;
+        var commits = 0;
+        sqlite.BeforeCommit = (_, _, count) =>
+        {
+            if (Interlocked.Increment(ref commits) == 1) barrier.Arrive(count);
+        };
+        var path = list ? "/v1/admin/states?prefix=key" : "/v1/admin/state?key=key";
+        try
+        {
+            var snapshotRequest = host.Json(path);
+            Assert.Equal(1, await barrier.Entered.WaitAsync(Watchdog));
+            Assert.False(snapshotRequest.IsCompleted);
+
+            // The HTTP read has materialized the old row, but cannot respond before its
+            // transaction commits. The observed write publishes its request immediately
+            // and queues behind that read, guaranteeing a cursor advance during the await.
+            var write = host.Node.Acceptor.AcceptAsync(
+                "key", new(new(4, 1), new([8, 255]), new(5, 1))).AsTask();
+            var requestCursor = host.Node.Diagnostics.Cursor;
+            Assert.NotEqual(beforeRead, requestCursor);
+            Assert.False(write.IsCompleted);
+            Assert.False(snapshotRequest.IsCompleted);
+
+            barrier.Release();
+            var snapshot = await snapshotRequest.WaitAsync(Watchdog);
+            Assert.Equal(beforeRead, snapshot.GetProperty("cursor").GetString());
+            var oldEntry = Entry(snapshot);
+            Assert.Equal("key", oldEntry.GetProperty("key").GetString());
+            Assert.Equal("Bw==", oldEntry.GetProperty("acceptedValue").GetProperty("base64").GetString());
+            AssertBallot(oldEntry.GetProperty("acceptedBallot"), 2, 1);
+            AssertBallot(oldEntry.GetProperty("promisedBallot"), 3, 1);
+            Assert.True((await write.WaitAsync(Watchdog)).IsAccepted);
+            var committedCursor = host.Node.Diagnostics.Cursor;
+
+            // Replay uses the cursor returned by HTTP, not a test-owned substitute.
+            // Capturing it after the awaited inspection would omit at least this request.
+            using var replay = await host.Events(after: snapshot.GetProperty("cursor").GetString());
+            using var reader = new StreamReader(await replay.Content.ReadAsStreamAsync());
+            var requested = await Frame(reader, "protocol");
+            Assert.Equal(requestCursor, requested.GetProperty("id").GetString());
+            Assert.Equal("request-received", requested.GetProperty("data").GetProperty("phase").GetString());
+            Assert.Equal("key", requested.GetProperty("data").GetProperty("key").GetProperty("text").GetString());
+            var changed = await Frame(reader, "acceptor-state");
+            Assert.Equal("key", changed.GetProperty("data").GetProperty("key").GetProperty("text").GetString());
+            Assert.Equal("CP8=", changed.GetProperty("data").GetProperty("acceptedValue").GetProperty("base64").GetString());
+            AssertBallot(changed.GetProperty("data").GetProperty("acceptedBallot"), 4, 1);
+            AssertBallot(changed.GetProperty("data").GetProperty("promisedBallot"), 5, 1);
+            var completed = await Frame(reader, "protocol");
+            Assert.Equal(committedCursor, completed.GetProperty("id").GetString());
+            Assert.Equal("response-produced", completed.GetProperty("data").GetProperty("phase").GetString());
+            Assert.Equal("accepted", completed.GetProperty("data").GetProperty("outcome").GetString());
+            Assert.Equal(requested.GetProperty("data").GetProperty("callId").GetString(),
+                completed.GetProperty("data").GetProperty("callId").GetString());
+
+            var refetched = await host.Json(path);
+            Assert.Equal(committedCursor, refetched.GetProperty("cursor").GetString());
+            var newEntry = Entry(refetched);
+            Assert.Equal("CP8=", newEntry.GetProperty("acceptedValue").GetProperty("base64").GetString());
+            AssertBallot(newEntry.GetProperty("acceptedBallot"), 4, 1);
+            AssertBallot(newEntry.GetProperty("promisedBallot"), 5, 1);
+            Assert.Equal(committedCursor, host.Node.Diagnostics.Cursor);
+        }
+        finally { barrier.Release(); }
+
+        JsonElement Entry(JsonElement snapshot) => list
+            ? Assert.Single(snapshot.GetProperty("entries").EnumerateArray())
+            : snapshot.GetProperty("entry");
+    }
+
+    [Theory]
     [InlineData("/v1/admin/state")]
     [InlineData("/v1/admin/state?key=a&key=b")]
     [InlineData("/v1/admin/state?unknown=a")]
@@ -201,16 +281,24 @@ public sealed class DiagnosticHostTests
     [InlineData("/v1/admin/states?prefix=a&prefix=b")]
     [InlineData("/v1/admin/events?unknown=1")]
     [InlineData("/v1/admin/events?after=a&after=b")]
-    public async Task Admin_InvalidQueryIsExplicitBadRequest(string path)
+    public async Task Admin_InvalidQueryIsExplicitBadRequestBeforeInspection(string path)
     {
         using var directory = new TestDirectory();
         await using var host = await DiagnosticHost.Start(DiagnosticHost.Options(directory));
+        var sqlite = Assert.IsType<SqliteAcceptorServer>(host.Node.Inspection);
+        var inspections = 0;
+        sqlite.BeforeCommit = (_, _, count) => Interlocked.Add(ref inspections, count);
         var before = host.Node.Diagnostics.Cursor;
         using var response = await host.Client.GetAsync(path);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var problem = await DiagnosticHost.Parse(response);
         Assert.Equal("invalid", problem.GetProperty("title").GetString());
         Assert.Equal(before, host.Node.Diagnostics.Cursor);
+        Assert.Equal(0, Volatile.Read(ref inspections));
+        // This valid read both proves the hook is active and drains any earlier
+        // mistakenly enqueued work before the exact final work-count assertion.
+        Assert.Null(await sqlite.InspectAsync("sentinel"));
+        Assert.Equal(1, Volatile.Read(ref inspections));
     }
 
     [Fact]
@@ -260,17 +348,22 @@ public sealed class DiagnosticHostTests
     [InlineData("/v1/admin/states?prefix=%E2%82")]
     [InlineData("/v1/admin/states?after=%FF")]
     [InlineData("/v1/admin/events?after=%FF")]
-    public async Task StrictQuery_MalformedPercentUtf8AndEncodedDuplicatesReturn400(string path)
+    public async Task StrictQuery_MalformedPercentUtf8AndEncodedDuplicatesReturn400BeforeInspection(string path)
     {
         using var directory = new TestDirectory();
         await using var host = await DiagnosticHost.Start(DiagnosticHost.Options(directory));
+        var sqlite = Assert.IsType<SqliteAcceptorServer>(host.Node.Inspection);
+        var inspections = 0;
+        sqlite.BeforeCommit = (_, _, count) => Interlocked.Add(ref inspections, count);
         var before = host.Node.Diagnostics.Cursor;
         var uri = new Uri(host.Address + path, new UriCreationOptions { DangerousDisablePathAndQueryCanonicalization = true });
         using var response = await host.Client.GetAsync(uri);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Equal("invalid", (await DiagnosticHost.Parse(response)).GetProperty("title").GetString());
         Assert.Equal(before, host.Node.Diagnostics.Cursor);
+        Assert.Equal(0, Volatile.Read(ref inspections));
         Assert.Empty((await host.Node.Inspection.InspectKeysAsync()).Entries);
+        Assert.Equal(1, Volatile.Read(ref inspections));
     }
 
     [Fact]
@@ -471,6 +564,20 @@ public sealed class DiagnosticHostTests
         Assert.Equal(["round", "proposer"], ballot.EnumerateObject().Select(property => property.Name));
         Assert.Equal(round, ballot.GetProperty("round").GetInt32());
         Assert.Equal(proposer, ballot.GetProperty("proposer").GetInt32());
+    }
+
+    private sealed class SnapshotCommitBarrier : IDisposable
+    {
+        private readonly TaskCompletionSource<int> _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly ManualResetEventSlim _released = new();
+        public Task<int> Entered => _entered.Task;
+        public void Arrive(int count)
+        {
+            _entered.SetResult(count);
+            if (!_released.Wait(Watchdog)) throw new TimeoutException("HTTP snapshot commit barrier was not released.");
+        }
+        public void Release() => _released.Set();
+        public void Dispose() => _released.Dispose();
     }
 }
 
