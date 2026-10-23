@@ -1,6 +1,7 @@
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
 using FastCASPaxos.Protocol;
+using System.Runtime.ExceptionServices;
 
 namespace FastCASPaxos.Server;
 
@@ -234,7 +235,14 @@ public sealed class DurabilityRepair
         token.ThrowIfCancellationRequested();
         if (!_slots[index].Wait(0)) return new(index, default!, new RegisterBusyException());
         var task = ExecuteAsync();
-        try { return await task.WaitAsync(_options.AttemptTimeout, _options.TimeProvider, token).ConfigureAwait(false); }
+        try
+        {
+            var result = await task.WaitAsync(_options.AttemptTimeout, _options.TimeProvider, token).ConfigureAwait(false);
+            if (index == _local && result.Error is { } error
+                && error is not TimeoutException && error is not RegisterBusyException)
+                ExceptionDispatchInfo.Capture(error).Throw();
+            return result;
+        }
         catch (TimeoutException error) { return new(index, default!, error); }
 
         async Task<PeerResult<T>> ExecuteAsync()
