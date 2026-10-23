@@ -110,7 +110,9 @@ public sealed class DurabilityRepair
                     }
                     var commitQuorum = candidate.Digest.AcceptedBallot.IsFastRoundBallot
                         ? (3 * _peers.Length + 3) / 4 : _peers.Length / 2 + 1;
-                    if (!divergent && matching >= commitQuorum && eligible >= TargetReplicas) continue;
+                    // Departure needs fresh protocol acknowledgements: readable digests may belong
+                    // to peers which have themselves sealed mutation admission for shutdown.
+                    if (!departing && !divergent && matching >= commitQuorum && eligible >= TargetReplicas) continue;
 
                     var seed = await InvokeAsync(candidate.Source,
                         peer => peer.Digests.FetchIfDifferentAsync(key, null, cancellationToken), cancellationToken).ConfigureAwait(false);
@@ -156,11 +158,14 @@ public sealed class DurabilityRepair
             {
                 token.ThrowIfCancellationRequested();
                 var request = engine.Outgoing ?? throw new InvalidOperationException("Repair has no protocol phase.");
+                var retryDelay = _options.RetryBackoff * (1 + _ballots.ProposerId % 7);
                 if (request.Prepare is { } prepare)
                 {
                     var responses = await Task.WhenAll(Enumerable.Range(0, _peers.Length).Select(index =>
                         InvokeAsync(index, peer => peer.Acceptor.PrepareAsync(key, prepare, token), token))).ConfigureAwait(false);
                     RecordErrors(responses, errors);
+                    if (responses.Count(r => r.Error is null && r.Value.IsPromised) <= _peers.Length / 2)
+                        retryDelay = _options.AttemptTimeout;
                     var conflict = responses.Where(r => r.Error is null && !r.Value.IsPromised)
                         .Select(r => r.Value.ConflictingBallot).DefaultIfEmpty(Ballot.Zero).Max();
                     if (!conflict.IsZero)
@@ -204,6 +209,7 @@ public sealed class DurabilityRepair
                     var conflict = responses.Where(r => r.Error is null && !r.Value.IsAccepted)
                         .Select(r => r.Value.ConflictingBallot).DefaultIfEmpty(Ballot.Zero).Max();
                     if (accepted > _peers.Length / 2 && eligible >= TargetReplicas && (departing || conflict.IsZero)) return;
+                    if (responses.Any(r => r.Error is not null)) retryDelay = _options.AttemptTimeout;
                     // The same classic proposal is safe to retry after a lost reply. A fresh recovery
                     // handles superseding writes when the required remote acknowledgements are missing.
                     if (engine.Completed || !conflict.IsZero)
@@ -213,7 +219,7 @@ public sealed class DurabilityRepair
                 }
                 if (ReferenceEquals(request, engine.Outgoing)) engine.HandleResponseTimeout(request.Round);
                 if (engine.Outgoing?.Prepare is not null)
-                    await Task.Delay(_options.RetryBackoff * (1 + _ballots.ProposerId % 7), _options.TimeProvider, token).ConfigureAwait(false);
+                    await Task.Delay(retryDelay, _options.TimeProvider, token).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)

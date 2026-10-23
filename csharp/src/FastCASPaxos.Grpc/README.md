@@ -275,10 +275,14 @@ each local key. The departing host's disk is excluded from this target.
 Simultaneous shutdowns, a target equal to membership size, a populated
 single-member cluster, or insufficient surviving peers can keep the barrier
 pending. The `StopAsync` cancellation token ends replication waiting promptly;
-ASP.NET's `HostOptions.ShutdownTimeout` supplies the normal host deadline
-(30 seconds by default). Configure the generic-host deadline for the deployment
+The `HostOptions:ShutdownTimeout` configuration setting supplies the normal host
+deadline (30 seconds by default). Configure this deadline for the deployment
 and retain node storage after an interrupted drain. Cancellation emits a warning
 and a `repair` cancellation event with the incomplete-durability outcome.
+`GET /v1/admin/repair` exposes `draining`, `shutdownComplete`, the target, and
+the timestamped latest observation while the HTTP listener remains available.
+The executable exits with code 0 after a completed barrier and code 1 after
+an interrupted barrier; deployments can distinguish an incomplete drain.
 
 After the barrier completes or is canceled, HTTP shuts down and the node
 disposes channels, proposer allocation, and SQLite in dependency order.

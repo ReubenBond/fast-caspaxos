@@ -215,6 +215,13 @@ This repository includes TLA+ and [Quint models](quint/README.md), plus a determ
 
 ## C# durable keyed acceptors
 
+Hosts periodically compare persisted SHA-256/accepted-ballot digests and repair
+divergent replicas through consensus. Graceful shutdown waits for each local
+key to reach its target replication factor on the remaining hosts, bounded by
+the shutdown cancellation token. See the
+[durability lifecycle guide](csharp/src/FastCASPaxos.Grpc/README.md#lifecycle-and-durable-operations)
+for repair staging, configuration, and storage migration.
+
 ### Run a local three-node cluster
 
 Install [Just](https://just.systems/) 1.44+ (1.59 tested), PowerShell 7 (`pwsh`),

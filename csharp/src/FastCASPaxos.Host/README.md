@@ -40,7 +40,7 @@ addresses and advertised addresses are independent deployment settings.
 For a local frontend at port 5173, set
 `FastCASPaxos__TrustedAdminOrigins__0=http://localhost:5173`. CORS permits this
 origin and the explicitly advertised peer HTTP origins. The named policy
-`FastCASPaxos.Admin` covers both admin and REST groups: GET/PUT, the
+`FastCASPaxos.Admin` covers both admin and REST groups: GET/PUT/POST, the
 `Content-Type`, `If-Match`, `If-None-Match`, `Last-Event-ID`, and `Authorization`
 request headers, and exposed `ETag`/`Location` response headers. Cross-origin
 credentials are disabled by default.
@@ -68,6 +68,8 @@ Sequences are decimal **strings**, preserving precision in JavaScript.
 | `GET /v1/admin/state?key=...` | One read-only local snapshot; `entry: null` means no persisted row. |
 | `GET /v1/admin/states?prefix=&after=&limit=100` | Local inventory including promise-only records. |
 | `GET /v1/admin/events` | `text/event-stream`, one host's observations. |
+| `GET /v1/admin/repair` | Node/boot identity, `draining`, `shutdownComplete`, `targetReplicas`, and nullable timestamped `lastRepair`. |
+| `POST /v1/admin/repair` | Stages coalesced durability passes across the configured hosts; 202 confirms staging, 503 identifies incomplete staging. |
 
 Snapshots use `Cache-Control: no-store`. SSE uses `no-store, no-transform`,
 `X-Accel-Buffering: no`, disabled server buffering, and a flush after each
@@ -166,7 +168,7 @@ type NodeEvent<T> = {
   bootId: string;
   sequence: string;
   timestamp: string;
-  kind: "protocol" | "operation" | "acceptor-state" | "storage" | "reset" | "heartbeat";
+  kind: "protocol" | "operation" | "acceptor-state" | "storage" | "repair" | "reset" | "heartbeat";
   data: T;
   id: string;
 };
@@ -184,6 +186,7 @@ observations advance it. Consumers use `addEventListener` for the named events.
 | `operation` | `operation` (`read`/`compare-exchange`/`list`), `operationId`, `key:KeyPreview` (list uses its prefix), `outcome`, nullable `isPresent`, `value:PayloadPreview`, `version` (Base64), and `error`. |
 | `acceptor-state` | `key:KeyPreview`, `promisedBallot`, `acceptedBallot`, nullable `acceptedValue:PayloadPreview` and `register:RegisterPreview`. A transition in a successfully committed local SQLite batch. |
 | `storage` | `status` (`ready`/`failed`/`stopped`), nullable exception-type `error`. |
+| `repair` | `state` (`staged`/`draining`/`running`/`complete`/`pending`/`cancelled`/`failed`), `departing`, `targetReplicas`, `examined`, `repaired`, `pending`, nullable diagnostic `error`, `timestamp`. |
 | `reset` | `reason`: `initial`, `invalid-cursor`, `restarted`, or `history-unavailable`. |
 | `heartbeat` | `storageStatus`: current local writer lifecycle status. |
 
@@ -200,6 +203,17 @@ it and `operationId` to remote observers via `fcp-node-bin`, `fcp-call`, and
 `fcp-operation` metadata. Peer identity comes from configured outgoing peers or
 incoming diagnostic metadata; callers without metadata have null incoming
 `peerId`. Every quorum API invocation gets a fresh operation id.
+
+Repair staging can be requested from any configured HTTP origin:
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:5004/v1/admin/repair
+```
+
+The command schedules work and returns promptly; `repair` events report the
+subsequent passes. Periodic scheduling, target replication, and graceful
+departure are described in the
+[durability lifecycle guide](../FastCASPaxos.Grpc/README.md#lifecycle-and-durable-operations).
 
 Operation outcomes are `established` (read), `completed` (listing), `applied`,
 `mismatch`, `unknown` (conditional write), or `fault`. An unknown result's
