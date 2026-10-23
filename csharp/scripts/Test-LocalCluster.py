@@ -4,6 +4,7 @@ import ctypes
 import json
 import os
 from pathlib import Path
+import random
 import re
 import signal
 import socket
@@ -43,16 +44,15 @@ def free_ports():
     for _ in range(100):
         sockets = []
         try:
-            first = socket.socket()
-            sockets.append(first)
-            first.bind(("127.0.0.1", 0))
-            base = first.getsockname()[1]
-            if base > 65530:
-                continue
-            for port in range(base + 1, base + 6):
+            # Keep listeners outside the OS ephemeral range used by readiness clients.
+            base = random.randrange(15000, 30000)
+            for port in range(base, base + 6):
                 current = socket.socket()
                 sockets.append(current)
+                if WINDOWS:
+                    current.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
                 current.bind(("127.0.0.1", port))
+                current.listen()
             return base
         except OSError:
             continue
