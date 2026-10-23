@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-23T21:10:00Z",
+  "title": "Design system: Fast CASPaxos administration",
+  "extensions": {
+    "motion": [
+      { "name": "control-feedback", "value": "background-color 120ms ease-out", "purpose": "Button state feedback when reduced motion is not requested." }
+    ],
+    "breakpoints": [
+      { "name": "compact-desktop", "value": "1000px" },
+      { "name": "stacked", "value": "680px" }
+    ],
+    "shadows": []
+  },
+  "components": [
+    {
+      "name": "Primary action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Conditional write and create actions.",
+      "html": "<button class=\"ds-primary\">Compare and swap</button>",
+      "css": ".ds-primary{font:600 14px system-ui;background:#1558bc;color:white;border:1px solid #1558bc;border-radius:5px;padding:7px 12px}.ds-primary:hover{background:#10489a}.ds-primary:focus-visible{outline:3px solid #2470d5;outline-offset:3px}.ds-primary:disabled{opacity:.55}"
+    },
+    {
+      "name": "Secondary action",
+      "kind": "button",
+      "description": "Explicit observation refresh and navigation.",
+      "html": "<button class=\"ds-secondary\">Read current value</button>",
+      "css": ".ds-secondary{font:600 14px system-ui;background:white;color:#26374f;border:1px solid #aab6c6;border-radius:5px;padding:7px 12px}.ds-secondary:hover{background:#eaf0f9}.ds-secondary:focus-visible{outline:3px solid #2470d5;outline-offset:3px}"
+    },
+    {
+      "name": "Search field",
+      "kind": "input",
+      "description": "Prefix and event filtering.",
+      "html": "<label class=\"ds-label\">Key prefix<input class=\"ds-input\" placeholder=\"Filter by prefix\"></label>",
+      "css": ".ds-label{display:block;color:#3e5069;font:600 12px system-ui}.ds-input{display:block;margin-top:4px;padding:7px 9px;border:1px solid #aab6c6;border-radius:5px;color:#223044;background:white;font:14px system-ui}.ds-input:focus-visible{outline:3px solid #2470d5;outline-offset:3px}"
+    },
+    {
+      "name": "Selected key",
+      "kind": "nav",
+      "description": "The active register in the master list.",
+      "html": "<button class=\"ds-key\" aria-current=\"true\">demo/config/feature-flags</button>",
+      "css": ".ds-key{background:#e9f1ff;color:#124b9b;border:1px solid #afcaee;border-radius:5px;padding:9px 8px;font:600 14px system-ui}.ds-key:hover{background:#dce7f6}.ds-key:focus-visible{outline:3px solid #2470d5;outline-offset:3px}"
+    },
+    {
+      "name": "Stream state",
+      "kind": "chip",
+      "description": "An observed connection state, labeled independently of storage.",
+      "html": "<span class=\"ds-state\">connected</span>",
+      "css": ".ds-state{display:inline-flex;background:#e6f4ed;color:#17603c;border-radius:4px;padding:2px 7px;font:600 11px system-ui}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The balanced workbench",
+    "overview": "The operator works with real keys, bytes, versions, and messages. Cool white surfaces and slate text separate tasks; blue identifies selection and primary actions.",
+    "keyCharacteristics": ["Dense operational evidence", "Explicit authority and uncertainty", "Task-preserving responsive layout"],
+    "rules": [],
+    "dos": ["Do retain established/local authority in labels.", "Do pair state color with readable state text.", "Do preserve drafts and conditional-write intent as observations change."],
+    "donts": []
+  }
+}
