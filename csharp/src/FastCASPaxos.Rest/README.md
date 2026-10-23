@@ -22,6 +22,9 @@ The [gRPC host guide](../FastCASPaxos.Grpc/README.md) covers durable files,
 fixed membership, proposer identities, shutdown, and a three-process example.
 `Run-Node.ps1` assigns gRPC ports `BasePort` through `BasePort+2` and REST
 ports `BasePort+3` through `BasePort+5` (defaults 5001-5003 and 5004-5006).
+The host's [administrative API](../FastCASPaxos.Host/README.md) advertises these
+origins and provides per-node SSE diagnostics. Its exact trusted-origin CORS
+policy also covers REST and exposes `ETag`/`Location` to browser clients.
 
 An embedding ASP.NET application registers its service and maps the route group:
 

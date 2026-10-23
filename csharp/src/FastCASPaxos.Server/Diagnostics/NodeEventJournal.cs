@@ -21,7 +21,7 @@ public sealed class NodeEventJournal : IDisposable
     private long _sequence;
     private bool _stopped;
     private StorageObservation _storage = new("starting");
-    private OperationObservation? _lastOperation;
+    private NodeEvent? _lastOperation;
 
     public NodeEventJournal(string nodeId, int capacity = 1024, TimeProvider? timeProvider = null)
     {
@@ -41,7 +41,7 @@ public sealed class NodeEventJournal : IDisposable
     public int Capacity => _events.Length;
     public string Cursor { get { lock (_gate) return Id(_sequence); } }
     public StorageObservation Storage { get { lock (_gate) return _storage; } }
-    public OperationObservation? LastOperation { get { lock (_gate) return _lastOperation; } }
+    public NodeEvent? LastOperation { get { lock (_gate) return _lastOperation; } }
 
     public void Publish(string kind, object data)
     {
@@ -49,9 +49,10 @@ public sealed class NodeEventJournal : IDisposable
         {
             if (_stopped) return;
             if (data is StorageObservation storage) _storage = storage;
-            if (data is OperationObservation operation) _lastOperation = operation;
             var sequence = ++_sequence;
-            _events[(sequence - 1) % _events.Length] = Event(sequence, kind, data);
+            var observation = Event(sequence, kind, data);
+            _events[(sequence - 1) % _events.Length] = observation;
+            if (data is OperationObservation) _lastOperation = observation;
             var changed = _changed;
             _changed = NewSignal();
             changed.TrySetResult();
@@ -118,6 +119,7 @@ public sealed class NodeEventJournal : IDisposable
         {
             _stopped = true;
             Array.Clear(_events);
+            _lastOperation = null;
             _changed.TrySetResult();
         }
     }

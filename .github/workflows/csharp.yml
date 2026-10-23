@@ -31,6 +31,6 @@ jobs:
         run: |
           dotnet build csharp/src/FastCASPaxos.Host/FastCASPaxos.Host.csproj --configuration Release --no-restore --verbosity minimal
           dotnet build csharp/samples/FastCASPaxos.Grpc.Smoke/FastCASPaxos.Grpc.Smoke.csproj --configuration Release --no-restore --verbosity minimal
-      - name: Three-process REST and gRPC smoke, outage, and restart
+      - name: Three-process REST, gRPC, and SSE smoke, outage, and restart
         shell: pwsh
         run: ./csharp/scripts/Test-GrpcCluster.ps1

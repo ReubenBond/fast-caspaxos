@@ -104,6 +104,19 @@ later pages; a key first accepted at or below the cursor appears on a subsequent
 scan. An accepted record is evidence about this acceptor; cluster-level register
 visibility and replicated enumeration are established by the register service.
 
+`ILocalAcceptorInspection.InspectAsync(key)` returns the persisted local row or
+null. `InspectKeysAsync(prefix, afterKey, limit)` uses the same ordering and
+pagination, including promise-only rows. Both execute read-only SQL on the
+provider's existing serialized queue. Administrative inspection therefore
+preserves protocol state while exposing each node's actual durable contents.
+
+An optional `NodeEventJournal` supplied to `OpenAsync` receives bounded
+immutable state observations after successful COMMIT and before replies are
+released. Rolled-back batches emit storage failure; exact retries and
+rejections preserve state. The journal keeps a disposable bounded history
+independent of subscriber speed. See the [SSE contract](../FastCASPaxos.Host/README.md)
+for snapshots, replay, and health semantics.
+
 ## Validation
 
 The solution includes `FastCASPaxos.Sqlite.Tests`, which exercises isolated real

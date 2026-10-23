@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 using FastCASPaxos.Server;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -15,8 +14,6 @@ public sealed record RegisterKeyList(IReadOnlyList<string> Keys, string? Continu
 
 public static class RegisterEndpoints
 {
-    private static readonly UTF8Encoding Utf8 = new(false, true);
-
     /// <summary>Maps the conditional register API using an application-owned IRegisterService.</summary>
     public static RouteGroupBuilder MapRegisterApi(
         this IEndpointRouteBuilder endpoints, string pattern = "/v1/registers", long? maxRequestBodyBytes = null)
@@ -69,8 +66,8 @@ public static class RegisterEndpoints
                 dispatched = true;
                 var page = await service.ListKeysAsync(
                     query.GetValueOrDefault("prefix", ""), query.GetValueOrDefault("after"), limit, context.RequestAborted);
-                foreach (var key in page.Keys) ValidateResponseText(key);
-                if (page.ContinuationKey is { } continuation) ValidateResponseText(continuation);
+                foreach (var key in page.Keys) HttpQuery.ValidateResponseText(key);
+                if (page.ContinuationKey is { } continuation) HttpQuery.ValidateResponseText(continuation);
                 return Results.Ok(new RegisterKeyList(page.Keys, page.ContinuationKey));
             }
 
@@ -209,62 +206,11 @@ public static class RegisterEndpoints
 
     private static Dictionary<string, string> ParseQuery(HttpRequest request, Operation operation)
     {
-        var result = new Dictionary<string, string>(StringComparer.Ordinal);
-        var raw = request.QueryString.Value;
-        if (string.IsNullOrEmpty(raw)) return result;
-        foreach (var pair in raw.AsSpan(1).ToString().Split('&'))
-        {
-            var separator = pair.IndexOf('=');
-            if (separator < 0) throw Invalid("Query parameters require name=value.");
-            var name = DecodeQueryComponent(pair[..separator]);
-            var value = DecodeQueryComponent(pair[(separator + 1)..]);
-            var allowed = operation == Operation.List ? name is "prefix" or "after" or "limit" : name == "key";
-            if (!allowed || !result.TryAdd(name, value))
-                throw Invalid("Query parameter names must be supported and appear once.");
-        }
-        return result;
-    }
-
-    private static string DecodeQueryComponent(string encoded)
-    {
         try
         {
-            var bytes = Utf8.GetBytes(encoded);
-            var length = 0;
-            for (var i = 0; i < bytes.Length; i++)
-            {
-                var value = bytes[i];
-                if (value == '%')
-                {
-                    if (i + 2 >= bytes.Length || Hex(bytes[i + 1]) < 0 || Hex(bytes[i + 2]) < 0)
-                        throw Invalid("Query parameters require valid percent-encoded UTF-8.");
-                    value = (byte)((Hex(bytes[i + 1]) << 4) | Hex(bytes[i + 2]));
-                    i += 2;
-                }
-                else if (value == '+') value = (byte)' ';
-                bytes[length++] = value;
-            }
-            return Utf8.GetString(bytes, 0, length);
+            return HttpQuery.Parse(request, operation == Operation.List ? ["prefix", "after", "limit"] : ["key"]);
         }
-        catch (EncoderFallbackException) { throw Invalid("Query parameters require well-formed Unicode."); }
-        catch (DecoderFallbackException) { throw Invalid("Query parameters require valid percent-encoded UTF-8."); }
-    }
-
-    private static int Hex(byte value) => value switch
-    {
-        >= (byte)'0' and <= (byte)'9' => value - '0',
-        >= (byte)'A' and <= (byte)'F' => value - 'A' + 10,
-        >= (byte)'a' and <= (byte)'f' => value - 'a' + 10,
-        _ => -1,
-    };
-
-    private static void ValidateResponseText(string value)
-    {
-        try { Utf8.GetByteCount(value); }
-        catch (EncoderFallbackException error)
-        {
-            throw new InvalidOperationException("A listed key cannot be represented as HTTP Unicode text.", error);
-        }
+        catch (ArgumentException error) { throw Invalid(error.Message); }
     }
 
     private static string ETag(ByteString version) => $"\"{Convert.ToBase64String(version.ToArray())}\"";

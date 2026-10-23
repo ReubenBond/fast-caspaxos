@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using FastCASPaxos.Model;
+using FastCASPaxos.Rest;
 using FastCASPaxos.Server;
 using FastCASPaxos.Server.Diagnostics;
 using Microsoft.AspNetCore.Http.Features;
@@ -11,14 +12,17 @@ namespace FastCASPaxos.Host;
 public sealed record AdminPeer(string Id, string GrpcEndpoint, string HttpEndpoint, string EventsUrl);
 public sealed record NodeStatus(
     int SchemaVersion, string NodeId, int ProposerId, string BootId, DateTimeOffset StartedAt,
-    string Cursor, IReadOnlyList<AdminPeer> Peers, StorageObservation Storage, OperationObservation? LastOperation,
+    string Cursor, IReadOnlyList<AdminPeer> Peers, StorageObservation Storage, NodeEvent? LastOperation,
     double HeartbeatMilliseconds, int HistoryCapacity);
 public sealed record LocalStateView(
     string Key, Ballot PromisedBallot, Ballot AcceptedBallot, PayloadPreview? AcceptedValue, RegisterPreview? Register)
 {
-    public static LocalStateView From(LocalAcceptorState state) => new(
-        state.Key, state.PromisedBallot, state.AcceptedBallot, PayloadPreview.From(state.AcceptedValue),
-        state.AcceptedValue is null ? null : RegisterPreview.FromAccepted(state.AcceptedValue));
+    public static LocalStateView From(LocalAcceptorState state)
+    {
+        HttpQuery.ValidateResponseText(state.Key);
+        return new(state.Key, state.PromisedBallot, state.AcceptedBallot, PayloadPreview.From(state.AcceptedValue),
+            state.AcceptedValue is null ? null : RegisterPreview.FromAccepted(state.AcceptedValue));
+    }
 }
 public sealed record StateSnapshot(
     int SchemaVersion, string NodeId, string BootId, string Cursor, DateTimeOffset Timestamp, LocalStateView? Entry);
@@ -93,6 +97,12 @@ public static class AdminEndpoints
         {
             return Results.Problem(statusCode: 499, title: "cancelled");
         }
+        catch (InvalidOperationException error) when (error.InnerException is System.Text.EncoderFallbackException)
+        {
+            logging.CreateLogger(typeof(AdminEndpoints)).LogError(error, "Local key cannot be represented as HTTP Unicode text.");
+            return Results.Problem(statusCode: 500, title: "invalid-text",
+                detail: "A local key cannot be represented as HTTP Unicode text; use the local inspection API.");
+        }
         catch (Exception error)
         {
             logging.CreateLogger(typeof(AdminEndpoints)).LogError(error, "Local acceptor inspection failed.");
@@ -146,16 +156,7 @@ public static class AdminEndpoints
     }
 
     private static Dictionary<string, string> Query(HttpContext context, string[] allowed)
-    {
-        var result = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var (name, values) in context.Request.Query)
-        {
-            if (!allowed.Contains(name, StringComparer.Ordinal) || values.Count != 1)
-                throw new ArgumentException("Query parameters must be supported and appear once.");
-            result.Add(name, values[0]!);
-        }
-        return result;
-    }
+        => HttpQuery.Parse(context.Request, allowed);
 
     private static JsonSerializerOptions CreateJsonOptions()
     {
