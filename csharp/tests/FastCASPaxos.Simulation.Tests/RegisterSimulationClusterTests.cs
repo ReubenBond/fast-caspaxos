@@ -471,4 +471,156 @@ public sealed class RegisterSimulationClusterTests
             await Assert.ThrowsAsync<ArgumentNullException>(() => client.ListKeysAsync(null!).AsTask());
         });
     }
+
+    [Fact]
+    public async Task ContextFreeConsumerWrappersCompleteOnSimulationThreadAndReplayFaultTrace()
+    {
+        async Task<(string[] Protocol, string[] Consumer)> Replay()
+        {
+            await using var cluster = new RegisterSimulationCluster(750);
+            var consumerTrace = new List<string>();
+            cluster.Run(async simulation =>
+            {
+                var scenarioContext = SynchronizationContext.Current;
+                var simulationThread = Environment.CurrentManagedThreadId;
+                void Observe(string stage)
+                {
+                    Assert.Equal(simulationThread, Environment.CurrentManagedThreadId);
+                    Assert.Null(SynchronizationContext.Current);
+                    Assert.Same(TaskScheduler.Default, TaskScheduler.Current);
+                    consumerTrace.Add($"{simulation.TimeProvider.GetTimestamp()} {stage}");
+                }
+
+                simulation.SetReplyDelay(1, TimeSpan.FromMilliseconds(25));
+                var adapter = new ContextFreeRegisterAdapter(simulation.CreateClient(), Observe);
+                var writes = Enumerable.Range(0, 8).Select(index =>
+                    adapter.ReadThenWriteAsync("race", new([(byte)index])).AsTask()).ToArray();
+                Assert.All(writes, write => Assert.False(write.IsCompleted));
+                await simulation.DelayAsync(TimeSpan.FromMilliseconds(10));
+                simulation.CrashNode(4);
+                simulation.CrashNode(5);
+                var results = await Task.WhenAll(writes);
+                Assert.Same(scenarioContext, SynchronizationContext.Current);
+                Assert.Equal(simulationThread, Environment.CurrentManagedThreadId);
+                var winner = Assert.Single(results, result => result.Status == CompareExchangeStatus.Applied);
+                Assert.Equal(7, results.Count(result => result.Status == CompareExchangeStatus.Mismatch));
+                Assert.Equal(new ByteString([(byte)Array.IndexOf(results, winner)]), winner.Current!.Value);
+
+                simulation.RestartNode(4);
+                simulation.RestartNode(5);
+                simulation.SetReplyLoss(1, true);
+                var lost = adapter.CompareExchangeAsync("lost", null, new([42])).AsTask();
+                var delayedRead = adapter.ReadAsync("race").AsTask();
+                await simulation.DelayAsync(TimeSpan.FromMilliseconds(50));
+                Assert.False(lost.IsCompleted);
+                Assert.False(delayedRead.IsCompleted);
+                var observer = new ContextFreeRegisterAdapter(simulation.CreateClient(2), Observe);
+                Assert.Equal(new ByteString([42]), (await observer.ReadAsync("lost")).Value);
+                var lostResult = await lost;
+                Assert.Equal(CompareExchangeStatus.Unknown, lostResult.Status);
+                Assert.IsType<RegisterUnavailableException>(lostResult.Error);
+                await Assert.ThrowsAsync<RegisterUnavailableException>(() => delayedRead);
+                simulation.Heal();
+                Assert.Equal(winner.Current, await adapter.ReadAsync("race"));
+                Assert.Same(scenarioContext, SynchronizationContext.Current);
+                Assert.Equal(simulationThread, Environment.CurrentManagedThreadId);
+            });
+            Assert.Equal(36, consumerTrace.Count);
+            return (cluster.Trace.ToArray(), consumerTrace.ToArray());
+        }
+
+        var expected = await Replay();
+        for (var iteration = 0; iteration < 5; iteration++)
+        {
+            var replay = await Replay();
+            Assert.Equal(expected.Protocol, replay.Protocol);
+            Assert.Equal(expected.Consumer, replay.Consumer);
+        }
+    }
+
+    [Fact]
+    public async Task ContextFreeConsumerWrappersPreserveCancellationAndExecutionContext()
+    {
+        await using var cluster = new RegisterSimulationCluster(751);
+        var logicalContext = new AsyncLocal<string?>();
+        cluster.Run(async simulation =>
+        {
+            var scenarioContext = SynchronizationContext.Current;
+            var simulationThread = Environment.CurrentManagedThreadId;
+            var observed = new List<string>();
+            Action<string> Probe(string expectedContext) => stage =>
+            {
+                Assert.Equal(simulationThread, Environment.CurrentManagedThreadId);
+                Assert.Null(SynchronizationContext.Current);
+                Assert.Equal(expectedContext, logicalContext.Value);
+                observed.Add($"{expectedContext}:{stage}");
+            };
+
+            simulation.SetReplyDelay(1, TimeSpan.FromMilliseconds(25));
+            using var cancellation = new CancellationTokenSource();
+            logicalContext.Value = "canceled-reader";
+            var canceled = new ContextFreeRegisterAdapter(simulation.CreateClient(), Probe("canceled-reader"))
+                .ReadAsync("key", cancellation.Token).AsTask();
+            logicalContext.Value = "inventory-reader";
+            var inventory = new ContextFreeRegisterAdapter(simulation.CreateClient(), Probe("inventory-reader"))
+                .ListKeysAsync().AsTask();
+            logicalContext.Value = "scenario";
+
+            await simulation.DelayAsync(TimeSpan.FromMilliseconds(1));
+            Assert.False(canceled.IsCompleted);
+            Assert.False(inventory.IsCompleted);
+            cancellation.Cancel();
+            var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceled);
+            Assert.Equal(cancellation.Token, error.CancellationToken);
+            var page = await inventory;
+            Assert.Empty(page.Keys);
+            Assert.Null(page.ContinuationKey);
+            Assert.Equal(new[] { "canceled-reader:adapter-read", "inventory-reader:adapter-list" }, observed);
+            Assert.Equal("scenario", logicalContext.Value);
+            Assert.Same(scenarioContext, SynchronizationContext.Current);
+            Assert.Equal(simulationThread, Environment.CurrentManagedThreadId);
+        });
+    }
+
+    // Production-shaped wrappers: each returns an async ValueTask and opts out of
+    // context capture. The second layer awaits Task-backed async wrapper completion,
+    // not just the fixture's direct ValueTask, before issuing another register call.
+    private sealed class ContextFreeRegisterAdapter(IRegisterService register, Action<string> observe)
+    {
+        public async ValueTask<RegisterValue> ReadAsync(string key, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                return await register.ReadAsync(key, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                observe("adapter-read");
+            }
+        }
+
+        public async ValueTask<RegisterKeyPage> ListKeysAsync()
+        {
+            var result = await register.ListKeysAsync().ConfigureAwait(false);
+            observe("adapter-list");
+            return result;
+        }
+
+        public async ValueTask<CompareExchangeResult> CompareExchangeAsync(
+            string key, ByteString? expected, ByteString value)
+        {
+            var result = await register.CompareExchangeAsync(key, expected, value).ConfigureAwait(false);
+            observe("adapter-write");
+            return result;
+        }
+
+        public async ValueTask<CompareExchangeResult> ReadThenWriteAsync(string key, ByteString value)
+        {
+            var previous = await ReadAsync(key).ConfigureAwait(false);
+            observe("outer-read");
+            var result = await CompareExchangeAsync(key, previous.Version, value).ConfigureAwait(false);
+            observe("outer-write");
+            return result;
+        }
+    }
 }

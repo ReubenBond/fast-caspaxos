@@ -58,10 +58,46 @@ cluster.Run(async simulation =>
   fault controls. Retain the scenario together with its seed for replay.
 - Dispose outside `Run` using `await using`, after awaiting every scenario task.
 
-Consumer awaits must capture the simulation context. Use fixture operations
-and virtual-time delays throughout the simulated path. `Task.Run`, wall-clock
-delays, external I/O, and `ConfigureAwait(false)` escape this scheduling boundary;
-`Run` reports stalled or escaped work with reproduction diagnostics.
+### Production adapters and `ConfigureAwait(false)`
+
+**Production wrappers may keep `ConfigureAwait(false)` on `IRegisterService`
+operations**, including layered async `ValueTask`/Task-backed wrappers:
+
+```csharp
+async ValueTask<RegisterValue> ReadForApplicationAsync(IRegisterService service, string key)
+    => await service.ReadAsync(key).ConfigureAwait(false);
+
+cluster.Run(async simulation =>
+{
+    // Scenario awaits retain Clockwork's context.
+    var value = await ReadForApplicationAsync(simulation.CreateClient(), "key");
+    await simulation.DelayAsync(TimeSpan.FromMilliseconds(10));
+});
+```
+
+The shared fixture returns a private `IValueTaskSource` bridge. Internal protocol
+awaits always capture Clockwork. A context-free consumer continuation runs inline
+on the same simulation thread with `SynchronizationContext.Current` temporarily
+null. This also allows subsequent Task-backed wrapper completions to inline their
+context-free continuations instead of dispatching to the thread pool. Register
+calls made by those continuations re-enter Clockwork internally; ordinary scenario
+awaits are posted back to its context. ExecutionContext/AsyncLocal values and
+cancellation flow normally. There is no wall-clock wait or thread-pool pump.
+
+Keep the **test scenario's** awaits context-capturing, including virtual delays.
+The bridge covers register-operation completions, not arbitrary asynchronous
+dependencies. `Task.Run`, wall-clock delays, external I/O, or context-free awaits
+on unrelated Task-based primitives are not made deterministic by supplying a
+TimeProvider. Use deterministic substitutes for those separate dependencies.
+`Run` still reports stalled or escaped work with reproduction diagnostics.
+
+`ContextFreeConsumerWrappersCompleteOnSimulationThreadAndReplayFaultTrace`
+exercises direct and layered false-await wrappers, eight overlapping read/CAS
+pairs, delayed replies, two crashed/restarted members, lost replies, timeout and
+healing. Six runs assert identical protocol and consumer-continuation traces,
+same-thread execution, null consumer contexts, and restored scenario context.
+`ContextFreeConsumerWrappersPreserveCancellationAndExecutionContext` additionally
+checks cancellation tokens, independent AsyncLocal values and inventory reads.
 
 ## Evidence boundaries
 
