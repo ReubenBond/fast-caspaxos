@@ -12,10 +12,10 @@ public sealed class GrpcKeyedAcceptor : IKeyedAcceptor
     private readonly Wire.Acceptor.AcceptorClient _client;
     private readonly ClientCalls _calls;
 
-    public GrpcKeyedAcceptor(CallInvoker callInvoker, TimeSpan? callTimeout = null)
+    public GrpcKeyedAcceptor(CallInvoker callInvoker, TimeSpan? callTimeout = null, TimeProvider? timeProvider = null)
     {
         _client = new(callInvoker);
-        _calls = new(callTimeout);
+        _calls = new(callTimeout, timeProvider ?? TimeProvider.System);
     }
 
     public async ValueTask<AcceptorPrepareResult<ByteString?>> PrepareAsync(

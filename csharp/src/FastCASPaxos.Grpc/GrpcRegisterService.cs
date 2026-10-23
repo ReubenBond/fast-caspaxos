@@ -9,10 +9,10 @@ public sealed class GrpcRegisterService : IRegisterService
     private readonly Wire.Register.RegisterClient _client;
     private readonly ClientCalls _calls;
 
-    public GrpcRegisterService(CallInvoker callInvoker, TimeSpan? callTimeout = null)
+    public GrpcRegisterService(CallInvoker callInvoker, TimeSpan? callTimeout = null, TimeProvider? timeProvider = null)
     {
         _client = new(callInvoker);
-        _calls = new(callTimeout);
+        _calls = new(callTimeout, timeProvider ?? TimeProvider.System);
     }
 
     public async ValueTask<RegisterValue> ReadAsync(string key, CancellationToken cancellationToken = default)

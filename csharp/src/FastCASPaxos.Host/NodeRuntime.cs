@@ -46,7 +46,7 @@ public sealed class NodeRuntime : IAsyncDisposable
                         MaxSendMessageSize = options.MaxSendMessageBytes,
                     });
                     runtime._channels.Add(channel);
-                    acceptor = new GrpcKeyedAcceptor(channel.CreateCallInvoker(), options.PeerCallTimeout);
+                    acceptor = new GrpcKeyedAcceptor(channel.CreateCallInvoker(), options.PeerCallTimeout, TimeProvider.System);
                 }
                 peers.Add(new AcceptorPeer(peer.Id, acceptor));
             }
