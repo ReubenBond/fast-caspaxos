@@ -3,10 +3,39 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <BuildAdminConsole Condition="'$(BuildAdminConsole)' == ''">true</BuildAdminConsole>
+    <AdminRoot>$(MSBuildProjectDirectory)\..\..\..\admin</AdminRoot>
   </PropertyGroup>
   <ItemGroup>
+    <AdminSource Include="$(AdminRoot)\src\**\*" />
     <ProjectReference Include="..\FastCASPaxos.Grpc\FastCASPaxos.Grpc.csproj" />
     <ProjectReference Include="..\FastCASPaxos.Rest\FastCASPaxos.Rest.csproj" />
     <ProjectReference Include="..\FastCASPaxos.Sqlite\FastCASPaxos.Sqlite.csproj" />
   </ItemGroup>
+  <Target Name="RestoreAdminDependencies" Condition="'$(BuildAdminConsole)' == 'true'"
+          Inputs="$(AdminRoot)\package-lock.json" Outputs="$(AdminRoot)\node_modules\.package-lock.json">
+    <Exec WorkingDirectory="$(AdminRoot)" Command="npm ci --no-audit --no-fund" />
+  </Target>
+  <Target Name="BuildAdminAssets" BeforeTargets="PrepareForBuild" DependsOnTargets="RestoreAdminDependencies"
+          Condition="'$(BuildAdminConsole)' == 'true'"
+          Inputs="$(AdminRoot)\package-lock.json;$(AdminRoot)\index.html;$(AdminRoot)\tsconfig.json;$(AdminRoot)\vite.config.ts;@(AdminSource)"
+          Outputs="$(AdminRoot)\dist\index.html">
+    <Exec WorkingDirectory="$(AdminRoot)" Command="npm run build" />
+  </Target>
+  <Target Name="CopyAdminAssets" AfterTargets="Build" Condition="'$(BuildAdminConsole)' == 'true'">
+    <ItemGroup>
+      <AdminAsset Include="$(AdminRoot)\dist\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(AdminAsset)" DestinationFiles="@(AdminAsset->'$(OutDir)wwwroot\admin\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="PublishAdminAssets" AfterTargets="ComputeFilesToPublish" Condition="'$(BuildAdminConsole)' == 'true'">
+    <ItemGroup>
+      <AdminPublishAsset Include="$(AdminRoot)\dist\**\*" />
+      <ResolvedFileToPublish Include="@(AdminPublishAsset)">
+        <RelativePath>wwwroot\admin\%(AdminPublishAsset.RecursiveDir)%(AdminPublishAsset.Filename)%(AdminPublishAsset.Extension)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
 </Project>

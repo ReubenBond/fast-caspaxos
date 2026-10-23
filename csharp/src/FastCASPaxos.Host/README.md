@@ -7,6 +7,11 @@ conditional writes use the [quorum REST API](../FastCASPaxos.Rest/README.md).
 The [host deployment guide](../FastCASPaxos.Grpc/README.md) covers listeners,
 durable identities, TLS, and startup.
 
+The [React administration console](../../../admin/README.md) is served at `/admin/`
+by the normal host build and publish path. Its workbench combines conditional
+register editing with direct per-node streams, local snapshots, and message
+diagnostics. Building the host with console assets requires Node.js 24+ and npm.
+
 ## Configuration and access
 
 Every member in the authoritative `FastCASPaxos:Peers` array has:

@@ -1,0 +1,39 @@
+name: Administration console
+
+on:
+  push:
+    paths: ['admin/**', 'csharp/**', '.github/workflows/admin.yml']
+  pull_request:
+    paths: ['admin/**', 'csharp/**', '.github/workflows/admin.yml']
+  workflow_dispatch:
+
+jobs:
+  admin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: admin/package-lock.json
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: npm ci --no-audit --no-fund
+        working-directory: admin
+      - run: npm test
+        working-directory: admin
+      - run: dotnet publish csharp/src/FastCASPaxos.Host/FastCASPaxos.Host.csproj -c Release --verbosity minimal
+      - run: npx playwright install --with-deps chromium
+        working-directory: admin
+      - run: npm run test:browser
+        working-directory: admin
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: admin-browser-evidence
+          path: |
+            admin/test-results/
+            admin/playwright-report/

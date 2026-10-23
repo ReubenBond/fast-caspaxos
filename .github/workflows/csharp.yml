@@ -21,6 +21,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - name: Test
         run: dotnet test csharp/FastCASPaxos.slnx --configuration Release --verbosity minimal
       - name: Build .NET 8 transport

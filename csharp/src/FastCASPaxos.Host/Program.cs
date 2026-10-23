@@ -33,5 +33,6 @@ app.MapGrpcService<AcceptorGrpcService>();
 app.MapGrpcService<RegisterGrpcService>();
 app.MapRegisterApi(maxRequestBodyBytes: options.MaxRequestBodyBytes).RequireCors(AdminEndpoints.CorsPolicy);
 app.MapAdminApi(node);
+app.MapAdminConsole();
 app.MapGet("/health/live", () => Results.Text("Serving register requests."));
 await app.RunAsync();
