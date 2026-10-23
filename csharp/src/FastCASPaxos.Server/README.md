@@ -164,12 +164,15 @@ Peers accepting protocol traffic can satisfy the target; peers already draining
 their own shutdown keep their readable inventory but reject new protocol work.
 Its caller seals external mutation admission
 and drains admitted work first, establishing the departure scan's finite key set.
+Departure pagination follows that local set, so continuing inserts on other
+members leave the departure scan's endpoint unchanged.
 Each key is established independently; ongoing cluster writes use the same
 consensus guarantees as application operations.
 
 Pages bound inventory memory. One outstanding call slot per peer bounds retained
 work even when a transport ignores cancellation; per-attempt and per-key deadlines
-bound waiting. Cancellation ends the scan promptly. Endpoint implementations
+bound waiting. Attempt completion or timeout cancels its outstanding transport
+call so cooperative peers release their call slots. Cancellation ends the scan promptly. Endpoint implementations
 complete any already selected durable transaction according to their storage
 contract. Local storage and integrity failures retain their original exceptions;
 timeouts and capacity exhaustion are reported as temporary unavailability.

@@ -63,8 +63,8 @@ public sealed class DurabilityRepair
             do
             {
                 var pages = await Task.WhenAll(Enumerable.Range(0, _peers.Length).Select(index =>
-                    InvokeAsync(index, peer => peer.Digests.ListDigestsAsync(
-                        afterKey: cursor, limit: _options.PageSize, cancellationToken: cancellationToken), cancellationToken)))
+                    InvokeAsync(index, (peer, token) => peer.Digests.ListDigestsAsync(
+                        afterKey: cursor, limit: _options.PageSize, cancellationToken: token), cancellationToken)))
                     .ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
                 RecordErrors(pages, errors);
@@ -73,6 +73,8 @@ public sealed class DurabilityRepair
                 string? frontier = null;
                 foreach (var page in pages)
                 {
+                    // Departure follows the sealed local key set while other members keep accepting keys.
+                    if (departing && page.Index != _local) continue;
                     if (page.Value?.ContinuationKey is { } next
                         && (frontier is null || StringComparer.Ordinal.Compare(next, frontier) < 0))
                         frontier = next;
@@ -116,7 +118,7 @@ public sealed class DurabilityRepair
                     if (!departing && !divergent && matching >= commitQuorum && eligible >= TargetReplicas) continue;
 
                     var seed = await InvokeAsync(candidate.Source,
-                        peer => peer.Digests.FetchIfDifferentAsync(key, null, cancellationToken), cancellationToken).ConfigureAwait(false);
+                        (peer, token) => peer.Digests.FetchIfDifferentAsync(key, null, token), cancellationToken).ConfigureAwait(false);
                     if (seed.Error is { } seedError)
                     {
                         errors[candidate.Source] = seedError;
@@ -163,7 +165,7 @@ public sealed class DurabilityRepair
                 if (request.Prepare is { } prepare)
                 {
                     var responses = await Task.WhenAll(Enumerable.Range(0, _peers.Length).Select(index =>
-                        InvokeAsync(index, peer => peer.Acceptor.PrepareAsync(key, prepare, token), token))).ConfigureAwait(false);
+                        InvokeAsync(index, (peer, attempt) => peer.Acceptor.PrepareAsync(key, prepare, attempt), token))).ConfigureAwait(false);
                     RecordErrors(responses, errors);
                     if (responses.Count(r => r.Error is null && r.Value.IsPromised) <= _peers.Length / 2)
                         retryDelay = _options.AttemptTimeout;
@@ -191,7 +193,7 @@ public sealed class DurabilityRepair
                 {
                     var accept = request.Accept!.Value;
                     var responses = await Task.WhenAll(Enumerable.Range(0, _peers.Length).Select(index =>
-                        InvokeAsync(index, peer => peer.Acceptor.AcceptAsync(key, accept, token), token))).ConfigureAwait(false);
+                        InvokeAsync(index, (peer, attempt) => peer.Acceptor.AcceptAsync(key, accept, attempt), token))).ConfigureAwait(false);
                     RecordErrors(responses, errors);
                     var eligible = 0;
                     var accepted = 0;
@@ -230,10 +232,11 @@ public sealed class DurabilityRepair
     }
 
     private async Task<PeerResult<T>> InvokeAsync<T>(int index,
-        Func<RepairPeer, ValueTask<T>> operation, CancellationToken token)
+        Func<RepairPeer, CancellationToken, ValueTask<T>> operation, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         if (!_slots[index].Wait(0)) return new(index, default!, new RegisterBusyException());
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(token);
         var task = ExecuteAsync();
         try
         {
@@ -244,10 +247,11 @@ public sealed class DurabilityRepair
             return result;
         }
         catch (TimeoutException error) { return new(index, default!, error); }
+        finally { attempt.Cancel(); }
 
         async Task<PeerResult<T>> ExecuteAsync()
         {
-            try { return new(index, await operation(_peers[index]).ConfigureAwait(false), null); }
+            try { return new(index, await operation(_peers[index], attempt.Token).ConfigureAwait(false), null); }
             catch (Exception error) { return new(index, default!, error); }
             finally { _slots[index].Release(); }
         }
