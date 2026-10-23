@@ -34,6 +34,10 @@ public sealed class NodeOptions
     public int EventHistoryCapacity { get; set; } = 1024;
     public int MaxEventStreams { get; set; } = 64;
     public TimeSpan HeartbeatInterval { get; set; } = TimeSpan.FromSeconds(15);
+    public int TargetReplicationFactor { get; set; }
+    public int RepairPageSize { get; set; } = 128;
+    public TimeSpan RepairInterval { get; set; } = TimeSpan.FromMinutes(1);
+    public TimeSpan RepairRetryInterval { get; set; } = TimeSpan.FromSeconds(1);
 
     public void Validate()
     {
@@ -61,6 +65,10 @@ public sealed class NodeOptions
         ValidateDuration(AttemptTimeout, nameof(AttemptTimeout));
         ValidateDuration(RetryBackoff, nameof(RetryBackoff));
         ValidateDuration(PeerCallTimeout, nameof(PeerCallTimeout));
+        ArgumentOutOfRangeException.ThrowIfNegative(TargetReplicationFactor);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(RepairPageSize);
+        ValidateDuration(RepairInterval, nameof(RepairInterval));
+        ValidateDuration(RepairRetryInterval, nameof(RepairRetryInterval));
         ProposerModePolicy.Parse(Mode).Validate();
         ArgumentNullException.ThrowIfNull(Peers);
         var ids = new HashSet<string>(StringComparer.Ordinal);
@@ -83,6 +91,8 @@ public sealed class NodeOptions
         }
         if (!ids.Contains(AcceptorId))
             throw new ArgumentException("The fixed peer set must contain this node's acceptor id exactly once.");
+        if (TargetReplicationFactor > Peers.Count)
+            throw new ArgumentOutOfRangeException(nameof(TargetReplicationFactor), "The target must fit the fixed membership.");
     }
 
     internal static Uri ValidateHttpOrigin(string origin)

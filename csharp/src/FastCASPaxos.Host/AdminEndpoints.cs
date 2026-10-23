@@ -42,7 +42,7 @@ public static class AdminEndpoints
             .Select(origin => NodeOptions.ValidateHttpOrigin(origin).GetLeftPart(UriPartial.Authority))
             .Distinct(StringComparer.Ordinal).ToArray();
         services.AddCors(cors => cors.AddPolicy(CorsPolicy, policy => policy
-            .WithOrigins(origins).WithMethods("GET", "PUT")
+            .WithOrigins(origins).WithMethods("GET", "PUT", "POST")
             .WithHeaders("Content-Type", "If-Match", "If-None-Match", "Last-Event-ID", "Authorization")
             .WithExposedHeaders("ETag", "Location")));
         return services;
@@ -64,6 +64,24 @@ public static class AdminEndpoints
         group.MapGet("/states", (HttpContext context, ILoggerFactory logging) => StateAsync(context, node, logging, true));
         group.MapGet("/events", (HttpContext context, IHostApplicationLifetime lifetime, ILoggerFactory logging) =>
             EventsAsync(context, node, lifetime, logging));
+        group.MapPost("/repair", async (HttpContext context, ILoggerFactory logging) =>
+        {
+            try
+            {
+                await node.StageClusterRepairAsync(context.RequestAborted);
+                return Results.Accepted(value: new { state = "staged", targetReplicas = node.Repair.TargetReplicas });
+            }
+            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+            {
+                return Results.Problem(statusCode: 499, title: "cancelled");
+            }
+            catch (Exception error)
+            {
+                logging.CreateLogger(typeof(AdminEndpoints)).LogWarning(error, "Cluster repair was only partially staged.");
+                return Results.Problem(statusCode: 503, title: "repair-partially-staged",
+                    detail: "Reachable nodes retain their staged repair. Retry to contact remaining peers.");
+            }
+        });
         return group;
     }
 

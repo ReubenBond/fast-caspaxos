@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Runtime.ExceptionServices;
+using System.Security.Cryptography;
 using System.Threading.Channels;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
@@ -11,7 +12,7 @@ using Microsoft.Data.Sqlite;
 namespace FastCASPaxos.Sqlite;
 
 /// <summary>A file-backed keyed acceptor with a bounded, dedicated SQLite writer.</summary>
-public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspection, IAsyncDisposable
+public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspection, IAcceptorDigestSource, IAsyncDisposable
 {
     private const int ApplicationId = 0x46435058;
     private readonly Channel<WorkItem> _queue;
@@ -155,6 +156,68 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
             }
 
             return new KeyPage(entries.AsReadOnly(), null);
+        }, cancellationToken);
+    }
+
+    public ValueTask<AcceptorDigestPage> ListDigestsAsync(
+        string prefix = "", string? afterKey = null, int limit = 100, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(prefix);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
+        return Enqueue((connection, transaction) =>
+        {
+            var encodedPrefix = EncodeKey(prefix);
+            var prefixEnd = GetPrefixEnd(encodedPrefix);
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT key, accepted_round, accepted_proposer, value_hash
+                FROM acceptor_state WHERE accepted_round IS NOT NULL AND key >= $prefix
+                """ + (prefixEnd is null ? "" : " AND key < $end")
+                + (afterKey is null ? "" : " AND key > $after") + " ORDER BY key LIMIT $limit;";
+            command.Parameters.AddWithValue("$prefix", encodedPrefix);
+            if (prefixEnd is not null) command.Parameters.AddWithValue("$end", prefixEnd);
+            if (afterKey is not null) command.Parameters.AddWithValue("$after", EncodeKey(afterKey));
+            command.Parameters.AddWithValue("$limit", (long)limit + 1);
+            using var reader = command.ExecuteReader();
+            var entries = new List<KeyDigest>();
+            while (reader.Read())
+            {
+                if (entries.Count == limit) return new AcceptorDigestPage(entries.AsReadOnly(), entries[^1].Key);
+                entries.Add(new(DecodeKey(reader.GetFieldValue<byte[]>(0)),
+                    new(new(reader.GetInt32(1), reader.GetInt32(2)), new(reader.GetFieldValue<byte[]>(3)))));
+            }
+            return new AcceptorDigestPage(entries.AsReadOnly(), null);
+        }, cancellationToken);
+    }
+
+    public ValueTask<ConditionalAcceptorState> FetchIfDifferentAsync(
+        string key, AcceptedDigest? known, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        known?.Validate();
+        return Enqueue((connection, transaction) =>
+        {
+            var encodedKey = EncodeKey(key);
+            AcceptedDigest digest;
+            using (var command = connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandText = """
+                    SELECT accepted_round, accepted_proposer, value_hash FROM acceptor_state
+                    WHERE key = $key AND accepted_round IS NOT NULL;
+                    """;
+                command.Parameters.AddWithValue("$key", encodedKey);
+                using var reader = command.ExecuteReader();
+                if (!reader.Read()) return new ConditionalAcceptorState(ConditionalAcceptorStatus.Missing);
+                digest = new(new(reader.GetInt32(0), reader.GetInt32(1)), new(reader.GetFieldValue<byte[]>(2)));
+                if (digest == known) return new ConditionalAcceptorState(ConditionalAcceptorStatus.Unchanged);
+            }
+            var state = Load(connection, transaction, encodedKey, out _);
+            if (state.AcceptedValue is not { } value || !AcceptedDigest.Hash(value).Equals(digest.ValueHash))
+                throw new InvalidDataException("Accepted bytes do not match their persisted SHA-256.");
+            return new ConditionalAcceptorState(ConditionalAcceptorStatus.Different,
+                new(key, state.PromisedBallot, state.AcceptedBallot, value));
         }, cancellationToken);
     }
 
@@ -357,18 +420,24 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         var applicationId = Convert.ToInt32(command.ExecuteScalar());
         command.CommandText = "PRAGMA user_version;";
         var schemaVersion = Convert.ToInt32(command.ExecuteScalar());
-        if (applicationId == ApplicationId && schemaVersion == 1)
+        if (applicationId == ApplicationId && schemaVersion == 2)
         {
             transaction.Commit();
             return;
         }
 
+        var migrate = applicationId == ApplicationId && schemaVersion == 1;
         command.CommandText = "SELECT count(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%';";
-        if (applicationId != 0 || schemaVersion != 0 || Convert.ToInt64(command.ExecuteScalar()) != 0)
+        if (!migrate && (applicationId != 0 || schemaVersion != 0 || Convert.ToInt64(command.ExecuteScalar()) != 0))
         {
             throw new InvalidDataException("The file is not a supported FastCASPaxos acceptor database.");
         }
 
+        if (migrate)
+        {
+            command.CommandText = "ALTER TABLE acceptor_state RENAME TO acceptor_state_v1;";
+            command.ExecuteNonQuery();
+        }
         command.CommandText = """
             CREATE TABLE acceptor_state (
                 key BLOB PRIMARY KEY CHECK (length(key) % 2 = 0),
@@ -377,11 +446,24 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
                 accepted_round INTEGER CHECK (accepted_round BETWEEN 1 AND 2147483647),
                 accepted_proposer INTEGER CHECK (accepted_proposer BETWEEN 0 AND 2147483647),
                 value BLOB,
-                CHECK ((accepted_round IS NULL AND accepted_proposer IS NULL AND value IS NULL)
-                    OR (accepted_round IS NOT NULL AND accepted_proposer IS NOT NULL AND value IS NOT NULL))
+                value_hash BLOB CHECK (value_hash IS NULL OR length(value_hash) = 32),
+                CHECK ((accepted_round IS NULL AND accepted_proposer IS NULL AND value IS NULL AND value_hash IS NULL)
+                    OR (accepted_round IS NOT NULL AND accepted_proposer IS NOT NULL AND value IS NOT NULL AND value_hash IS NOT NULL))
             ) STRICT, WITHOUT ROWID;
-            """ + $"PRAGMA application_id={ApplicationId}; PRAGMA user_version=1;";
+            """ + $"PRAGMA application_id={ApplicationId}; PRAGMA user_version=2;";
         command.ExecuteNonQuery();
+        if (migrate)
+        {
+            connection.CreateFunction<byte[]?, byte[]?>("fastcaspaxos_sha256",
+                value => value is null ? null : SHA256.HashData(value), isDeterministic: true);
+            command.CommandText = """
+                INSERT INTO acceptor_state
+                SELECT key, promised_round, promised_proposer, accepted_round, accepted_proposer, value,
+                    fastcaspaxos_sha256(value) FROM acceptor_state_v1;
+                DROP TABLE acceptor_state_v1;
+                """;
+            command.ExecuteNonQuery();
+        }
         transaction.Commit();
     }
 
@@ -423,20 +505,34 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
 
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
+        if (exists && original.AcceptedBallot == state.AcceptedBallot
+            && Equals(original.AcceptedValue, state.AcceptedValue))
+        {
+            command.CommandText = """
+                UPDATE acceptor_state SET promised_round=$pr, promised_proposer=$pp WHERE key=$key;
+                """;
+            command.Parameters.AddWithValue("$key", key);
+            command.Parameters.AddWithValue("$pr", state.PromisedBallot.Round);
+            command.Parameters.AddWithValue("$pp", state.PromisedBallot.Proposer);
+            command.ExecuteNonQuery();
+            return true;
+        }
+        var value = state.AcceptedValue?.ToArray();
         command.CommandText = """
-            INSERT INTO acceptor_state (key, promised_round, promised_proposer, accepted_round, accepted_proposer, value)
-            VALUES ($key, $pr, $pp, $ar, $ap, $value)
+            INSERT INTO acceptor_state (key, promised_round, promised_proposer, accepted_round, accepted_proposer, value, value_hash)
+            VALUES ($key, $pr, $pp, $ar, $ap, $value, $hash)
             ON CONFLICT(key) DO UPDATE SET
                 promised_round = excluded.promised_round, promised_proposer = excluded.promised_proposer,
                 accepted_round = excluded.accepted_round, accepted_proposer = excluded.accepted_proposer,
-                value = excluded.value;
+                value = excluded.value, value_hash = excluded.value_hash;
             """;
         command.Parameters.AddWithValue("$key", key);
         command.Parameters.AddWithValue("$pr", state.PromisedBallot.Round);
         command.Parameters.AddWithValue("$pp", state.PromisedBallot.Proposer);
         command.Parameters.AddWithValue("$ar", state.AcceptedBallot.IsZero ? DBNull.Value : state.AcceptedBallot.Round);
         command.Parameters.AddWithValue("$ap", state.AcceptedBallot.IsZero ? DBNull.Value : state.AcceptedBallot.Proposer);
-        command.Parameters.AddWithValue("$value", state.AcceptedValue is null ? DBNull.Value : state.AcceptedValue.ToArray());
+        command.Parameters.AddWithValue("$value", value is null ? DBNull.Value : value);
+        command.Parameters.AddWithValue("$hash", value is null ? DBNull.Value : SHA256.HashData(value));
         command.ExecuteNonQuery();
         return true;
     }
