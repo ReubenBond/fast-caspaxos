@@ -1,0 +1,90 @@
+name: Quint
+
+on:
+  push:
+    paths:
+      - 'quint/**'
+      - '.github/workflows/quint.yml'
+  pull_request:
+    paths:
+      - 'quint/**'
+      - '.github/workflows/quint.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  simulate:
+    name: Scenarios and simulation (${{ matrix.model }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [FastCASPaxosSmall, FastCASPaxosEven, FastCASPaxosMC]
+    defaults:
+      run:
+        working-directory: quint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Quint
+        run: npm install --global @informalsystems/quint@0.33.0
+      - name: Typecheck
+        run: |
+          quint typecheck FastCASPaxosMC.qnt
+          quint typecheck FastCASPaxosTests.qnt
+      - name: Protocol scenarios and negative control
+        if: matrix.model == 'FastCASPaxosMC'
+        run: |
+          quint test FastCASPaxosTests.qnt --main FastCASPaxosTests --max-samples 1 --seed 1
+          quint test FastCASPaxosTests.qnt --main FastCASPaxosNegativeTests --max-samples 1 --seed 1
+      - name: Seeded safety simulations
+        run: |
+          for seed in 17 20261023; do
+            quint run FastCASPaxosMC.qnt --main "${{ matrix.model }}" \
+              --invariant safety --max-samples 2500 --max-steps 60 \
+              --n-threads 2 --seed "$seed" --verbosity 1 \
+              --witnesses fastCommit classicCommit chainedCommit fastCollision \
+              --out-itf "simulation-${seed}.itf.json"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: quint-${{ matrix.model }}
+          path: quint/*.itf.json
+          if-no-files-found: ignore
+
+  verify:
+    name: Bounded safety verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: quint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install Quint
+        run: npm install --global @informalsystems/quint@0.33.0
+      - name: Check all executions through twelve transitions
+        run: |
+          quint verify FastCASPaxosMC.qnt --main FastCASPaxosSmall \
+            --invariant safety --max-steps 12
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: quint-verification-diagnostics
+          path: |
+            quint/_apalache-out/**
+            quint/*.itf.json
+          if-no-files-found: ignore
