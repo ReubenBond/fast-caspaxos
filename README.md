@@ -213,6 +213,14 @@ Fast CASPaxos is a tidy modification to CASPaxos which is a tidy modification to
 
 This repository includes TLA+ and [Quint models](quint/README.md), plus a deterministic simulation suite with fault injection and a linearizability checker. The Quint model checks fast/classic agreement, recovery, piggybacked promises, and committed-value ancestry, with reproducible scenarios and finite-state safety verification in GitHub Actions. The repo-specific details are below.
 
+## C# durable keyed acceptors
+
+The C# implementation includes a transport-independent keyed protocol API and a
+SQLite-backed server for `Prepare`, `Accept`, and paginated local key inventory.
+The server persists promises and accepted values in WAL transactions and releases
+responses after durable commit. See the [SQLite acceptor guide](csharp/src/FastCASPaxos.Sqlite/README.md)
+for the public contracts, lifecycle, and an example.
+
 ## Testing, etc
 
 This repository centers on a deterministic simulation suite built on a DST harness that I've called `Clockwork`. The simulation outputs traces that can be checked by Porcupine for linearizability violations. The repo also includes TLA+ models under the 'tla' directory that I've generated with copious amounts of assistance from coding agents.
