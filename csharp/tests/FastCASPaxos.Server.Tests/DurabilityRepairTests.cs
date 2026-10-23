@@ -294,6 +294,7 @@ public sealed class DurabilityRepairTests
         Assert.All(cluster.Peers.SelectMany(peer => peer.Prepares), call => Assert.Equal("z-local", call.Key));
         Assert.Null(cluster.Peers[0].Inner.Snapshot("a-remote"));
         Assert.Null(cluster.Peers[2].Inner.Snapshot("a-remote"));
+        Assert.Single(cluster.Digests[0].Lists);
     }
 
     [Fact]
@@ -452,6 +453,38 @@ public sealed class DurabilityRepairTests
         activeCancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => active.WaitAsync(Watchdog));
         Assert.False(blocked.IsReleased);
+    }
+
+    [Fact]
+    public async Task RunPass_AttemptTimeout_CancelsCooperativePeer()
+    {
+        var cluster = new RepairTestCluster();
+        var repair = cluster.Create();
+        using var caller = new CancellationTokenSource();
+        var reply = new TaskCompletionSource<AcceptorDigestPage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<AcceptorDigestPage>? dispatched = null;
+        CancellationToken dispatchedToken = default;
+        cluster.Digests[2].List = (_, _, _, token) =>
+        {
+            dispatchedToken = token;
+            dispatched = reply.Task.WaitAsync(token);
+            return new(dispatched);
+        };
+        try
+        {
+            var pass = repair.RunPassAsync(cancellationToken: caller.Token);
+            await cluster.Clock.WaitForDelayAsync(TimeSpan.FromSeconds(1));
+            cluster.Clock.Advance(TimeSpan.FromSeconds(1));
+            var result = await pass.WaitAsync(Watchdog);
+
+            Assert.Equal((0L, 0L, 0L), (result.Examined, result.Repaired, result.Pending));
+            Assert.IsType<TimeoutException>(Assert.Single(result.Errors));
+            Assert.True(dispatchedToken.IsCancellationRequested);
+            Assert.False(caller.IsCancellationRequested);
+            Assert.NotNull(dispatched);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => dispatched.WaitAsync(Watchdog));
+        }
+        finally { caller.Cancel(); }
     }
 
     [Fact]
