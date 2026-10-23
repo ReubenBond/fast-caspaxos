@@ -176,7 +176,7 @@ observations advance it. Consumers use `addEventListener` for the named events.
 | Event | `data` fields and semantics |
 | --- | --- |
 | `protocol` | `operation` (`prepare`/`accept`), `direction` (`local`/`outbound`/`inbound`), `phase`, nullable `peerId`, `callId`, nullable `operationId`, `key:KeyPreview`, `ballot`, `nextBallot`, nullable `outcome`, `promisedBallot`, `acceptedBallot`, `conflictingBallot`, `value:PayloadPreview`, `error`. |
-| `operation` | `operation` (`read`/`compare-exchange`/`list`), `operationId`, `key:KeyPreview` (list uses its prefix), `outcome`, nullable `value:PayloadPreview`, `version` (Base64), and `error`. |
+| `operation` | `operation` (`read`/`compare-exchange`/`list`), `operationId`, `key:KeyPreview` (list uses its prefix), `outcome`, nullable `isPresent`, `value:PayloadPreview`, `version` (Base64), and `error`. |
 | `acceptor-state` | `key:KeyPreview`, `promisedBallot`, `acceptedBallot`, nullable `acceptedValue:PayloadPreview` and `register:RegisterPreview`. A transition in a successfully committed local SQLite batch. |
 | `storage` | `status` (`ready`/`failed`/`stopped`), nullable exception-type `error`. |
 | `reset` | `reason`: `initial`, `invalid-cursor`, `restarted`, or `history-unavailable`. |
@@ -200,6 +200,9 @@ Operation outcomes are `established` (read), `completed` (listing), `applied`,
 `mismatch`, `unknown` (conditional write), or `fault`. An unknown result's
 optional value/version is the service's later observation. The application
 reconciles its write using the existing register outcome contract.
+`isPresent` is true/false when the service supplies a current register
+observation and null when it supplies none, preserving observed absence
+separately from unavailable state.
 Individual accepted-state and protocol observations describe individual
 acceptors; operation observations describe the quorum API's result.
 

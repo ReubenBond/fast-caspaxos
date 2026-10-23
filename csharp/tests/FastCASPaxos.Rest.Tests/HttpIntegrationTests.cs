@@ -255,7 +255,7 @@ public sealed class HttpIntegrationTests
             AcceptorDatabase = System.IO.Path.Combine(Path, "acceptor.db"),
             ProposerId = 1,
             ProposerDatabase = System.IO.Path.Combine(Path, "proposer.db"),
-            Peers = [new() { Id = "a", Endpoint = "http://127.0.0.1:1" }],
+            Peers = [new() { Id = "a", Endpoint = "http://127.0.0.1:1", HttpEndpoint = "http://127.0.0.1:11" }],
         };
         public void Dispose() => Directory.Delete(Path, recursive: true);
     }

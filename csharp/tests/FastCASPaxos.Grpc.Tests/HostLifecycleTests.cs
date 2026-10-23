@@ -37,8 +37,8 @@ public sealed class HostLifecycleTests
             case BadOptions.InvalidProposerId: options.ProposerId = 0; break;
             case BadOptions.EmptyMembership: options.Peers.Clear(); break;
             case BadOptions.MissingLocalMember: options.Peers[0].Id = "other"; break;
-            case BadOptions.DuplicateId: options.Peers.Add(new() { Id = "a", Endpoint = "http://127.0.0.1:2" }); break;
-            case BadOptions.DuplicateEndpoint: options.Peers.Add(new() { Id = "b", Endpoint = "http://127.0.0.1:1/" }); break;
+            case BadOptions.DuplicateId: options.Peers.Add(new() { Id = "a", Endpoint = "http://127.0.0.1:2", HttpEndpoint = "http://127.0.0.1:12" }); break;
+            case BadOptions.DuplicateEndpoint: options.Peers.Add(new() { Id = "b", Endpoint = "http://127.0.0.1:1/", HttpEndpoint = "http://127.0.0.1:12" }); break;
             case BadOptions.MissingPeerId: options.Peers[0].Id = ""; break;
             case BadOptions.NullPeer: options.Peers.Add(null!); break;
             case BadOptions.NullPeers: options.Peers = null!; break;
@@ -126,8 +126,8 @@ public sealed class HostLifecycleTests
     {
         using var directory = new TestDirectory();
         var options = Options(directory);
-        options.Peers.Add(new() { Id = "b", Endpoint = "http://127.0.0.1:2" });
-        options.Peers.Add(new() { Id = "c", Endpoint = "https://127.0.0.1:3" });
+        options.Peers.Add(new() { Id = "b", Endpoint = "http://127.0.0.1:2", HttpEndpoint = "http://127.0.0.1:12" });
+        options.Peers.Add(new() { Id = "c", Endpoint = "https://127.0.0.1:3", HttpEndpoint = "https://127.0.0.1:13" });
         await using var runtime = await NodeRuntime.OpenAsync(options).WaitAsync(Watchdog);
         // Only the local acceptor is exercised; constructing remote channels must not connect.
         var result = await runtime.Acceptor.AcceptAsync("local", new(new(2, 1), Payload, new())).AsTask().WaitAsync(Watchdog);
@@ -224,7 +224,7 @@ public sealed class HostLifecycleTests
         AcceptorDatabase = directory.Database("acceptor"),
         ProposerId = 1,
         ProposerDatabase = directory.Database("proposer"),
-        Peers = [new() { Id = "a", Endpoint = "http://127.0.0.1:1" }],
+        Peers = [new() { Id = "a", Endpoint = "http://127.0.0.1:1", HttpEndpoint = "http://127.0.0.1:11" }],
         QueueCapacity = 64,
         MaxBatchSize = 8,
     };

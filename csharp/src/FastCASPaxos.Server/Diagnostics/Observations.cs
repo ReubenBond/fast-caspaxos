@@ -52,7 +52,7 @@ public sealed record ProtocolObservation(
 
 public sealed record OperationObservation(
     string Operation, string OperationId, KeyPreview? Key, string Outcome,
-    PayloadPreview? Value = null, string? Version = null, string? Error = null);
+    PayloadPreview? Value = null, string? Version = null, string? Error = null, bool? IsPresent = null);
 
 public sealed record AcceptorStateObservation(
     KeyPreview Key, Ballot PromisedBallot, Ballot AcceptedBallot,
