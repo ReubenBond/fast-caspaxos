@@ -38,6 +38,7 @@ export function App({ store }: { store: ClusterStore }) {
   useEffect(() => { void store.start(); return () => store.dispose(); }, [store]);
   useEffect(() => { if (store.after === null) setPageStack([]); }, [store.after]);
   useEffect(() => {
+    setNavigationNotice(undefined);
     if (!navigationGuard) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); };
     window.addEventListener('beforeunload', warn);
