@@ -64,12 +64,26 @@ public static class AdminEndpoints
         group.MapGet("/states", (HttpContext context, ILoggerFactory logging) => StateAsync(context, node, logging, true));
         group.MapGet("/events", (HttpContext context, IHostApplicationLifetime lifetime, ILoggerFactory logging) =>
             EventsAsync(context, node, lifetime, logging));
+        group.MapGet("/repair", (HttpContext context) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            return Results.Json(new
+            {
+                schemaVersion = 1,
+                nodeId = node.Diagnostics.NodeId,
+                bootId = node.Diagnostics.BootId,
+                draining = node.IsDraining,
+                shutdownComplete = node.IsShutdownComplete,
+                targetReplicas = node.TargetReplicas,
+                lastRepair = node.LastRepair,
+            }, Json);
+        });
         group.MapPost("/repair", async (HttpContext context, ILoggerFactory logging) =>
         {
             try
             {
                 await node.StageClusterRepairAsync(context.RequestAborted);
-                return Results.Accepted(value: new { state = "staged", targetReplicas = node.Repair.TargetReplicas });
+                return Results.Accepted(value: new { schemaVersion = 1, state = "staged", targetReplicas = node.TargetReplicas });
             }
             catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
             {
@@ -78,8 +92,8 @@ public static class AdminEndpoints
             catch (Exception error)
             {
                 logging.CreateLogger(typeof(AdminEndpoints)).LogWarning(error, "Cluster repair was only partially staged.");
-                return Results.Problem(statusCode: 503, title: "repair-partially-staged",
-                    detail: "Reachable nodes retain their staged repair. Retry to contact remaining peers.");
+                return Results.Problem(statusCode: 503, title: "repair-staging-incomplete",
+                    detail: "Successfully contacted nodes retain their staged repair. Retry to contact remaining peers.");
             }
         });
         return group;

@@ -161,7 +161,9 @@ class LocalClusterTests(unittest.TestCase):
                 self.assertNotEqual(probe.connect_ex(("127.0.0.1", port)), 0)
 
     def test_cluster_interrupt_restart_and_node_failure(self):
-        cluster = self.start()
+        # Every host departs together, so remote-only durability waits end at the host deadline.
+        environment = {**os.environ, "HostOptions__ShutdownTimeout": "00:00:02"}
+        cluster = self.start(environment)
         statuses = cluster.ready()
         for index, status in enumerate(statuses):
             self.assertEqual(status["nodeId"], "abc"[index])
@@ -190,10 +192,11 @@ class LocalClusterTests(unittest.TestCase):
         cluster.interrupt()
         self.stopped(cluster)
         self.assertIn("Waiting for nodes to finish graceful shutdown.", cluster.output())
+        self.assertIn("Shutdown cancellation ended the durability wait", cluster.output())
         self.assertNotIn("Force-stopping", cluster.output())
         for name in ("acceptor-a", "acceptor-b", "acceptor-c", "proposer-1", "proposer-2", "proposer-3"):
             self.assertTrue((self.data / f"{name}.db").is_file())
-        restarted = self.start()
+        restarted = self.start(environment)
         again = restarted.ready()
         self.assertEqual(restarted.output().count("Build succeeded."), 1)
         for index in range(3):

@@ -23,6 +23,7 @@ builder.Services.AddGrpc(grpc =>
     grpc.Interceptors.Add<DiagnosticServerInterceptor>();
 });
 builder.Services.AddAdminCors(options);
+builder.Services.Configure<HostOptions>(builder.Configuration.GetSection("HostOptions"));
 
 await using var node = await NodeRuntime.OpenAsync(options);
 builder.Services.AddSingleton(node.Acceptor);
@@ -42,3 +43,4 @@ app.MapAdminApi(node);
 app.MapAdminConsole();
 app.MapGet("/health/live", () => Results.Text("Serving register requests."));
 await app.RunAsync();
+return node.IsShutdownComplete ? 0 : 1;

@@ -158,8 +158,11 @@ replicas, including those beyond the target, and revisit returning members.
 Unavailable members retain their membership slots. A pass reports examined,
 repaired, pending counts and bounded peer diagnostics.
 
-`RunPassAsync(departing: true)` scans the local accepted keys and counts remote
-acknowledgements toward the target. Its caller seals external mutation admission
+`RunPassAsync(departing: true)` scans the local accepted keys and requires fresh
+remote protocol acknowledgements for each key, including matching digests.
+Peers accepting protocol traffic can satisfy the target; peers already draining
+their own shutdown keep their readable inventory but reject new protocol work.
+Its caller seals external mutation admission
 and drains admitted work first, establishing the departure scan's finite key set.
 Each key is established independently; ongoing cluster writes use the same
 consensus guarantees as application operations.

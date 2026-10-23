@@ -34,6 +34,7 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
     private Task? _periodic;
     private Task? _shutdown;
     private bool _stopping;
+    private RepairObservation? _lastRepair;
     private readonly object _gate = new();
     private Task? _disposal;
 
@@ -60,7 +61,11 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
     public IRegisterService Registers => _observedRegisters ?? throw new InvalidOperationException("The node is not open.");
     public ILocalAcceptorInspection Inspection => _acceptor ?? throw new InvalidOperationException("The node is not open.");
     public IAcceptorDigestSource Digests => _acceptor ?? throw new InvalidOperationException("The node is not open.");
-    public DurabilityRepair Repair => _repair ?? throw new InvalidOperationException("The node is not open.");
+    private DurabilityRepair Repair => _repair ?? throw new InvalidOperationException("The node is not open.");
+    public int TargetReplicas => Repair.TargetReplicas;
+    public RepairObservation? LastRepair => Volatile.Read(ref _lastRepair);
+    public bool IsDraining => Volatile.Read(ref _stopping);
+    public bool IsShutdownComplete => Volatile.Read(ref _shutdown)?.IsCompletedSuccessfully == true;
     public NodeEventJournal Diagnostics { get; }
     public int ProposerId { get; }
     public IReadOnlyList<AdminPeer> Peers { get; }
@@ -111,7 +116,7 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
                 peers.Add(new AcceptorPeer(peer.Id, new ObservedAcceptor(acceptor, runtime.Diagnostics,
                     peer.Id == options.AcceptorId ? "local" : "outbound", peer.Id)));
                 repairPeers.Add(new(peer.Id, peer.Id == options.AcceptorId
-                    ? new ObservedAcceptor(runtime._acceptor, runtime.Diagnostics, "repair", peer.Id)
+                    ? new ObservedAcceptor(runtime._acceptor, runtime.Diagnostics, "local", peer.Id)
                     : peers[^1].Acceptor, digests));
             }
             runtime._registers = new ReplicatedRegisterService(peers, runtime._ballots, options.RegisterOptions(clock));
@@ -150,9 +155,9 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
         {
             if (_stopping || _disposal is not null)
                 throw new RegisterUnavailableException(new InvalidOperationException("The node is stopping."));
+            PublishRepair(new("staged", false, Repair.TargetReplicas));
             _staged.Writer.TryWrite(true);
         }
-        Diagnostics.Publish("repair", new RepairObservation("staged", false, Repair.TargetReplicas));
     }
 
     public async Task StageClusterRepairAsync(CancellationToken cancellationToken = default)
@@ -183,17 +188,25 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
                     finally { trigger.Cancel(); }
                 }
                 token.ThrowIfCancellationRequested();
-                Diagnostics.Publish("repair", new RepairObservation("running", false, Repair.TargetReplicas));
-                var result = await Repair.RunPassAsync(cancellationToken: token).ConfigureAwait(false);
-                ReportRepair(result, false);
-                foreach (var error in result.Errors) logger.LogWarning(error, "Durability repair observed an unavailable peer or key.");
+                PublishRepair(new("running", false, Repair.TargetReplicas));
+                try
+                {
+                    var result = await Repair.RunPassAsync(cancellationToken: token).ConfigureAwait(false);
+                    ReportRepair(result, false);
+                    foreach (var error in result.Errors) logger.LogWarning(error, "Durability repair observed an unavailable peer or key.");
+                }
+                catch (RegisterUnavailableException error)
+                {
+                    logger.LogWarning(error, "Durability repair inventory is unavailable; another pass is scheduled.");
+                    PublishRepair(new("failed", false, Repair.TargetReplicas, Error: error.Message));
+                }
                 delay = _repairInterval;
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception error)
         {
-            Diagnostics.Publish("repair", new RepairObservation("failed", false, Repair.TargetReplicas, Error: error.Message));
+            PublishRepair(new("failed", false, Repair.TargetReplicas, Error: error.Message));
             throw;
         }
     }
@@ -213,6 +226,7 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownAborted.Token);
         cancellationToken = linked.Token;
         _maintenanceStopping.Cancel();
+        PublishRepair(new("draining", true, Repair.TargetReplicas));
         var admitted = _admission!.QuiesceAsync();
         var registers = _registers!.DisposeAsync().AsTask();
         try
@@ -221,25 +235,39 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
             await Task.WhenAll(admitted, registers).WaitAsync(cancellationToken).ConfigureAwait(false);
             while (true)
             {
-                Diagnostics.Publish("repair", new RepairObservation("running", true, Repair.TargetReplicas));
-                var result = await Repair.RunPassAsync(departing: true, cancellationToken).ConfigureAwait(false);
-                ReportRepair(result, true);
-                if (result.Pending == 0) return;
+                PublishRepair(new("running", true, Repair.TargetReplicas));
+                try
+                {
+                    var result = await Repair.RunPassAsync(departing: true, cancellationToken).ConfigureAwait(false);
+                    ReportRepair(result, true);
+                    if (result.Pending == 0) return;
+                }
+                catch (RegisterUnavailableException error)
+                {
+                    PublishRepair(new("failed", true, Repair.TargetReplicas, Error: error.Message));
+                }
                 await Task.Delay(_repairRetryInterval, _clock, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (Exception error)
         {
-            Diagnostics.Publish("repair", new RepairObservation(
+            PublishRepair(new(
                 cancellationToken.IsCancellationRequested ? "cancelled" : "failed", true, Repair.TargetReplicas, Error: error.Message));
             throw;
         }
     }
 
     private void ReportRepair(RepairPassResult result, bool departing) =>
-        Diagnostics.Publish("repair", new RepairObservation(result.Pending == 0 ? "complete" : "pending",
+        PublishRepair(new(result.Pending == 0 ? "complete" : "pending",
             departing, Repair.TargetReplicas, result.Examined, result.Repaired, result.Pending,
             result.Errors.Count == 0 ? null : string.Join("; ", result.Errors.Select(error => error.Message))));
+
+    private void PublishRepair(RepairObservation observation)
+    {
+        observation = observation with { Timestamp = _clock.GetUtcNow() };
+        Volatile.Write(ref _lastRepair, observation);
+        Diagnostics.Publish("repair", observation);
+    }
 
     public ValueTask DisposeAsync()
     {
@@ -288,4 +316,5 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
 }
 
 public sealed record RepairObservation(
-    string State, bool Departing, int TargetReplicas, long Examined = 0, long Repaired = 0, long Pending = 0, string? Error = null);
+    string State, bool Departing, int TargetReplicas, long Examined = 0, long Repaired = 0, long Pending = 0,
+    string? Error = null, DateTimeOffset Timestamp = default);
