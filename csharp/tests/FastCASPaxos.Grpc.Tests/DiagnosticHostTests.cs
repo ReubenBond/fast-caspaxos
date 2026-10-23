@@ -499,6 +499,8 @@ public sealed class DiagnosticHostTests
     [InlineData("/v1/admin/node", "https://untrusted.test", false)]
     [InlineData("/v1/registers/value?key=key", "https://admin.test", true)]
     [InlineData("/v1/registers/value?key=key", "https://untrusted.test", false)]
+    [InlineData("/v1/admin/repair", "https://admin.test", true)]
+    [InlineData("/v1/admin/repair", "https://untrusted.test", false)]
     public async Task Cors_PreflightAndResponsesAllowOnlyConfiguredOrigins(string path, string origin, bool allowed)
     {
         using var directory = new TestDirectory();
@@ -510,7 +512,8 @@ public sealed class DiagnosticHostTests
             Version = HttpVersion.Version20, VersionPolicy = HttpVersionPolicy.RequestVersionExact
         };
         preflight.Headers.Add("Origin", origin);
-        preflight.Headers.Add("Access-Control-Request-Method", path.Contains("/admin/") ? "GET" : "PUT");
+        var repair = path == "/v1/admin/repair";
+        preflight.Headers.Add("Access-Control-Request-Method", repair ? "POST" : path.Contains("/admin/") ? "GET" : "PUT");
         preflight.Headers.Add("Access-Control-Request-Headers", "content-type,if-match,if-none-match,last-event-id,authorization");
         using var response = await host.Client.SendAsync(preflight);
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
@@ -518,17 +521,24 @@ public sealed class DiagnosticHostTests
         if (allowed)
         {
             Assert.Equal(origin, Assert.Single(response.Headers.GetValues("Access-Control-Allow-Origin")));
-            Assert.Equal(["GET", "PUT"], Tokens(response, "Access-Control-Allow-Methods").Order());
+            Assert.Equal(["GET", "POST", "PUT"], Tokens(response, "Access-Control-Allow-Methods").Order());
             Assert.Equal(new[] { "authorization", "content-type", "if-match", "if-none-match", "last-event-id" },
                 Tokens(response, "Access-Control-Allow-Headers").Select(x => x.ToLowerInvariant()).Order());
         }
         Assert.False(response.Headers.Contains("Access-Control-Allow-Credentials"));
-        using var request = new HttpRequestMessage(HttpMethod.Get, path)
+        using var request = new HttpRequestMessage(repair ? HttpMethod.Post : HttpMethod.Get, path)
         {
             Version = HttpVersion.Version20, VersionPolicy = HttpVersionPolicy.RequestVersionExact
         };
         request.Headers.Add("Origin", origin);
         using var actual = await host.Client.SendAsync(request);
+        if (repair)
+        {
+            Assert.Equal(HttpStatusCode.Accepted, actual.StatusCode);
+            var staged = await DiagnosticHost.Parse(actual);
+            Assert.Equal("staged", staged.GetProperty("state").GetString());
+            Assert.Equal(1, staged.GetProperty("targetReplicas").GetInt32());
+        }
         Assert.Equal(allowed, actual.Headers.Contains("Access-Control-Allow-Origin"));
         Assert.False(actual.Headers.Contains("Access-Control-Allow-Credentials"));
         if (allowed) Assert.Equal(["ETag", "Location"], Tokens(actual, "Access-Control-Expose-Headers").Order());

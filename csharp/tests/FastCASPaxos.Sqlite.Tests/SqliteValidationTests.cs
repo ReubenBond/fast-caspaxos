@@ -96,7 +96,7 @@ public sealed class SqliteValidationTests
         command.CommandText = "PRAGMA application_id;";
         Assert.Equal(0x46435058L, command.ExecuteScalar());
         command.CommandText = "PRAGMA user_version;";
-        Assert.Equal(1L, command.ExecuteScalar());
+        Assert.Equal(2L, command.ExecuteScalar());
         command.CommandText = "PRAGMA journal_mode;";
         Assert.Equal("wal", command.ExecuteScalar());
         command.CommandText = "SELECT count(*) FROM acceptor_state;";
@@ -126,7 +126,7 @@ public sealed class SqliteValidationTests
                 "ForeignSchema" => "CREATE TABLE unrelated (value INTEGER); INSERT INTO unrelated VALUES (17);",
                 "ForeignApplication" => "PRAGMA application_id=123;",
                 "UnidentifiedVersion" => "PRAGMA user_version=1;",
-                "FutureVersion" => "PRAGMA user_version=2;",
+                "FutureVersion" => "PRAGMA user_version=3;",
                 _ => throw new ArgumentOutOfRangeException(nameof(scenario)),
             });
         }
@@ -147,7 +147,7 @@ public sealed class SqliteValidationTests
             "ForeignSchema" => 17L,
             "ForeignApplication" => 123L,
             "UnidentifiedVersion" => 1L,
-            "FutureVersion" => 2L,
+            "FutureVersion" => 3L,
             _ => throw new ArgumentOutOfRangeException(nameof(scenario)),
         }, command.ExecuteScalar());
         if (scenario == "FutureVersion")
