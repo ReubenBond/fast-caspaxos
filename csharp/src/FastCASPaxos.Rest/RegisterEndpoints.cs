@@ -3,6 +3,7 @@ using System.Text;
 using FastCASPaxos.Server;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Logging;
@@ -18,15 +19,17 @@ public static class RegisterEndpoints
 
     /// <summary>Maps the conditional register API using an application-owned IRegisterService.</summary>
     public static RouteGroupBuilder MapRegisterApi(
-        this IEndpointRouteBuilder endpoints, string pattern = "/v1/registers")
+        this IEndpointRouteBuilder endpoints, string pattern = "/v1/registers", long? maxRequestBodyBytes = null)
     {
+        if (maxRequestBodyBytes is { } limit)
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit, nameof(maxRequestBodyBytes));
         var group = endpoints.MapGroup(pattern).WithTags("Registers");
         var read = group.MapGet("/value", (HttpContext context, IRegisterService service, ILoggerFactory logging) =>
                 ServeAsync(context, service, logging, Operation.Read))
             .Produces(StatusCodes.Status200OK, contentType: "application/octet-stream")
             .ProducesProblem(StatusCodes.Status404NotFound);
         var write = group.MapPut("/value", (HttpContext context, IRegisterService service, ILoggerFactory logging) =>
-                ServeAsync(context, service, logging, Operation.Write))
+                ServeAsync(context, service, logging, Operation.Write, maxRequestBodyBytes))
             .Accepts<byte[]>("application/octet-stream")
             .Produces(StatusCodes.Status201Created)
             .Produces(StatusCodes.Status204NoContent)
@@ -46,7 +49,8 @@ public static class RegisterEndpoints
     }
 
     private static async Task<IResult> ServeAsync(
-        HttpContext context, IRegisterService service, ILoggerFactory logging, Operation operation)
+        HttpContext context, IRegisterService service, ILoggerFactory logging, Operation operation,
+        long? maxRequestBodyBytes = null)
     {
         context.Response.Headers.CacheControl = "no-store";
         var logger = logging.CreateLogger(typeof(RegisterEndpoints));
@@ -89,7 +93,9 @@ public static class RegisterEndpoints
             if (context.Request.Headers.ContainsKey(HeaderNames.ContentRange))
                 throw Invalid("PUT supplies the complete register value.");
 
-            // Kestrel enforces the configured body limit for both Content-Length and streamed bodies.
+            // Scope the host's REST bound to this PUT; other transports keep their own limits.
+            if (maxRequestBodyBytes is { } bodyLimit)
+                context.Features.GetRequiredFeature<IHttpMaxRequestBodySizeFeature>().MaxRequestBodySize = bodyLimit;
             using var body = new MemoryStream();
             await context.Request.Body.CopyToAsync(body, context.RequestAborted);
             context.RequestAborted.ThrowIfCancellationRequested();

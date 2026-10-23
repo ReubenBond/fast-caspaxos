@@ -92,7 +92,7 @@ settings fail startup with diagnostics.
 | `PeerCallTimeout` | Outgoing protocol RPC deadline, `00:00:05`; attempts also pass cancellation. |
 | `MaxReceiveMessageBytes`, `MaxSendMessageBytes` | Serialized gRPC message limits, each `4194304`, for servers and peer channels. Allow for protobuf and register-envelope overhead. |
 | `MaxConcurrentConnections`, `MaxStreamsPerConnection` | Kestrel bounds, `256` and `128`. |
-| `MaxRequestBodyBytes` | Kestrel request-body bound for REST, `4194304`; configure peer message limits for envelope/framing overhead. |
+| `MaxRequestBodyBytes` | Per-request Kestrel body bound on REST PUT, `4194304`; gRPC retains its independent message bounds. Configure peer message limits for envelope/framing overhead. |
 
 Durations are positive and at most one day. File paths resolve relative to the
 ASP.NET content root; parent directories are created on startup. Acceptor and
