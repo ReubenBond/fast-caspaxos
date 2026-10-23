@@ -6,12 +6,13 @@ $ErrorActionPreference = 'Stop'
 $data = [IO.Path]::GetFullPath($DataDirectory)
 $project = Join-Path $PSScriptRoot '..\src\FastCASPaxos.Host\FastCASPaxos.Host.csproj'
 $nodes = [Collections.Generic.List[Diagnostics.Process]]::new()
+$failed = $false
 
 & dotnet build $project --configuration Release --verbosity minimal
 if ($LASTEXITCODE -ne 0) { throw "Host/UI build failed with code $LASTEXITCODE." }
 
 Write-Host "Starting three nodes with durable data in $data"
-Write-Host 'Press Ctrl+C once to stop. Hosts have 10 seconds to exit before remaining processes are force-stopped.'
+Write-Host 'Press Ctrl+C once to stop and wait for the hosts to finish graceful shutdown. Durable files are retained.'
 try {
     foreach ($node in @('a', 'b', 'c')) {
         $process = & (Join-Path $PSScriptRoot 'Run-Node.ps1') -Node $node -DataDirectory $data -BasePort $BasePort -PassThru
@@ -27,12 +28,21 @@ try {
         Start-Sleep -Milliseconds 200
     }
 }
+catch {
+    $failed = $true
+    throw
+}
 finally {
-    # Children inherit the terminal's interrupt. Use one grace period for all three.
+    # The host owns graceful drain/token semantics; bound only failure cleanup here.
     $grace = [Diagnostics.Stopwatch]::StartNew()
     $cleanupErrors = [Collections.Generic.List[Exception]]::new()
+    if (-not $failed) { [Console]::Error.WriteLine('Waiting for nodes to finish graceful shutdown.') }
     foreach ($process in $nodes) {
         try {
+            if (-not $failed) {
+                $process.WaitForExit()
+                continue
+            }
             $remaining = [Math]::Max(0, 10000 - [int]$grace.ElapsedMilliseconds)
             if (-not $process.WaitForExit($remaining)) {
                 [Console]::Error.WriteLine("Force-stopping node PID $($process.Id); durable files are retained.")

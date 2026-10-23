@@ -249,11 +249,13 @@ directory to retain values, acceptor identities, and proposer allocators.
 Use a separate directory and six separate ports for each concurrent cluster.
 
 Press **Ctrl+C once** in the launch terminal. The terminal interrupt reaches
-the hosts for graceful shutdown; the launcher allows a shared 10-second grace
-period and then force-stops any remaining owned processes. A build or node
-failure exits with an error and cleans up the invocation's hosts. Forced stops
-use SQLite crash recovery on restart; an interrupted write may require
-application reconciliation. Stop/restart retains the durable files.
+the hosts for graceful shutdown; the launcher waits for host completion,
+honoring the host's drain and shutdown-cancellation policy. A build failure
+exits before starting nodes. A node failure exits with an error and gives
+the invocation's remaining hosts a shared 10-second window to exit before
+force-stopping them. These emergency stops use SQLite crash recovery on
+restart; an interrupted write may require application reconciliation.
+Stop/restart retains the durable files.
 The [single-node commands](csharp/src/FastCASPaxos.Grpc/README.md#three-process-example)
 support running each member in its own terminal.
 
