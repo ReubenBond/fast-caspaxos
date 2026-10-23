@@ -180,6 +180,8 @@ class LocalClusterTests(unittest.TestCase):
             self.assertTrue(etag)
         cluster.interrupt()
         self.stopped(cluster)
+        self.assertIn("Waiting for nodes to finish graceful shutdown.", cluster.output())
+        self.assertNotIn("Force-stopping", cluster.output())
         for name in ("acceptor-a", "acceptor-b", "acceptor-c", "proposer-1", "proposer-2", "proposer-3"):
             self.assertTrue((self.data / f"{name}.db").is_file())
         restarted = self.start()
