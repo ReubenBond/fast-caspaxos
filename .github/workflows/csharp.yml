@@ -12,6 +12,19 @@ on:
   workflow_dispatch:
 
 jobs:
+  source-boundary:
+    name: Embedded source boundary and Native AOT client
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build isolated consumer and publish Native AOT client
+        shell: pwsh
+        run: ./csharp/scripts/Test-SourceBoundary.ps1 -PublishAot
+
   test:
     name: Core, register, SQLite, REST, gRPC, and simulation tests
     runs-on: ubuntu-latest

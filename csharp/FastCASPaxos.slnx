@@ -8,6 +8,7 @@
     <Project Path="src/FastCASPaxos.Host/FastCASPaxos.Host.csproj" />
     <Project Path="src/Clockwork/Clockwork.csproj" />
     <Project Path="src/FastCASPaxos.Simulation/FastCASPaxos.Simulation.csproj" />
+    <Project Path="src/FastCASPaxos.Testing/FastCASPaxos.Testing.csproj" />
     <Project Path="src/FastCASPaxos.Simulation.Scenarios/FastCASPaxos.Simulation.Scenarios.csproj" />
     <Project Path="src/FastCASPaxos.Simulation.Runner/FastCASPaxos.Simulation.Runner.csproj" />
   </Folder>
