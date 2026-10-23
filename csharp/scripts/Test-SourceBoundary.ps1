@@ -10,7 +10,7 @@ $clientSmoke = Join-Path $root 'ClientSmoke'
 
 try {
     New-Item -ItemType Directory -Path $source, $consumer, $clientSmoke -Force | Out-Null
-    foreach ($file in @('Directory.Build.props', 'Directory.Build.targets', 'Directory.Packages.props')) {
+    foreach ($file in @('.editorconfig', 'Directory.Build.props', 'Directory.Build.targets', 'Directory.Packages.props')) {
         Copy-Item (Join-Path $upstream $file) (Join-Path $source $file)
     }
     foreach ($project in @('FastCASPaxos.Core', 'FastCASPaxos.Server', 'FastCASPaxos.Grpc',
@@ -61,6 +61,15 @@ try {
 </Project>
 '@ | Set-Content (Join-Path $root 'Directory.Packages.props')
     @'
+root = true
+
+[*.cs]
+dotnet_diagnostic.CA1050.severity = error
+dotnet_diagnostic.CA2000.severity = error
+dotnet_diagnostic.CA2016.severity = error
+dotnet_diagnostic.CA2213.severity = error
+'@ | Set-Content (Join-Path $root '.editorconfig')
+    @'
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
   <ItemGroup>
@@ -92,6 +101,15 @@ simulation.Run(async cluster =>
 });
 Console.WriteLine("Embedded production and framework-neutral testing closures executed.");
 '@ | Set-Content (Join-Path $consumer 'Program.cs')
+
+    # Prove the consumer retains its parent analyzer policy while the source closure uses its own.
+    $probe = Join-Path $consumer 'PolicyProbe.cs'
+    'public sealed class ConsumerPolicyProbe { }' | Set-Content $probe
+    $probeOutput = dotnet build (Join-Path $consumer 'Consumer.csproj') --configuration Release --verbosity minimal 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0 -or $probeOutput -notmatch 'error CA1050:') {
+        throw "The consumer did not enforce its parent .editorconfig: $probeOutput"
+    }
+    Remove-Item -LiteralPath $probe
 
     dotnet run --project (Join-Path $consumer 'Consumer.csproj') --configuration Release --verbosity minimal
     if ($LASTEXITCODE -ne 0) { throw "Source-boundary consumer failed: $LASTEXITCODE" }

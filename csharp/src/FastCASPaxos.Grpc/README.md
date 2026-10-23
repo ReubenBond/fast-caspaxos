@@ -234,13 +234,16 @@ NuGet dependencies and the ASP.NET Core shared framework. The project enables
 trim/AOT compatibility analysis. The client closure builds independently of
 the executable host and administrative frontend.
 
-The `csharp/Directory.Build.props`, `Directory.Build.targets`, and
-`Directory.Packages.props` files form the upstream source build boundary. Retain
-these files with the selected projects: they terminate parent-repository build
-policy discovery and keep package versions declared in upstream project files.
+The `csharp/Directory.Build.props`, `Directory.Build.targets`,
+`Directory.Packages.props`, and root `csharp/.editorconfig` files form the upstream
+source build boundary. Retain these files with the selected projects: they
+terminate parent-repository build and analyzer-policy discovery and keep package
+versions declared in upstream project files. The upstream editor configuration
+uses the SDK's diagnostic defaults plus local formatting conventions.
 The embedding application's own build and analyzers retain its local policy.
 CI's `Test-SourceBoundary.ps1` checks this contract beneath deliberately
-incompatible parent build/central-package settings and publishes an AOT client.
+incompatible parent build/central-package settings and strict analyzer rules,
+verifies that consumer diagnostics remain active, and publishes an AOT client.
 
 For framework-neutral consumer tests, also reference
 [`FastCASPaxos.Testing`](../FastCASPaxos.Testing/README.md).
