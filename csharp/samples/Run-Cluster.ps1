@@ -41,6 +41,7 @@ finally {
         try {
             if (-not $failed) {
                 $process.WaitForExit()
+                [Console]::Error.WriteLine("Node PID $($process.Id) finished shutdown with exit code $($process.ExitCode).")
                 continue
             }
             $remaining = [Math]::Max(0, 10000 - [int]$grace.ElapsedMilliseconds)

@@ -513,29 +513,66 @@ public sealed class DurabilityRepairTests
         cluster.Digests[0].List = (_, _, _, _) => ValueTask.FromException<AcceptorDigestPage>(failure);
         await cluster.SeedAsync(1, "remote", Payload);
 
-        var error = await Assert.ThrowsAsync<RegisterUnavailableException>(() => repair.RunPassAsync().WaitAsync(Watchdog));
+        var error = await Assert.ThrowsAsync<IOException>(() => repair.RunPassAsync().WaitAsync(Watchdog));
 
-        Assert.Contains(failure, Assert.IsType<AggregateException>(error.InnerException).InnerExceptions);
+        Assert.Same(failure, error);
         Assert.Empty(cluster.Ballots.Reserved);
-        Assert.All(cluster.Peers, peer => Assert.Empty(peer.Accepts));
+        Assert.All(cluster.Peers, peer =>
+        {
+            Assert.Empty(peer.Prepares);
+            Assert.Empty(peer.Accepts);
+        });
     }
 
     [Fact]
-    public async Task RunPass_FetchFails_ReportsPendingWithoutProposing()
+    public async Task RunPass_LocalFetchFailure_ThrowsOriginalErrorWithoutProposing()
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create();
         await cluster.SeedAsync(0, "key", Payload);
-        var failure = new IOException("conditional fetch failed");
+        var failure = new IOException("local conditional fetch failed");
         cluster.Digests[0].Fetch = (_, _, _) => ValueTask.FromException<ConditionalAcceptorState>(failure);
+
+        var error = await Assert.ThrowsAsync<IOException>(() => repair.RunPassAsync().WaitAsync(Watchdog));
+
+        Assert.Same(failure, error);
+        Assert.Equal("key", Assert.Single(cluster.Digests[0].Fetches).Key);
+        Assert.Empty(cluster.Ballots.Reserved);
+        Assert.All(cluster.Peers, peer =>
+        {
+            Assert.Empty(peer.Prepares);
+            Assert.Empty(peer.Accepts);
+        });
+        Assert.Equal(Payload, cluster.Peers[0].Inner.Snapshot("key")!.AcceptedValue);
+        Assert.Null(cluster.Peers[1].Inner.Snapshot("key"));
+        Assert.Null(cluster.Peers[2].Inner.Snapshot("key"));
+    }
+
+    [Fact]
+    public async Task RunPass_RemoteFetchFailure_ReportsPendingWithoutProposing()
+    {
+        var cluster = new RepairTestCluster();
+        var repair = cluster.Create();
+        // Only the remote owns this key, so local-source preference cannot hide a failed remote fetch.
+        await cluster.SeedAsync(1, "key", Payload);
+        var failure = new IOException("remote conditional fetch failed");
+        cluster.Digests[1].Fetch = (_, _, _) => ValueTask.FromException<ConditionalAcceptorState>(failure);
 
         var result = await repair.RunPassAsync().WaitAsync(Watchdog);
 
         Assert.Equal((1L, 0L, 1L), (result.Examined, result.Repaired, result.Pending));
         Assert.Same(failure, Assert.Single(result.Errors));
+        Assert.Equal("key", Assert.Single(cluster.Digests[1].Fetches).Key);
+        Assert.Empty(cluster.Digests[0].Fetches);
         Assert.Empty(cluster.Ballots.Reserved);
-        Assert.All(cluster.Peers, peer => Assert.Empty(peer.Accepts));
-        Assert.Null(cluster.Peers[1].Inner.Snapshot("key"));
+        Assert.All(cluster.Peers, peer =>
+        {
+            Assert.Empty(peer.Prepares);
+            Assert.Empty(peer.Accepts);
+        });
+        Assert.Null(cluster.Peers[0].Inner.Snapshot("key"));
+        Assert.Equal(Payload, cluster.Peers[1].Inner.Snapshot("key")!.AcceptedValue);
+        Assert.Null(cluster.Peers[2].Inner.Snapshot("key"));
     }
 
     [Fact]
