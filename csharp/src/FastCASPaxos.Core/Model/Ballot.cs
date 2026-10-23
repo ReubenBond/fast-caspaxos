@@ -34,7 +34,7 @@ public readonly struct Ballot(int round, int id) : IComparable<Ballot>
     /// <summary>
     /// Advances to the next round for the supplied proposer.
     /// </summary>
-    public Ballot NextRound(int proposer) => new(Round + 1, proposer);
+    public Ballot NextRound(int proposer) => new(checked(Round + 1), proposer);
 
     /// <summary>
     /// The zero ballot used before any prepare or accept has succeeded.
@@ -67,13 +67,13 @@ public readonly struct Ballot(int round, int id) : IComparable<Ballot>
     /// <inheritdoc />
     public int CompareTo(Ballot other)
     {
-        var roundComparison = Round - other.Round;
+        var roundComparison = Round.CompareTo(other.Round);
         if (roundComparison != 0)
         {
             return roundComparison;
         }
 
-        return Proposer - other.Proposer;
+        return Proposer.CompareTo(other.Proposer);
     }
 
     public static Ballot Max(Ballot left, Ballot right) => left >= right ? left : right;

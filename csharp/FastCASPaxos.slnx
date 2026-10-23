@@ -10,6 +10,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/FastCASPaxos.Core.Tests/FastCASPaxos.Core.Tests.csproj" />
+    <Project Path="tests/FastCASPaxos.Server.Tests/FastCASPaxos.Server.Tests.csproj" />
     <Project Path="tests/FastCASPaxos.Sqlite.Tests/FastCASPaxos.Sqlite.Tests.csproj" />
     <Project Path="tests/FastCASPaxos.Simulation.Tests/FastCASPaxos.Simulation.Tests.csproj" />
   </Folder>

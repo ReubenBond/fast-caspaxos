@@ -356,6 +356,12 @@ public abstract class ProposerEngine<TValue, TRoute>
     protected abstract void OnSendAccept(AcceptRequest<TValue> request);
     protected abstract void OnProposalCompleted(ProposeResponse<TValue> response);
     protected abstract void OnValueCommitted(CommittedValue<TValue> committedValue);
+    /// <summary>
+    /// Reserves a newly allocated ballot before it becomes observable. Durable hosts override this
+    /// to return an owned classic ballot at least as large as the candidate. Shared fast ballots
+    /// retain their identity. A reserved piggyback promise is consumed at most once by this engine.
+    /// </summary>
+    protected virtual Ballot ReserveBallot(Ballot candidate) => candidate;
     protected virtual void OnCachedValueChanged(TValue value) { }
     protected virtual void OnPendingAcceptValueStarted(TValue value) { }
     protected virtual void OnPendingAcceptValueCommitted(TValue value) { }
@@ -419,7 +425,7 @@ public abstract class ProposerEngine<TValue, TRoute>
     {
         // New work stays on the fast path when enabled; otherwise it starts in this proposer's
         // classic ballot space. Retries are handled separately by RetryPrepare.
-        return _modePolicy.CreateProposalBallot(ProposerId, Ballot);
+        return ReserveBallot(_modePolicy.CreateProposalBallot(ProposerId, Ballot));
     }
 
     private void SendPrepareForCurrentBallot()
@@ -661,6 +667,7 @@ public abstract class ProposerEngine<TValue, TRoute>
             nextBallot = maxConflict.NextRound(ProposerId);
         }
 
+        nextBallot = ReserveBallot(nextBallot);
         Ballot = nextBallot;
         _runtime.Diagnostics.OnPrepareRetried(this, ProposerId, oldBallot, nextBallot, maxConflict);
         SendPrepareForCurrentBallot();
@@ -671,7 +678,8 @@ public abstract class ProposerEngine<TValue, TRoute>
         // Piggybacked prepare is purely a latency optimization. Fast mode keeps asking acceptors
         // to line up the next shared fast ballot; leader mode lines up this proposer's next
         // classic ballot so consecutive operations can remain leader-owned.
-        return _modePolicy.ChooseNextPrepareBallot(Ballot, ProposerId);
+        var candidate = _modePolicy.ChooseNextPrepareBallot(Ballot, ProposerId);
+        return candidate.IsZero ? candidate : ReserveBallot(candidate);
     }
 
     private void ClearPreparedBallot()

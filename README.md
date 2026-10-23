@@ -215,6 +215,12 @@ This repository includes TLA+ and [Quint models](quint/README.md), plus a determ
 
 ## C# durable keyed acceptors
 
+`ReplicatedRegisterService` provides quorum-backed `Read`, `CompareExchange`,
+and paginated logical key listing over those acceptors. It uses stable opaque
+versions, durable proposer ballot allocation, and explicit uncertain write
+outcomes. See the [replicated register guide](csharp/src/FastCASPaxos.Server/README.md)
+for API usage and deployment guarantees.
+
 The C# implementation includes a transport-independent keyed protocol API and a
 SQLite-backed server for `Prepare`, `Accept`, and paginated local key inventory.
 The server persists promises and accepted values in WAL transactions and releases
