@@ -18,6 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\FastCASPaxos.Testing\FastCASPaxos.Testing.csproj" />
     <ProjectReference Include="..\..\src\Clockwork\Clockwork.csproj" />
     <ProjectReference Include="..\..\src\FastCASPaxos.Simulation.Runner\FastCASPaxos.Simulation.Runner.csproj" />
     <ProjectReference Include="..\..\src\FastCASPaxos.Simulation\FastCASPaxos.Simulation.csproj" />
