@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory)][ValidateSet('a', 'b', 'c')][string]$Node,
     [Parameter(Mandatory)][string]$DataDirectory,
-    [int]$BasePort = 5001
+    [ValidateRange(1, 65530)][int]$BasePort = 5001,
+    [switch]$PassThru
 )
 $ErrorActionPreference = 'Stop'
 $Node = $Node.ToLowerInvariant()
@@ -24,5 +25,13 @@ for ($i = 0; $i -lt 3; $i++) {
     $arguments += "--FastCASPaxos:Peers:${i}:Endpoint=http://127.0.0.1:$($BasePort + $i)"
     $arguments += "--FastCASPaxos:Peers:${i}:HttpEndpoint=http://127.0.0.1:$($BasePort + 3 + $i)"
 }
-& dotnet @arguments
-if ($LASTEXITCODE -ne 0) { throw "Node $Node exited with code $LASTEXITCODE." }
+if ($PassThru) {
+    $info = [Diagnostics.ProcessStartInfo]::new('dotnet')
+    $info.UseShellExecute = $false
+    foreach ($argument in $arguments) { $info.ArgumentList.Add($argument) }
+    return [Diagnostics.Process]::Start($info)
+}
+else {
+    & dotnet @arguments
+    if ($LASTEXITCODE -ne 0) { throw "Node $Node exited with code $LASTEXITCODE." }
+}

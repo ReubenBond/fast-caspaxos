@@ -1,0 +1,34 @@
+name: Local cluster launcher
+
+on:
+  push:
+    paths: ['justfile', 'csharp/**', 'admin/**', '.github/workflows/cluster.yml']
+  pull_request:
+    paths: ['justfile', 'csharp/**', 'admin/**', '.github/workflows/cluster.yml']
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: extractions/setup-just@v3
+        with:
+          just-version: '1.59.0'
+      - name: Parse and preview recipes
+        run: |
+          just --list --unsorted
+          just --dry-run cluster
+      - name: Launch, interrupt, restart, and fail the actual cluster command
+        run: python csharp/scripts/Test-LocalCluster.py
