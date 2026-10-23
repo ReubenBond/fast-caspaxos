@@ -14,7 +14,6 @@ builder.WebHost.ConfigureKestrel(kestrel =>
     kestrel.ConfigureEndpointDefaults(endpoint => endpoint.Protocols = HttpProtocols.Http2);
     kestrel.Limits.MaxConcurrentConnections = options.MaxConcurrentConnections;
     kestrel.Limits.Http2.MaxStreamsPerConnection = options.MaxStreamsPerConnection;
-    kestrel.Limits.MaxRequestBodySize = options.MaxRequestBodyBytes;
 });
 builder.Services.AddGrpc(grpc =>
 {
@@ -29,6 +28,6 @@ builder.Services.AddSingleton(node.Registers);
 await using var app = builder.Build();
 app.MapGrpcService<AcceptorGrpcService>();
 app.MapGrpcService<RegisterGrpcService>();
-app.MapRegisterApi();
+app.MapRegisterApi(maxRequestBodyBytes: options.MaxRequestBodyBytes);
 app.MapGet("/health/live", () => Results.Text("Serving register requests."));
 await app.RunAsync();

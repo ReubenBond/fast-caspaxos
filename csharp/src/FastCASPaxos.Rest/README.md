@@ -36,6 +36,9 @@ app.MapRegisterApi(); // Returns a RouteGroupBuilder for endpoint conventions.
 
 The application owns the service's lifetime and its dependencies. The optional
 mapping argument changes the group prefix, for example `MapRegisterApi("/api/registers")`.
+`MapRegisterApi(maxRequestBodyBytes: 1024)` sets a positive per-PUT body limit
+using the server's `IHttpMaxRequestBodySizeFeature`; omitting it retains the
+server's configured limit.
 Configure standard ASP.NET authentication/authorization and apply
 `RequireAuthorization()` to the returned group when authenticating callers.
 Deploy the host within a trusted network with TLS and firewall/proxy controls;
@@ -52,12 +55,14 @@ HTTP/2-capable endpoint and configure certificates through standard Kestrel
 configuration and secret providers.
 
 `FastCASPaxos:MaxRequestBodyBytes` is a positive host setting, default
-`4194304`. Kestrel enforces it while the adapter reads the body, including
-chunked uploads. The adapter buffers the complete bounded body before
+`4194304`. The host passes it to the REST route mapping, which sets the
+per-request limit before reading a PUT body. Kestrel enforces it for both
+fixed-length and chunked uploads. gRPC keeps its independently configured
+message limits. The adapter buffers the complete bounded body before
 dispatching one write. The host also configures connection bounds; standard
 Kestrel request-line/header limits, body data-rate enforcement, and reverse
 proxy limits apply. Embedding applications configure these transport bounds
-on their own servers.
+on their own servers or through the mapping's per-PUT limit.
 
 These are deployment limits. The local register and storage APIs retain their
 payload capacity. Configure gRPC peer message limits to allow the payload plus

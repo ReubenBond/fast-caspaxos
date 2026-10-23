@@ -7,8 +7,6 @@ using FastCASPaxos.Server;
 using global::Grpc.Net.Client;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Hosting.Server;
-using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -172,6 +170,38 @@ public sealed class HttpIntegrationTests
     }
 
     [Fact]
+    public async Task Http1_BodyLimitIsIndependentOfGrpcMessageLimits()
+    {
+        using var directory = new TestDirectory();
+        var options = directory.Options();
+        options.MaxRequestBodyBytes = 1024;
+        options.MaxReceiveMessageBytes = options.MaxSendMessageBytes = 1024 * 1024;
+        var observed = new ControlledService();
+        await using var node = await RunningNode.Start(options, observed);
+        var payload = new ByteString(Enumerable.Range(0, 2048).Select(i => (byte)i).ToArray());
+
+        using var rejected = await Put(node.Http, "independent-limits", payload);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, rejected.StatusCode);
+        Assert.Empty(observed.Calls);
+        using var problem = JsonDocument.Parse(await rejected.Content.ReadAsByteArrayAsync());
+        Assert.Equal("body-read", problem.RootElement.GetProperty("code").GetString());
+        Assert.Equal("not-applied", problem.RootElement.GetProperty("outcome").GetString());
+
+        var created = await node.Grpc.CompareExchangeAsync("independent-limits", null, payload);
+        Assert.Equal(CompareExchangeStatus.Applied, created.Status);
+        Assert.Equal(payload, created.Current!.Value);
+        var call = Assert.Single(observed.Calls);
+        Assert.Equal("write", call.Operation);
+        Assert.Equal(payload, call.Value);
+        Assert.Null(call.Expected);
+        Assert.Equal(created.Current, await node.Grpc.ReadAsync("independent-limits"));
+        using var read = await node.Http.GetAsync(ValueUrl("independent-limits"));
+        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+        Assert.Equal(payload.ToArray(), await read.Content.ReadAsByteArrayAsync());
+        Assert.Equal(Tag(created.Current.Version!), read.Headers.ETag!.ToString());
+    }
+
+    [Fact]
     public void NodeOptions_RequestBodyLimitDefaultsAndRejectsNonpositiveValues()
     {
         Assert.Equal(4L * 1024 * 1024, new NodeOptions().MaxRequestBodyBytes);
@@ -230,8 +260,8 @@ public sealed class HttpIntegrationTests
         public void Dispose() => Directory.Delete(Path, recursive: true);
     }
 
-    private sealed class RunningNode(NodeRuntime runtime, WebApplication restApp, string restAddress,
-        WebApplication grpcApp, string grpcAddress) : IAsyncDisposable
+    private sealed class RunningNode(NodeRuntime runtime, WebApplication app, string restAddress,
+        string grpcAddress) : IAsyncDisposable
     {
         private readonly GrpcChannel _channel = GrpcChannel.ForAddress(grpcAddress);
         internal HttpClient Http { get; } = new()
@@ -243,49 +273,57 @@ public sealed class HttpIntegrationTests
         };
         internal GrpcRegisterService Grpc => new(_channel.CreateCallInvoker(), Watchdog);
 
-        internal static async Task<RunningNode> Start(NodeOptions options)
+        internal static async Task<RunningNode> Start(NodeOptions options, ControlledService? observed = null)
         {
             var runtime = await NodeRuntime.OpenAsync(options).WaitAsync(Watchdog);
-            WebApplication? rest = null;
-            WebApplication? grpc = null;
+            WebApplication? app = null;
             try
             {
-                (rest, var restAddress) = await StartEndpoint(runtime, HttpProtocols.Http1, options.MaxRequestBodyBytes);
-                (grpc, var grpcAddress) = await StartEndpoint(runtime, HttpProtocols.Http2, options.MaxRequestBodyBytes);
-                return new(runtime, rest, restAddress, grpc, grpcAddress);
+                var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
+                builder.Configuration.Sources.Clear();
+                builder.Logging.ClearProviders();
+                ListenOptions? restListener = null;
+                ListenOptions? grpcListener = null;
+                builder.WebHost.ConfigureKestrel(server =>
+                {
+                    server.Listen(IPAddress.Loopback, 0, listen =>
+                    {
+                        listen.Protocols = HttpProtocols.Http1;
+                        restListener = listen;
+                    });
+                    server.Listen(IPAddress.Loopback, 0, listen =>
+                    {
+                        listen.Protocols = HttpProtocols.Http2;
+                        grpcListener = listen;
+                    });
+                });
+                IRegisterService registers = runtime.Registers;
+                if (observed is not null)
+                {
+                    observed.Read = registers.ReadAsync;
+                    observed.Write = registers.CompareExchangeAsync;
+                    observed.List = registers.ListKeysAsync;
+                    registers = observed;
+                }
+                builder.Services.AddSingleton(registers);
+                builder.Services.AddGrpc(grpc =>
+                {
+                    grpc.MaxReceiveMessageSize = options.MaxReceiveMessageBytes;
+                    grpc.MaxSendMessageSize = options.MaxSendMessageBytes;
+                });
+                app = builder.Build();
+                app.MapRegisterApi(maxRequestBodyBytes: options.MaxRequestBodyBytes);
+                app.MapGrpcService<RegisterGrpcService>();
+                using var timeout = new CancellationTokenSource(Watchdog);
+                await app.StartAsync(timeout.Token);
+                return new(runtime, app, $"http://{restListener!.IPEndPoint}", $"http://{grpcListener!.IPEndPoint}");
             }
             catch
             {
-                if (grpc is not null) await grpc.DisposeAsync();
-                if (rest is not null) await rest.DisposeAsync();
+                if (app is not null) await app.DisposeAsync();
                 await runtime.DisposeAsync();
                 throw;
             }
-        }
-
-        private static async Task<(WebApplication, string)> StartEndpoint(NodeRuntime runtime, HttpProtocols protocol, long limit)
-        {
-            var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
-            builder.Configuration.Sources.Clear();
-            builder.Logging.ClearProviders();
-            builder.WebHost.ConfigureKestrel(server =>
-            {
-                server.Limits.MaxRequestBodySize = limit;
-                server.Listen(IPAddress.Loopback, 0, listen => listen.Protocols = protocol);
-            });
-            builder.Services.AddSingleton(runtime.Registers);
-            builder.Services.AddGrpc();
-            var app = builder.Build();
-            if (protocol == HttpProtocols.Http1) app.MapRegisterApi();
-            else app.MapGrpcService<RegisterGrpcService>();
-            try
-            {
-                using var timeout = new CancellationTokenSource(Watchdog);
-                await app.StartAsync(timeout.Token);
-                var addresses = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!;
-                return (app, Assert.Single(addresses.Addresses));
-            }
-            catch { await app.DisposeAsync(); throw; }
         }
 
         public async ValueTask DisposeAsync()
@@ -295,17 +333,12 @@ public sealed class HttpIntegrationTests
             try
             {
                 using var timeout = new CancellationTokenSource(Watchdog);
-                await restApp.StopAsync(timeout.Token);
-                await grpcApp.StopAsync(timeout.Token);
+                await app.StopAsync(timeout.Token);
             }
             finally
             {
-                try { await restApp.DisposeAsync(); }
-                finally
-                {
-                    try { await grpcApp.DisposeAsync(); }
-                    finally { await runtime.DisposeAsync(); }
-                }
+                try { await app.DisposeAsync(); }
+                finally { await runtime.DisposeAsync(); }
             }
         }
     }
