@@ -24,6 +24,7 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
     private readonly HashSet<int> _lostReplies = [];
     private readonly Dictionary<int, TimeSpan> _replyDelays = [];
     private int _nextRequest;
+    private int _contextFreeConsumerDepth;
     private bool _running;
     private bool _disposed;
 
@@ -57,8 +58,9 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
 
     /// <summary>
     /// Runs and completes a scenario synchronously in virtual time. Await only fixture
-    /// operations or work scheduled on this context; Task.Run, wall-clock delays and
-    /// ConfigureAwait(false) in consumer code are not deterministic simulation work.
+    /// operations or work scheduled on this context. Consumer wrappers may use
+    /// ConfigureAwait(false) on register operations; the scenario should capture
+    /// this context. Task.Run, wall-clock delays and external I/O are not simulated.
     /// </summary>
     public void Run(Func<RegisterSimulationCluster, Task> scenario, int maxIterations = 100000)
     {
@@ -243,10 +245,39 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
 
     private void RequireContext()
     {
+        using var guard = _runtime.Guard.Enter();
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (!_running || SynchronizationContext.Current is not { } context
-            || !_runtime.SynchronizationContext.IsSameScheduler(context))
+        var context = SynchronizationContext.Current;
+        if (!_running || !(context is not null && _runtime.SynchronizationContext.IsSameScheduler(context)
+            || context is null && _contextFreeConsumerDepth > 0))
             throw new InvalidOperationException("Use fixture operations inside Run on its deterministic synchronization context.");
+    }
+
+    private ValueTask<T> Bridge<T>(Func<ValueTask<T>> operation)
+    {
+        RequireContext();
+        // Internal fixture awaits always capture Clockwork, including operations
+        // started by a context-free production wrapper after an earlier read.
+        using var context = _runtime.SynchronizationContext.Install();
+        var task = operation();
+        return task.IsCompleted ? task : new SimulationValueTaskSource<T>(task, RunContextFreeConsumer).Task;
+    }
+
+    private void RunContextFreeConsumer(Action<object?> continuation, object? state)
+    {
+        RequireContext();
+        var previous = SynchronizationContext.Current;
+        _contextFreeConsumerDepth++;
+        SynchronizationContext.SetSynchronizationContext(null);
+        try
+        {
+            continuation(state);
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previous);
+            _contextFreeConsumerDepth--;
+        }
     }
 
     private void ValidateNode(int node)
@@ -274,15 +305,22 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
         public int Node => node;
         public FastCasAddress Address => address;
 
-        public async ValueTask<RegisterValue> ReadAsync(string key, CancellationToken cancellationToken = default)
+        public ValueTask<RegisterValue> ReadAsync(string key, CancellationToken cancellationToken = default) =>
+            owner.Bridge(() => ReadCoreAsync(key, cancellationToken));
+
+        private async ValueTask<RegisterValue> ReadCoreAsync(string key, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(key);
             var state = await owner.ExecuteAsync(this, ReadOperation, cancellationToken);
             return state.Get(key);
         }
 
-        public async ValueTask<CompareExchangeResult> CompareExchangeAsync(
-            string key, ByteString? expectedVersion, ByteString value, CancellationToken cancellationToken = default)
+        public ValueTask<CompareExchangeResult> CompareExchangeAsync(
+            string key, ByteString? expectedVersion, ByteString value, CancellationToken cancellationToken = default) =>
+            owner.Bridge(() => CompareExchangeCoreAsync(key, expectedVersion, value, cancellationToken));
+
+        private async ValueTask<CompareExchangeResult> CompareExchangeCoreAsync(
+            string key, ByteString? expectedVersion, ByteString value, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(key);
             ArgumentNullException.ThrowIfNull(value);
@@ -314,8 +352,12 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
             }
         }
 
-        public async ValueTask<RegisterKeyPage> ListKeysAsync(
-            string prefix = "", string? afterKey = null, int limit = 100, CancellationToken cancellationToken = default)
+        public ValueTask<RegisterKeyPage> ListKeysAsync(
+            string prefix = "", string? afterKey = null, int limit = 100, CancellationToken cancellationToken = default) =>
+            owner.Bridge(() => ListKeysCoreAsync(prefix, afterKey, limit, cancellationToken));
+
+        private async ValueTask<RegisterKeyPage> ListKeysCoreAsync(
+            string prefix, string? afterKey, int limit, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(prefix);
             ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
