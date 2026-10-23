@@ -73,7 +73,7 @@ reaching quorum after work has started at a higher ballot.
 
 ## Reproduce the checks
 
-Use Node.js 22, Quint **0.33.0**, and Java 21 for Apalache verification.
+Use Node.js 22, Quint **0.33.0**, and Java 21 for model checking.
 Install the CLI if needed:
 
 ```powershell
@@ -87,8 +87,10 @@ quint typecheck .\FastCASPaxosMC.qnt
 quint typecheck .\FastCASPaxosTests.qnt
 quint test .\FastCASPaxosTests.qnt --main FastCASPaxosTests --max-samples 1 --seed 1
 quint test .\FastCASPaxosTests.qnt --main FastCASPaxosNegativeTests --max-samples 1 --seed 1
+quint test .\FastCASPaxosTests.qnt --main FastCASPaxosBoundaryTests --max-samples 1 --seed 1
 quint run .\FastCASPaxosMC.qnt --main FastCASPaxosMC --invariant safety --max-samples 2500 --max-steps 60 --n-threads 2 --seed 17
-quint verify .\FastCASPaxosMC.qnt --main FastCASPaxosSmall --invariant safety --max-steps 12
+quint verify .\FastCASPaxosMC.qnt --main FastCASPaxosExhaustive --backend tlc --tlc-config .\tlc.json --invariant safety
+quint verify .\FastCASPaxosMC.qnt --main FastCASPaxosPipeline --backend tlc --tlc-config .\tlc.json --invariant safety
 ```
 
 The simulator defaults to the Rust backend. On Windows, `--backend typescript`
@@ -99,20 +101,26 @@ diagnostics as artifacts. Repository-level recipes are `just quint-test`,
 
 | Module | Acceptors | Owners | Rounds | Update depth | Classic / fast quorum | CI check |
 | --- | ---: | ---: | ---: | ---: | --- | --- |
-| `FastCASPaxosSmall` | 3 | 1 | 2 | 1 | 2 / 3 | Simulation and bounded verification through 12 transitions |
+| `FastCASPaxosSmall` | 3 | 1 | 2 | 1 | 2 / 3 | Simulation |
 | `FastCASPaxosEven` | 4 | 2 | 3 | 2 | 3 / 3 | Simulation |
 | `FastCASPaxosMC` | 5 | 2 | 4 | 3 | 3 / 4 | Simulation and scenarios |
+| `FastCASPaxosExhaustive` | 3 | 1 | 1 | 1 | 2 / 3 | Complete state-space enumeration: shared ballot and same-round classic recovery |
+| `FastCASPaxosPipeline` | 2 | 1 | 2 | 1 | 2 / 2 | Complete state-space enumeration: fast/classic pipelining across two rounds |
 
 Each simulation configuration runs 2,500 traces of up to 60 transitions for each
 of seeds `17` and `20261023`. Witness counters report fast commits, classic
 commits, successive distinct committed values, and fast collisions. Deterministic
 scenarios establish reachability of these paths independently of random sampling.
-Apalache explores all executions through its stated transition bound; simulation
-samples schedules. Increasing the constants or bounds expands the checked scope.
+TLC explores every reachable state of the two finite verification configurations,
+including arbitrarily many stuttering and replay steps. Simulation samples
+schedules in larger configurations. Increasing the constants expands the checked
+scope. The TLC configuration limits the checker to two workers and a 4 GiB heap.
+These compact instances make full enumeration practical for per-change CI.
 
 `FastCASPaxosTests.qnt` includes fast and classic pipelines, committed-fast recovery,
 tied collision recovery, identity reads, read-only duplicate handling, stale
-prepare snapshots, accept-without-prepare fencing, and same-round owner ordering.
+prepare snapshots, accept-without-prepare fencing, same-round owner ordering, and
+same-ballot conflicts at the final round where piggybacking ends.
 `undersizedFastQuorumBreaksSafetyTest` is a negative control: with an intentionally
 unsafe 3-of-5 fast quorum, it constructs two divergent decisions and asserts that
 the ancestry invariants detect them.

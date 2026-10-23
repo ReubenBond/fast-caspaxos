@@ -1,0 +1,4 @@
+{
+  "maxHeap": "-Xmx4G",
+  "workers": 2
+}

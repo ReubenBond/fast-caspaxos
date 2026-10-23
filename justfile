@@ -115,16 +115,18 @@ quint-test:
     cd quint && quint typecheck FastCASPaxosMC.qnt
     cd quint && quint test FastCASPaxosTests.qnt --main FastCASPaxosTests --max-samples 1 --seed 1
     cd quint && quint test FastCASPaxosTests.qnt --main FastCASPaxosNegativeTests --max-samples 1 --seed 1
+    cd quint && quint test FastCASPaxosTests.qnt --main FastCASPaxosBoundaryTests --max-samples 1 --seed 1
 
 # Sample asynchronous schedules in the five-acceptor model
 [group('quint')]
 quint-simulate:
     cd quint && quint run FastCASPaxosMC.qnt --main FastCASPaxosMC --invariant safety --max-samples 2500 --max-steps 60 --n-threads 2 --seed 17
 
-# Check every execution through twelve transitions in the small model
+# Enumerate both finite Quint safety configurations with TLC
 [group('quint')]
 quint-verify:
-    cd quint && quint verify FastCASPaxosMC.qnt --main FastCASPaxosSmall --invariant safety --max-steps 12
+    cd quint && quint verify FastCASPaxosMC.qnt --main FastCASPaxosExhaustive --backend tlc --tlc-config tlc.json --invariant safety
+    cd quint && quint verify FastCASPaxosMC.qnt --main FastCASPaxosPipeline --backend tlc --tlc-config tlc.json --invariant safety
 
 # ─── Paper ──────────────────────────────────────────────────────────
 

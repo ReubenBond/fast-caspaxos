@@ -15,3 +15,15 @@ module FastCASPaxosEven {
     AcceptorCount = 4, ProposerCount = 2, MaxRound = 3, ValueDepth = 2, FastQuorum = 3
   ).* from "./FastCASPaxos"
 }
+
+module FastCASPaxosExhaustive {
+  import FastCASPaxos(
+    AcceptorCount = 3, ProposerCount = 1, MaxRound = 1, ValueDepth = 1, FastQuorum = 3
+  ).* from "./FastCASPaxos"
+}
+
+module FastCASPaxosPipeline {
+  import FastCASPaxos(
+    AcceptorCount = 2, ProposerCount = 1, MaxRound = 2, ValueDepth = 1, FastQuorum = 2
+  ).* from "./FastCASPaxos"
+}

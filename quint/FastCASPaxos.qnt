@@ -12,7 +12,6 @@ module FastCASPaxos {
   type Ack = { ballot: Ballot, acceptor: int, value: int, promised: Ballot }
 
   pure val acceptors = 1.to(AcceptorCount)
-  pure val owners = 1.to(ProposerCount)
   pure val zero = { round: 0, owner: 0 }
   pure val initialFast = { round: 1, owner: 0 }
   pure val ballots = tuples(1.to(MaxRound), 0.to(ProposerCount))

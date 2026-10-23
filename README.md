@@ -211,7 +211,7 @@ function onAccept(b, v, next):
 
 Fast CASPaxos is a tidy modification to CASPaxos which is a tidy modification to single-decree Paxos. Piggybacking `prepare` onto `accept` already gives us distinguished-proposer mode. Using the same trick to prepare a shared fast ballot (and adopting Fast Paxos vote tallying and value selection rules) gives us leaderless mode too. All in all, this lets the same implementation tune for different scenarios on a whim, and there are many cases where leaderless consensus is superior to leadered consensus, as discussed above.
 
-This repository includes TLA+ and [Quint models](quint/README.md), plus a deterministic simulation suite with fault injection and a linearizability checker. The Quint model checks fast/classic agreement, recovery, piggybacked promises, and committed-value ancestry, with reproducible scenarios and bounded safety verification in GitHub Actions. The repo-specific details are below.
+This repository includes TLA+ and [Quint models](quint/README.md), plus a deterministic simulation suite with fault injection and a linearizability checker. The Quint model checks fast/classic agreement, recovery, piggybacked promises, and committed-value ancestry, with reproducible scenarios and finite-state safety verification in GitHub Actions. The repo-specific details are below.
 
 ## Testing, etc
 

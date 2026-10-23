@@ -42,6 +42,7 @@ jobs:
         run: |
           quint test FastCASPaxosTests.qnt --main FastCASPaxosTests --max-samples 1 --seed 1
           quint test FastCASPaxosTests.qnt --main FastCASPaxosNegativeTests --max-samples 1 --seed 1
+          quint test FastCASPaxosTests.qnt --main FastCASPaxosBoundaryTests --max-samples 1 --seed 1
       - name: Seeded safety simulations
         run: |
           for seed in 17 20261023; do
@@ -59,9 +60,13 @@ jobs:
           if-no-files-found: ignore
 
   verify:
-    name: Bounded safety verification
+    name: Exhaustive safety (${{ matrix.model }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [FastCASPaxosExhaustive, FastCASPaxosPipeline]
     defaults:
       run:
         working-directory: quint
@@ -76,15 +81,16 @@ jobs:
           java-version: '21'
       - name: Install Quint
         run: npm install --global @informalsystems/quint@0.33.0
-      - name: Check all executions through twelve transitions
+      - name: Enumerate the complete finite state space
         run: |
-          quint verify FastCASPaxosMC.qnt --main FastCASPaxosSmall \
-            --invariant safety --max-steps 12
+          quint verify FastCASPaxosMC.qnt --main "${{ matrix.model }}" \
+            --backend tlc --tlc-config tlc.json --invariant safety
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: quint-verification-diagnostics
+          name: quint-verification-${{ matrix.model }}
           path: |
             quint/_apalache-out/**
+            quint/_tlc-out/**
             quint/*.itf.json
           if-no-files-found: ignore

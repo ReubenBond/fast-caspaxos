@@ -137,3 +137,21 @@ module FastCASPaxosNegativeTests {
     .then(3.reps(i => accept(i + 3, { ballot: c2, value: 5, next: zero })))
     .expect(chosen(c2) == Set(5) and not(chosenChain) and not(acceptedExtendsChosen))
 }
+
+module FastCASPaxosBoundaryTests {
+  import FastCASPaxos(
+    AcceptorCount = 3, ProposerCount = 1, MaxRound = 1, ValueDepth = 1, FastQuorum = 3
+  ).* from "./FastCASPaxos"
+
+  run sameBallotConflictWithoutPiggybackTest = init
+    .then(issuePrepared(initialFast, 0, 1, zero))
+    .then(issuePrepared(initialFast, 0, 2, zero))
+    .then(accept(1, { ballot: initialFast, value: 1, next: zero }))
+    .then(accept(1, { ballot: initialFast, value: 1, next: zero }))
+    .expect(and {
+      nodes.get(1) == { promised: initialFast, accepted: initialFast, value: 1 },
+      voters(initialFast, 1) == Set(1),
+      not(canAccept(1, { ballot: initialFast, value: 2, next: zero })),
+      safety,
+    })
+}
