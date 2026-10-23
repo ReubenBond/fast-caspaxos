@@ -28,6 +28,7 @@ public sealed class NodeOptions
     public int MaxSendMessageBytes { get; set; } = 4 * 1024 * 1024;
     public int MaxConcurrentConnections { get; set; } = 256;
     public int MaxStreamsPerConnection { get; set; } = 128;
+    public long MaxRequestBodyBytes { get; set; } = 4 * 1024 * 1024;
 
     public void Validate()
     {
@@ -45,6 +46,7 @@ public sealed class NodeOptions
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxSendMessageBytes);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxConcurrentConnections);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxStreamsPerConnection);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxRequestBodyBytes);
         ValidateDuration(OperationTimeout, nameof(OperationTimeout));
         ValidateDuration(AttemptTimeout, nameof(AttemptTimeout));
         ValidateDuration(RetryBackoff, nameof(RetryBackoff));

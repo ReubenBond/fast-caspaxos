@@ -13,7 +13,7 @@ on:
 
 jobs:
   test:
-    name: Core, register, SQLite, gRPC, and simulation tests
+    name: Core, register, SQLite, REST, gRPC, and simulation tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -24,11 +24,13 @@ jobs:
       - name: Test
         run: dotnet test csharp/FastCASPaxos.slnx --configuration Release --verbosity minimal
       - name: Build .NET 8 transport
-        run: dotnet build csharp/src/FastCASPaxos.Grpc/FastCASPaxos.Grpc.csproj --framework net8.0 --configuration Release --no-restore --verbosity minimal
+        run: |
+          dotnet build csharp/src/FastCASPaxos.Grpc/FastCASPaxos.Grpc.csproj --framework net8.0 --configuration Release --no-restore --verbosity minimal
+          dotnet build csharp/src/FastCASPaxos.Rest/FastCASPaxos.Rest.csproj --framework net8.0 --configuration Release --no-restore --verbosity minimal
       - name: Build runnable host and smoke client
         run: |
           dotnet build csharp/src/FastCASPaxos.Host/FastCASPaxos.Host.csproj --configuration Release --no-restore --verbosity minimal
           dotnet build csharp/samples/FastCASPaxos.Grpc.Smoke/FastCASPaxos.Grpc.Smoke.csproj --configuration Release --no-restore --verbosity minimal
-      - name: Three-process gRPC smoke, outage, and restart
+      - name: Three-process REST and gRPC smoke, outage, and restart
         shell: pwsh
         run: ./csharp/scripts/Test-GrpcCluster.ps1

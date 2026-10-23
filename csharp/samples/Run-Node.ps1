@@ -13,6 +13,7 @@ $data = [IO.Path]::GetFullPath($DataDirectory)
 $arguments = @(
     $dll, '--contentRoot', $source,
     "--Kestrel:Endpoints:Grpc:Url=http://127.0.0.1:$($BasePort + $id - 1)",
+    "--Kestrel:Endpoints:Rest:Url=http://127.0.0.1:$($BasePort + $id + 2)",
     "--FastCASPaxos:AcceptorId=$Node",
     "--FastCASPaxos:AcceptorDatabase=$(Join-Path $data "acceptor-$Node.db")",
     "--FastCASPaxos:ProposerId=$id",
