@@ -11,6 +11,8 @@ public sealed class ByteString : IEquatable<ByteString>
 
     public int Length => _bytes.Length;
 
+    internal ReadOnlySpan<byte> Span => _bytes;
+
     /// <summary>Returns a caller-owned copy.</summary>
     public byte[] ToArray() => (byte[])_bytes.Clone();
 

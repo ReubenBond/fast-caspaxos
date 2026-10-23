@@ -22,6 +22,7 @@ $arguments = @(
 for ($i = 0; $i -lt 3; $i++) {
     $arguments += "--FastCASPaxos:Peers:${i}:Id=$(@('a', 'b', 'c')[$i])"
     $arguments += "--FastCASPaxos:Peers:${i}:Endpoint=http://127.0.0.1:$($BasePort + $i)"
+    $arguments += "--FastCASPaxos:Peers:${i}:HttpEndpoint=http://127.0.0.1:$($BasePort + 3 + $i)"
 }
 & dotnet @arguments
 if ($LASTEXITCODE -ne 0) { throw "Node $Node exited with code $LASTEXITCODE." }

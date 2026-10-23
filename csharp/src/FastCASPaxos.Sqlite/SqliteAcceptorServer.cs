@@ -5,12 +5,13 @@ using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
 using FastCASPaxos.Protocol;
 using FastCASPaxos.Server;
+using FastCASPaxos.Server.Diagnostics;
 using Microsoft.Data.Sqlite;
 
 namespace FastCASPaxos.Sqlite;
 
 /// <summary>A file-backed keyed acceptor with a bounded, dedicated SQLite writer.</summary>
-public sealed class SqliteAcceptorServer : IKeyedAcceptor, IAsyncDisposable
+public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspection, IAsyncDisposable
 {
     private const int ApplicationId = 0x46435058;
     private readonly Channel<WorkItem> _queue;
@@ -18,16 +19,19 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, IAsyncDisposable
     private readonly TaskCompletionSource _stopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly string _databasePath;
     private readonly int _maxBatchSize;
+    private readonly NodeEventJournal? _diagnostics;
+    private readonly List<AcceptorStateObservation> _changes = [];
     private Exception? _failure;
     private int _disposeRequested;
 
     // Exposes the durability boundary to deterministic fault/cancellation tests.
     internal Action<SqliteConnection, SqliteTransaction, int>? BeforeCommit { get; set; }
 
-    private SqliteAcceptorServer(string databasePath, int queueCapacity, int maxBatchSize)
+    private SqliteAcceptorServer(string databasePath, int queueCapacity, int maxBatchSize, NodeEventJournal? diagnostics)
     {
         _databasePath = databasePath;
         _maxBatchSize = maxBatchSize;
+        _diagnostics = diagnostics;
         _queue = Channel.CreateBounded<WorkItem>(new BoundedChannelOptions(queueCapacity)
         {
             SingleReader = true,
@@ -42,13 +46,13 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, IAsyncDisposable
     /// </summary>
     public static async ValueTask<SqliteAcceptorServer> OpenAsync(
         string databasePath, int queueCapacity = 256, int maxBatchSize = 64,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, NodeEventJournal? diagnostics = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(queueCapacity);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxBatchSize);
         cancellationToken.ThrowIfCancellationRequested();
-        var server = new SqliteAcceptorServer(Path.GetFullPath(databasePath), queueCapacity, maxBatchSize);
+        var server = new SqliteAcceptorServer(Path.GetFullPath(databasePath), queueCapacity, maxBatchSize, diagnostics);
         new Thread(server.Run) { IsBackground = true, Name = "FastCASPaxos SQLite writer" }.Start();
         try
         {
@@ -73,7 +77,8 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, IAsyncDisposable
             var state = Load(connection, transaction, encodedKey, out var exists);
             var original = state;
             var result = AcceptorEngine.Prepare(ref state, request);
-            SaveIfChanged(connection, transaction, encodedKey, exists, original, state);
+            if (SaveIfChanged(connection, transaction, encodedKey, exists, original, state))
+                ObserveChange(key, state);
             return result;
         }, cancellationToken);
     }
@@ -96,7 +101,8 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, IAsyncDisposable
             var original = state;
             var result = AcceptorEngine.Accept(ref state,
                 new AcceptRequest<ByteString?>(request.Ballot, request.Value, request.NextBallotToPrepare));
-            SaveIfChanged(connection, transaction, encodedKey, exists, original, state);
+            if (SaveIfChanged(connection, transaction, encodedKey, exists, original, state))
+                ObserveChange(key, state);
             return result;
         }, cancellationToken);
     }
@@ -150,6 +156,56 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, IAsyncDisposable
 
             return new KeyPage(entries.AsReadOnly(), null);
         }, cancellationToken);
+    }
+
+    public ValueTask<LocalAcceptorState?> InspectAsync(string key, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return Enqueue((connection, transaction) =>
+        {
+            var state = Load(connection, transaction, EncodeKey(key), out var exists);
+            return exists ? new LocalAcceptorState(key, state.PromisedBallot, state.AcceptedBallot, state.AcceptedValue) : null;
+        }, cancellationToken);
+    }
+
+    public ValueTask<LocalAcceptorPage> InspectKeysAsync(
+        string prefix = "", string? afterKey = null, int limit = 100, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(prefix);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
+        return Enqueue((connection, transaction) =>
+        {
+            var encodedPrefix = EncodeKey(prefix);
+            var prefixEnd = GetPrefixEnd(encodedPrefix);
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT key, promised_round, promised_proposer, accepted_round, accepted_proposer, value
+                FROM acceptor_state WHERE key >= $prefix
+                """ + (prefixEnd is null ? "" : " AND key < $end")
+                + (afterKey is null ? "" : " AND key > $after") + " ORDER BY key LIMIT $limit;";
+            command.Parameters.AddWithValue("$prefix", encodedPrefix);
+            if (prefixEnd is not null) command.Parameters.AddWithValue("$end", prefixEnd);
+            if (afterKey is not null) command.Parameters.AddWithValue("$after", EncodeKey(afterKey));
+            command.Parameters.AddWithValue("$limit", (long)limit + 1);
+            using var reader = command.ExecuteReader();
+            var entries = new List<LocalAcceptorState>();
+            while (reader.Read())
+            {
+                if (entries.Count == limit) return new LocalAcceptorPage(entries.AsReadOnly(), entries[^1].Key);
+                entries.Add(new(DecodeKey(reader.GetFieldValue<byte[]>(0)),
+                    new Ballot(reader.GetInt32(1), reader.GetInt32(2)),
+                    reader.IsDBNull(3) ? Ballot.Zero : new Ballot(reader.GetInt32(3), reader.GetInt32(4)),
+                    reader.IsDBNull(5) ? null : new ByteString(reader.GetFieldValue<byte[]>(5))));
+            }
+            return new LocalAcceptorPage(entries.AsReadOnly(), null);
+        }, cancellationToken);
+    }
+
+    private void ObserveChange(string key, AcceptorState<ByteString?> state)
+    {
+        if (_diagnostics is not null)
+            _changes.Add(AcceptorStateObservation.From(new(key, state.PromisedBallot, state.AcceptedBallot, state.AcceptedValue)));
     }
 
     /// <summary>
@@ -207,6 +263,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, IAsyncDisposable
             {
                 connection.Open();
                 Initialize(connection);
+                _diagnostics?.Publish("storage", new StorageObservation("ready"));
                 _ready.SetResult();
                 while (_queue.Reader.WaitToReadAsync().AsTask().GetAwaiter().GetResult())
                 {
@@ -235,6 +292,8 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, IAsyncDisposable
                         transaction.Commit();
                     }
 
+                    foreach (var change in _changes) _diagnostics?.Publish("acceptor-state", change);
+                    _changes.Clear();
                     foreach (var item in batch)
                     {
                         item.Complete();
@@ -244,12 +303,15 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, IAsyncDisposable
                 }
             }
 
+            _diagnostics?.Publish("storage", new StorageObservation("stopped"));
             _stopped.SetResult();
         }
         catch (Exception exception)
         {
             // A commit error can be ambiguous. Retire the connection and require recovery from disk.
             Volatile.Write(ref _failure, exception);
+            _changes.Clear();
+            _diagnostics?.Publish("storage", new StorageObservation("failed", exception.GetType().Name));
             _queue.Writer.TryComplete(exception);
             foreach (var item in batch)
             {
@@ -348,7 +410,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, IAsyncDisposable
         };
     }
 
-    private static void SaveIfChanged(
+    private static bool SaveIfChanged(
         SqliteConnection connection, SqliteTransaction transaction, byte[] key, bool exists,
         AcceptorState<ByteString?> original, AcceptorState<ByteString?> state)
     {
@@ -356,7 +418,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, IAsyncDisposable
             && original.AcceptedBallot == state.AcceptedBallot
             && Equals(original.AcceptedValue, state.AcceptedValue))
         {
-            return;
+            return false;
         }
 
         using var command = connection.CreateCommand();
@@ -376,6 +438,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, IAsyncDisposable
         command.Parameters.AddWithValue("$ap", state.AcceptedBallot.IsZero ? DBNull.Value : state.AcceptedBallot.Proposer);
         command.Parameters.AddWithValue("$value", state.AcceptedValue is null ? DBNull.Value : state.AcceptedValue.ToArray());
         command.ExecuteNonQuery();
+        return true;
     }
 
     private static void ValidateBallot(Ballot ballot, string parameterName)
