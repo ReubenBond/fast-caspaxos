@@ -29,6 +29,10 @@ streams for protocol traffic, durable acceptor changes, and register outcomes.
 
 ### Three-process example
 
+[`just cluster`](../../../README.md#run-a-local-three-node-cluster) builds the
+host and console once and runs all three members in one terminal with retained
+data. For separate terminals, use the commands below.
+
 Build once as above. In three terminals, run these commands respectively,
 using an absolute durable directory appropriate for your machine:
 

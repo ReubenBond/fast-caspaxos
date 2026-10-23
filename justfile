@@ -78,6 +78,13 @@ rust-check: rust-fmt rust-lint rust-test-all rust-bench-check
 
 # ─── C# ─────────────────────────────────────────────────────────────
 
+# Build the host/UI once and run three durable nodes until Ctrl+C
+[group('csharp')]
+[script('pwsh', '-NoProfile', '-File')]
+cluster $data_directory="csharp/src/FastCASPaxos.Host/data/cluster" $base_port="5001":
+    $ErrorActionPreference = 'Stop'
+    & './csharp/samples/Run-Cluster.ps1' -DataDirectory $env:data_directory -BasePort $env:base_port
+
 # Check C# formatting without modifying files
 [group('csharp')]
 csharp-fmt:

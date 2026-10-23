@@ -215,6 +215,50 @@ This repository includes TLA+ and [Quint models](quint/README.md), plus a determ
 
 ## C# durable keyed acceptors
 
+### Run a local three-node cluster
+
+Install [Just](https://just.systems/) 1.44+ (1.59 tested), PowerShell 7 (`pwsh`),
+the .NET 10 SDK, and Node.js 24+ with npm. From the repository root:
+
+```powershell
+just cluster
+```
+
+This builds the Release host and React console once, then runs nodes `a`, `b`,
+and `c` concurrently in the foreground with a shared fixed membership. Each
+host streams its logs to the terminal; its listening messages indicate startup.
+
+| Node | gRPC | REST | Administration console |
+| --- | --- | --- | --- |
+| a | `http://127.0.0.1:5001` | `http://127.0.0.1:5004` | http://127.0.0.1:5004/admin/ |
+| b | `http://127.0.0.1:5002` | `http://127.0.0.1:5005` | http://127.0.0.1:5005/admin/ |
+| c | `http://127.0.0.1:5003` | `http://127.0.0.1:5006` | http://127.0.0.1:5006/admin/ |
+
+Override the data directory and first port with positional arguments:
+
+```powershell
+just cluster "C:\cluster data\demo" 15001
+just cluster "./cluster data/demo" 15001
+```
+
+The base port is 1-65530; gRPC uses offsets 0-2 and REST/admin uses offsets 3-5.
+Relative data paths resolve from the repository root. By default, all six
+SQLite databases and their WAL files live in the git-ignored
+`csharp/src/FastCASPaxos.Host/data/cluster` directory. Restart with the same
+directory to retain values, acceptor identities, and proposer allocators.
+Use a separate directory and six separate ports for each concurrent cluster.
+
+Press **Ctrl+C once** in the launch terminal. The terminal interrupt reaches
+the hosts for graceful shutdown; the launcher allows a shared 10-second grace
+period and then force-stops any remaining owned processes. A build or node
+failure exits with an error and cleans up the invocation's hosts. Forced stops
+use SQLite crash recovery on restart; an interrupted write may require
+application reconciliation. Stop/restart retains the durable files.
+The [single-node commands](csharp/src/FastCASPaxos.Grpc/README.md#three-process-example)
+support running each member in its own terminal.
+
+### APIs and storage
+
 `FastCASPaxos.Host` serves the protocol and replicated register APIs over
 gRPC, plus raw-byte conditional register APIs over HTTP/REST, backed by SQLite
 and a configured fixed peer set. The gRPC package includes remote adapters for
