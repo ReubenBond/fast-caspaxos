@@ -193,6 +193,10 @@ class LocalClusterTests(unittest.TestCase):
         self.stopped(cluster)
         self.assertIn("Waiting for nodes to finish graceful shutdown.", cluster.output())
         self.assertIn("Shutdown cancellation ended the durability wait", cluster.output())
+        exit_codes = re.findall(r"finished shutdown with exit code (\d+)\.", cluster.output())
+        self.assertEqual(len(exit_codes), 3, cluster.output())
+        self.assertIn("1", exit_codes, cluster.output())
+        self.assertTrue(all(code in ("0", "1") for code in exit_codes), cluster.output())
         self.assertNotIn("Force-stopping", cluster.output())
         for name in ("acceptor-a", "acceptor-b", "acceptor-c", "proposer-1", "proposer-2", "proposer-3"):
             self.assertTrue((self.data / f"{name}.db").is_file())
@@ -208,6 +212,16 @@ class LocalClusterTests(unittest.TestCase):
         self.stopped(restarted)
         self.assertNotEqual(restarted.process.returncode, 0)
         self.assertIn("stopping the cluster", restarted.output())
+
+    def test_empty_cluster_shutdown_completes_successfully(self):
+        cluster = self.start()
+        cluster.ready()
+        cluster.interrupt()
+        self.stopped(cluster)
+        self.assertEqual(
+            re.findall(r"finished shutdown with exit code (\d+)\.", cluster.output()),
+            ["0", "0", "0"], cluster.output(),
+        )
 
     def test_failed_node_start_cleans_up_siblings(self):
         (self.data / "acceptor-b.db").mkdir(parents=True)

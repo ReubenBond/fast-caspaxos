@@ -171,4 +171,5 @@ Pages bound inventory memory. One outstanding call slot per peer bounds retained
 work even when a transport ignores cancellation; per-attempt and per-key deadlines
 bound waiting. Cancellation ends the scan promptly. Endpoint implementations
 complete any already selected durable transaction according to their storage
-contract.
+contract. Local storage and integrity failures retain their original exceptions;
+timeouts and capacity exhaustion are reported as temporary unavailability.

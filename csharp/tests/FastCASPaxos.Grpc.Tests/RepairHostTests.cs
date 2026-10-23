@@ -142,6 +142,13 @@ public sealed class RepairHostTests
         await node.Acceptor.AcceptAsync("local", new(new(1, 0), Payload, new()));
         var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstRemoteCommitted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        cluster.RemoteAcceptors[0].Accept = async (key, request, token) =>
+        {
+            var result = await cluster.Stores[0].AcceptAsync(key, request, token);
+            firstRemoteCommitted.TrySetResult(result.IsAccepted);
+            return result;
+        };
         cluster.RemoteAcceptors[1].Accept = async (key, request, _) =>
         {
             arrived.TrySetResult();
@@ -154,13 +161,18 @@ public sealed class RepairHostTests
         {
             var stopping = hosted ? endpoint.App.StopAsync(watchdog.Token) : node.StopAsync(watchdog.Token);
             await arrived.Task.WaitAsync(Watchdog);
+            // Independent HTTP/2 requests can arrive in either order. The blocked second
+            // remote proves nothing about the first remote's durable acceptance.
+            Assert.True(await firstRemoteCommitted.Task.WaitAsync(Watchdog));
             Assert.False(stopping.IsCompleted);
             Assert.Equal(2, node.TargetReplicas);
             Assert.True(node.IsDraining);
             Assert.False(node.IsShutdownComplete);
             Assert.Equal("running", node.LastRepair!.State);
             Assert.True(node.LastRepair.Departing);
-            Assert.Equal(Payload, (await cluster.Stores[0].FetchIfDifferentAsync("local", null)).State!.AcceptedValue);
+            var surviving = await cluster.Stores[0].FetchIfDifferentAsync("local", null);
+            Assert.Equal(ConditionalAcceptorStatus.Different, surviving.Status);
+            Assert.Equal(Payload, Assert.IsType<KeyedAcceptorState>(surviving.State).AcceptedValue);
             Assert.Equal(ConditionalAcceptorStatus.Missing, (await cluster.Stores[1].FetchIfDifferentAsync("local", null)).Status);
             // This real HTTP/2 read must succeed while IHostedLifecycleService.StoppingAsync
             // is blocked. Calling node.StopAsync only after Kestrel.StopAsync would fail here.
