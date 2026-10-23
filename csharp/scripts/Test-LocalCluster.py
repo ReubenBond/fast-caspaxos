@@ -9,6 +9,7 @@ import re
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -67,11 +68,17 @@ class Cluster:
         self.base = base
         self.log = directory / f"launch-{time.time_ns()}.log"
         self.pids = {}
+        startup = None
+        if WINDOWS:
+            startup = subprocess.STARTUPINFO()
+            startup.dwFlags = subprocess.STARTF_USESHOWWINDOW
+            startup.wShowWindow = subprocess.SW_HIDE
         with self.log.open("wb") as output:
             self.process = subprocess.Popen(
                 ["just", "cluster", str(data), str(base)],
                 cwd=ROOT, env=env, stdout=output, stderr=subprocess.STDOUT,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if WINDOWS else 0,
+                creationflags=subprocess.CREATE_NEW_CONSOLE if WINDOWS else 0,
+                startupinfo=startup,
                 start_new_session=not WINDOWS,
             )
 
@@ -84,7 +91,9 @@ class Cluster:
 
     def interrupt(self):
         if WINDOWS:
-            self.process.send_signal(signal.CTRL_BREAK_EVENT)
+            # Ctrl+Break enters PowerShell's debugger. Send Ctrl+C to our isolated console.
+            subprocess.run([sys.executable, __file__, "--interrupt", str(self.process.pid)],
+                           creationflags=subprocess.CREATE_NO_WINDOW, check=True, timeout=10)
         else:
             os.killpg(self.process.pid, signal.SIGINT)
 
@@ -230,9 +239,17 @@ class LocalClusterTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    # A CI worker may have no console; Windows control events require a shared one.
-    if WINDOWS and not ctypes.windll.kernel32.GetConsoleCP():
-        if not ctypes.windll.kernel32.AllocConsole():
-            raise RuntimeError("Could not allocate the test console")
-    os.environ["DOTNET_CLI_UI_LANGUAGE"] = "en"
-    unittest.main(verbosity=2)
+    if WINDOWS and len(sys.argv) == 3 and sys.argv[1] == "--interrupt":
+        kernel = ctypes.windll.kernel32
+        kernel.FreeConsole()
+        if not kernel.AttachConsole(int(sys.argv[2])):
+            raise ctypes.WinError()
+        try:
+            if not kernel.SetConsoleCtrlHandler(None, True) or not kernel.GenerateConsoleCtrlEvent(0, 0):
+                raise ctypes.WinError()
+            time.sleep(0.2)
+        finally:
+            kernel.FreeConsole()
+    else:
+        os.environ["DOTNET_CLI_UI_LANGUAGE"] = "en"
+        unittest.main(verbosity=2)
