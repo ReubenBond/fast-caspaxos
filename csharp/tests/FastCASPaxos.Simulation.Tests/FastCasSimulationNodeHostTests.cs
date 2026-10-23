@@ -356,6 +356,114 @@ public sealed class FastCasSimulationNodeHostTests
         Assert.Equal(replaySafePreparedBallot, proposerTwoHost.PreparedBallot);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void QueuedRead_CompletesThroughItsOwnAcceptQuorum(bool forwarded)
+    {
+        var clock = new SimulationClock(DateTimeOffset.UnixEpoch);
+        var guard = new SingleThreadedGuard();
+        var acceptorQueue = new SimulationTaskQueue(clock, guard);
+        var clientQueue = new SimulationTaskQueue(clock, guard);
+        var network = new SimulationNetwork(() => [], new SimulationRandom(918));
+        var transport = new FastCasSimulationTransport<TestValue>(network);
+        FastCasAddress[] acceptors = [FastCasAddress.Acceptor(1), FastCasAddress.Acceptor(2), FastCasAddress.Acceptor(3)];
+        List<IFastCasTransportMessage<TestValue>> requests = [];
+        List<IFastCasTransportMessage<TestValue>> responses = [];
+        foreach (var acceptor in acceptors)
+        {
+            transport.RegisterEndpoint(new(acceptor, acceptorQueue, requests.Add));
+        }
+
+        var caller = FastCasAddress.Client();
+        var forwardingProposer = FastCasAddress.Proposer(2);
+        transport.RegisterEndpoint(new(caller, clientQueue, responses.Add));
+        transport.RegisterEndpoint(new(forwardingProposer, clientQueue, responses.Add));
+        var host = new FastCasProposerHost<TestValue>(
+            new FastCasNodeId(FastCasParticipantRole.Proposer, 1),
+            acceptors,
+            transport,
+            default,
+            new FastCasSimulationOptions
+            {
+                ProposerModePolicy = ProposerModePolicy.StaticClassic,
+                ProposerResponseTimeout = TimeSpan.Zero,
+            });
+
+        host.Deliver(new FastCasProposeRequestMessage<TestValue>(caller, host.Address, 1, AppendOperation(1, "A")));
+        var read = new Operation<int, TestValue>
+        {
+            Input = 0,
+            Apply = static (current, _) => (OperationStatus.NotApplicable, current),
+        };
+        if (forwarded)
+        {
+            host.Deliver(new FastCasForwardProposeRequestMessage<TestValue>(
+                forwardingProposer, host.Address, caller, 2, read));
+        }
+        else
+        {
+            host.Deliver(new FastCasProposeRequestMessage<TestValue>(caller, host.Address, 2, read));
+        }
+
+        var writeBallot = host.Ballot;
+        Promise(acceptors[0], Ballot.Zero, default);
+        Promise(acceptors[1], Ballot.Zero, default);
+        Accept(acceptors[0]);
+        Accept(acceptors[1]);
+        RunUntilIdle(acceptorQueue, clientQueue, []);
+
+        var value = new TestValue(1, "A");
+        var writeResponse = Assert.IsType<FastCasProposeResponseMessage<TestValue>>(Assert.Single(responses));
+        Assert.Equal(1, writeResponse.RequestId);
+        Assert.Equal(value, writeResponse.Payload.CommittedValue);
+        Assert.True(host.HasPendingClientRequests);
+        Assert.True(host.Ballot > writeBallot);
+        Assert.Equal(6, requests.OfType<FastCasPrepareRequestMessage<TestValue>>().Count());
+
+        Promise(acceptors[0], writeBallot, value);
+        Promise(acceptors[1], writeBallot, value);
+        RunUntilIdle(acceptorQueue, clientQueue, []);
+        var readAccepts = requests.OfType<FastCasAcceptRequestMessage<TestValue>>()
+            .Where(message => message.Payload.Ballot == host.Ballot).ToArray();
+        Assert.Equal(3, readAccepts.Length);
+        Assert.All(readAccepts, message => Assert.Equal(value, message.Payload.Value));
+        Assert.Single(responses);
+
+        Accept(acceptors[0]);
+        RunUntilIdle(acceptorQueue, clientQueue, []);
+        Assert.Single(responses);
+        Accept(acceptors[1]);
+        RunUntilIdle(acceptorQueue, clientQueue, []);
+
+        Assert.Equal(2, responses.Count);
+        if (forwarded)
+        {
+            var response = Assert.IsType<FastCasForwardProposeResponseMessage<TestValue>>(responses[1]);
+            Assert.Equal(forwardingProposer, response.To);
+            Assert.Equal(caller, response.OriginalCaller);
+            Assert.Equal(2, response.RequestId);
+            Assert.Equal(value, response.Payload.CommittedValue);
+        }
+        else
+        {
+            var response = Assert.IsType<FastCasProposeResponseMessage<TestValue>>(responses[1]);
+            Assert.Equal(caller, response.To);
+            Assert.Equal(2, response.RequestId);
+            Assert.Equal(value, response.Payload.CommittedValue);
+        }
+
+        Assert.False(host.HasPendingClientRequests);
+
+        void Promise(FastCasAddress acceptor, Ballot acceptedBallot, TestValue acceptedValue) =>
+            host.Deliver(new FastCasPreparePromiseMessage<TestValue>(
+                acceptor, host.Address, new(host.Ballot.Round, acceptor, acceptedBallot, acceptedValue)));
+
+        void Accept(FastCasAddress acceptor) =>
+            host.Deliver(new FastCasAcceptAcceptedMessage<TestValue>(
+                acceptor, host.Address, new(host.Ballot.Round, acceptor, Ballot.Zero)));
+    }
+
     private static IOperation<TestValue> AppendOperation(int expectedVersion, string suffix) =>
         new Operation<TestValue, TestValue>
         {
@@ -411,4 +519,3 @@ public sealed class FastCasSimulationNodeHostTests
         public override string ToString() => $"Val({((Value == default && Version == default) ? "GENESIS" : $"{Value}@{Version}")})";
     }
 }
-

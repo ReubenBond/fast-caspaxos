@@ -7,6 +7,161 @@ namespace FastCASPaxos.Core.Tests.Protocol;
 
 public sealed class CoreProtocolRegressionTests
 {
+    [Theory]
+    [InlineData(true, 9, 99, false)]
+    [InlineData(true, 10, 1, false)]
+    [InlineData(true, 10, 2, true)]
+    [InlineData(true, 10, 3, true)]
+    [InlineData(true, 11, 1, true)]
+    [InlineData(false, 9, 99, false)]
+    [InlineData(false, 10, 1, false)]
+    [InlineData(false, 10, 2, true)]
+    [InlineData(false, 10, 3, true)]
+    [InlineData(false, 11, 1, true)]
+    public void AcceptorEngine_Prepare_UsesEffectiveBallotFloor(
+        bool acceptedIsFloor, int round, int proposer, bool shouldPromise)
+    {
+        var floor = new Ballot(10, 2);
+        var lower = new Ballot(5, 1);
+        var acceptedBallot = acceptedIsFloor ? floor : lower;
+        var promisedBallot = acceptedIsFloor ? lower : floor;
+        var value = new TestValue(7, "accepted");
+        var engine = new RecordingAcceptorEngine<TestValue, string>(
+            "A", promisedBallot, acceptedBallot, value);
+        var request = new PrepareRequest(new Ballot(round, proposer));
+
+        engine.Prepare(request);
+
+        Assert.Equal(shouldPromise, engine.LastPrepareResult!.Value.IsPromised);
+        Assert.Equal(shouldPromise ? Ballot.Zero : floor, engine.LastPrepareResult!.Value.ConflictingBallot);
+        Assert.Equal(acceptedBallot, engine.LastPrepareResult!.Value.AcceptedBallot);
+        Assert.Equal(value, engine.LastPrepareResult!.Value.AcceptedValue);
+        Assert.Equal(shouldPromise ? request.Ballot : promisedBallot, engine.PromisedBallot);
+        Assert.Equal(acceptedBallot, engine.AcceptedBallot);
+        Assert.Equal(value, engine.AcceptedValue);
+    }
+
+    [Theory]
+    [InlineData(true, 9, 99, false)]
+    [InlineData(true, 10, 1, false)]
+    [InlineData(true, 10, 2, false)]
+    [InlineData(true, 10, 3, true)]
+    [InlineData(true, 11, 1, true)]
+    [InlineData(false, 9, 99, false)]
+    [InlineData(false, 10, 1, false)]
+    [InlineData(false, 10, 2, true)]
+    [InlineData(false, 10, 3, true)]
+    [InlineData(false, 11, 1, true)]
+    public void AcceptorEngine_Accept_UsesEffectiveBallotFloor(
+        bool acceptedIsFloor, int round, int proposer, bool shouldAccept)
+    {
+        var floor = new Ballot(10, 2);
+        var lower = new Ballot(5, 1);
+        var acceptedBallot = acceptedIsFloor ? floor : lower;
+        var promisedBallot = acceptedIsFloor ? lower : floor;
+        var value = new TestValue(7, "accepted");
+        var replacement = new TestValue(8, "replacement");
+        var futurePromise = new Ballot(20, 4);
+        var engine = new RecordingAcceptorEngine<TestValue, string>(
+            "A", promisedBallot, acceptedBallot, value);
+        var request = new AcceptRequest<TestValue>(new Ballot(round, proposer), replacement, futurePromise);
+
+        engine.Accept(request);
+
+        Assert.Equal(shouldAccept, engine.LastAcceptResult!.Value.IsAccepted);
+        Assert.Equal(shouldAccept ? Ballot.Zero : floor, engine.LastAcceptResult!.Value.ConflictingBallot);
+        Assert.Equal(shouldAccept ? futurePromise : promisedBallot, engine.PromisedBallot);
+        Assert.Equal(shouldAccept ? request.Ballot : acceptedBallot, engine.AcceptedBallot);
+        Assert.Equal(shouldAccept ? replacement : value, engine.AcceptedValue);
+    }
+
+    [Theory]
+    [InlineData(10, 2, 7, "accepted", true)]
+    [InlineData(10, 1, 7, "accepted", false)]
+    [InlineData(10, 2, 8, "accepted", false)]
+    [InlineData(10, 2, 7, "different", false)]
+    public void AcceptorEngine_Accept_IdempotenceRequiresExactBallotAndEntireValue(
+        int round, int proposer, int version, string payload, bool shouldAccept)
+    {
+        var acceptedBallot = new Ballot(10, 2);
+        var promisedBallot = new Ballot(11, 3);
+        var value = new TestValue(7, "accepted");
+        var engine = new RecordingAcceptorEngine<TestValue, string>(
+            "A", promisedBallot, acceptedBallot, value);
+
+        engine.Accept(new AcceptRequest<TestValue>(
+            new Ballot(round, proposer), new TestValue(version, payload), new Ballot(20, 4)));
+
+        Assert.Equal(shouldAccept, engine.LastAcceptResult!.Value.IsAccepted);
+        Assert.Equal(shouldAccept ? Ballot.Zero : promisedBallot, engine.LastAcceptResult!.Value.ConflictingBallot);
+        Assert.Equal(shouldAccept ? promisedBallot : Ballot.Zero, engine.LastAcceptResult!.Value.PromisedBallot);
+        Assert.Equal(promisedBallot, engine.PromisedBallot);
+        Assert.Equal(acceptedBallot, engine.AcceptedBallot);
+        Assert.Equal(value, engine.AcceptedValue);
+    }
+
+    [Fact]
+    public void AcceptorEngine_DelayedAccept_CannotEraseChosenValue()
+    {
+        var a = new RecordingAcceptorEngine<TestValue, string>("A", default);
+        var b = new RecordingAcceptorEngine<TestValue, string>("B", default);
+        var c = new RecordingAcceptorEngine<TestValue, string>("C", default);
+        var oldBallot = new Ballot(5, 1);
+        var newBallot = new Ballot(10, 2);
+        var newValue = new TestValue(1, "new");
+
+        foreach (var acceptor in new[] { a, c })
+        {
+            acceptor.Prepare(new PrepareRequest(oldBallot));
+            Assert.True(acceptor.LastPrepareResult!.Value.IsPromised);
+        }
+
+        foreach (var acceptor in new[] { b, c })
+        {
+            acceptor.Prepare(new PrepareRequest(newBallot));
+            Assert.True(acceptor.LastPrepareResult!.Value.IsPromised);
+        }
+
+        // A missed the newer prepare, but A+B can still choose the newer value.
+        foreach (var acceptor in new[] { a, b })
+        {
+            acceptor.Accept(new AcceptRequest<TestValue>(newBallot, newValue, Ballot.Zero));
+            Assert.True(acceptor.LastAcceptResult!.Value.IsAccepted);
+            Assert.Equal(newBallot, acceptor.AcceptedBallot);
+            Assert.Equal(newValue, acceptor.AcceptedValue);
+        }
+
+        Assert.Equal(oldBallot, a.PromisedBallot);
+        a.ResetRecording();
+        a.Accept(new AcceptRequest<TestValue>(oldBallot, new TestValue(1, "old"), Ballot.Zero));
+
+        Assert.False(a.LastAcceptResult!.Value.IsAccepted);
+        Assert.Equal(newBallot, a.LastAcceptRejected!.Value.ConflictingBallot);
+        Assert.Equal(newBallot, a.AcceptedBallot);
+        Assert.Equal(newValue, a.AcceptedValue);
+        Assert.Equal(oldBallot, a.PromisedBallot);
+
+        // Real rejection responses move a fresh proposer to precisely (11,3).
+        var recovery = CreateThreeNodeProposer(3);
+        recovery.StartProposal(ReadOperation());
+        var initialPrepare = AssertPrepare(recovery, new Ballot(1, 3));
+        RoutePrepare(recovery, initialPrepare, a);
+        RoutePrepare(recovery, initialPrepare, c);
+        var recoveryPrepare = AssertPrepare(recovery, new Ballot(11, 3));
+
+        recovery.ResetRecording();
+        RoutePrepare(recovery, recoveryPrepare, a);
+        Assert.Null(recovery.LastSendAccept);
+        RoutePrepare(recovery, recoveryPrepare, c);
+        var identityAccept = AssertAccept(recovery, recoveryPrepare.Ballot, newValue);
+        AssertNotCompleted(recovery);
+
+        RouteAccept(recovery, identityAccept, a);
+        AssertNotCompleted(recovery);
+        RouteAccept(recovery, identityAccept, c);
+        AssertCompleted(recovery, newValue);
+    }
+
     [Fact]
     public void AcceptorEngine_Accept_PiggybacksFuturePrepare()
     {
@@ -223,7 +378,17 @@ public sealed class CoreProtocolRegressionTests
         engine.ResetRecording();
         engine.HandlePreparePromised(SuccessPrepare(prepare.Ballot.Round, "a3"));
 
+        var accept = AssertAccept(engine, prepare.Ballot, default);
+        AssertNotCompleted(engine);
+        Assert.True(engine.HasCurrentOperation);
+        engine.HandleAcceptAccepted(SuccessAccept(accept.Ballot.Round, "a1", accept.Ballot));
+        AssertNotCompleted(engine);
+        engine.HandleAcceptAccepted(SuccessAccept(accept.Ballot.Round, "a2", accept.Ballot));
+        AssertNotCompleted(engine);
+        engine.HandleAcceptAccepted(SuccessAccept(accept.Ballot.Round, "a3", accept.Ballot));
+
         Assert.NotNull(engine.LastProposalCompleted);
+        Assert.Equal(default(TestValue), engine.LastProposalCompleted!.Value.CommittedValue);
         Assert.Same(operation, engine.CurrentOperationDuringCompletion);
         Assert.False(engine.HasCurrentOperation);
     }
@@ -298,6 +463,13 @@ public sealed class CoreProtocolRegressionTests
         Assert.Equal(acceptedValue, engine.CachedValue);
         Assert.Equal(new TestValue(2, "AB"), engine.PendingAcceptValue);
         Assert.Null(engine.LastValueCommitted);
+
+        engine.HandleAcceptAccepted(SuccessAccept(recoveryAccept.Ballot.Round, "a1", recoveryAccept.Ballot));
+        AssertNotCompleted(engine);
+        engine.HandleAcceptAccepted(SuccessAccept(recoveryAccept.Ballot.Round, "a2", recoveryAccept.Ballot));
+        AssertNotCompleted(engine);
+        engine.HandleAcceptAccepted(SuccessAccept(recoveryAccept.Ballot.Round, "a3", recoveryAccept.Ballot));
+        AssertCompleted(engine, new TestValue(2, "AB"));
     }
 
     [Fact]
@@ -761,6 +933,258 @@ public sealed class CoreProtocolRegressionTests
             preparedFastBallot.NextRound(proposer: 0));
 
         Assert.Equal(preparedFastBallot, accept.Ballot);
+    }
+
+    [Fact]
+    public void ProposerEngine_Read_PartialAcceptedValueRequiresIdentityQuorumBeforeLaterRead()
+    {
+        var previous = new TestValue(7, "previous");
+        var x = new TestValue(8, "X");
+        var previousBallot = new Ballot(1, 1);
+        var partialBallot = new Ballot(1, 2);
+        var a = new RecordingAcceptorEngine<TestValue, string>("A", partialBallot, partialBallot, x);
+        var b = new RecordingAcceptorEngine<TestValue, string>("B", previousBallot, previousBallot, previous);
+        var c = new RecordingAcceptorEngine<TestValue, string>("C", previousBallot, previousBallot, previous);
+        var r1 = CreateThreeNodeProposer(3);
+
+        r1.StartProposal(ReadOperation());
+        var prepare = AssertPrepare(r1, new Ballot(1, 3));
+        RoutePrepare(r1, prepare, a);
+        Assert.Null(r1.LastSendAccept);
+        AssertNotCompleted(r1);
+        RoutePrepare(r1, prepare, b);
+
+        var identityAccept = AssertAccept(r1, prepare.Ballot, x);
+        Assert.Equal(ProposerValueStatus.PendingAccept, r1.CurrentValueStatus);
+        AssertNotCompleted(r1);
+        Assert.Equal(previous, b.AcceptedValue);
+        Assert.Equal(previous, c.AcceptedValue);
+
+        RouteAccept(r1, identityAccept, a);
+        AssertNotCompleted(r1);
+        RouteAccept(r1, identityAccept, b);
+        AssertCompleted(r1, x);
+        Assert.Equal(x, b.AcceptedValue);
+        Assert.Equal(previous, c.AcceptedValue);
+
+        // The next read's prepare quorum excludes A, the only original holder of X.
+        var r2 = CreateThreeNodeProposer(4);
+        r2.StartProposal(ReadOperation());
+        var secondPrepare = AssertPrepare(r2, new Ballot(1, 4));
+        RoutePrepare(r2, secondPrepare, b);
+        Assert.Null(r2.LastSendAccept);
+        AssertNotCompleted(r2);
+        RoutePrepare(r2, secondPrepare, c);
+        var secondAccept = AssertAccept(r2, secondPrepare.Ballot, x);
+        AssertNotCompleted(r2);
+        RouteAccept(r2, secondAccept, b);
+        AssertNotCompleted(r2);
+        RouteAccept(r2, secondAccept, c);
+
+        AssertCompleted(r2, x);
+        Assert.Equal(x, c.AcceptedValue);
+    }
+
+    [Fact]
+    public void ProposerEngine_Read_StalePiggybackedBallotRepreparesAndReturnsNewerValue()
+    {
+        var a = new RecordingAcceptorEngine<TestValue, string>("A", default);
+        var b = new RecordingAcceptorEngine<TestValue, string>("B", default);
+        var reader = CreateThreeNodeProposer(1, ProposerModePolicy.StaticLeader);
+        var cached = new TestValue(1, "A");
+        var newer = new TestValue(2, "AB");
+
+        // Establish a real reusable promise, rather than injecting PreparedBallot.
+        reader.StartProposal(AppendOperation(1, "A"));
+        var firstPrepare = AssertPrepare(reader, new Ballot(1, 1));
+        RoutePrepare(reader, firstPrepare, a);
+        RoutePrepare(reader, firstPrepare, b);
+        var reusableBallot = new Ballot(2, 1);
+        var firstAccept = AssertAccept(reader, firstPrepare.Ballot, cached, reusableBallot);
+        RouteAccept(reader, firstAccept, a);
+        RouteAccept(reader, firstAccept, b);
+        AssertCompleted(reader, cached);
+        Assert.Equal(reusableBallot, reader.PreparedBallot);
+
+        // Another proposer overtakes that promise and chooses a newer value.
+        var writer = CreateThreeNodeProposer(2);
+        writer.StartProposal(AppendOperation(2, "B"));
+        var initialWriterPrepare = AssertPrepare(writer, new Ballot(1, 2));
+        RoutePrepare(writer, initialWriterPrepare, a);
+        RoutePrepare(writer, initialWriterPrepare, b);
+        var writerPrepare = AssertPrepare(writer, new Ballot(2, 2));
+        RoutePrepare(writer, writerPrepare, a);
+        RoutePrepare(writer, writerPrepare, b);
+        var writerAccept = AssertAccept(writer, writerPrepare.Ballot, newer);
+        RouteAccept(writer, writerAccept, a);
+        AssertNotCompleted(writer);
+        RouteAccept(writer, writerAccept, b);
+        AssertCompleted(writer, newer);
+        Assert.Equal(cached, reader.CachedValue);
+        Assert.Equal(reusableBallot, reader.PreparedBallot);
+
+        var readInputs = new List<TestValue>();
+        var read = new Operation<int, TestValue>
+        {
+            Input = 0,
+            Name = "Read current value",
+            Apply = (current, _) =>
+            {
+                readInputs.Add(current);
+                return (OperationStatus.NotApplicable, current);
+            },
+        };
+        reader.ResetRecording();
+        reader.StartProposal(read);
+        Assert.Null(reader.LastSendPrepare);
+        var staleAccept = AssertAccept(reader, reusableBallot, cached, new Ballot(3, 1));
+        Assert.Equal(new[] { cached }, readInputs);
+        AssertNotCompleted(reader);
+
+        // Both acceptors reject the obsolete reusable ballot after choosing the newer value.
+        reader.ResetRecording();
+        RouteAccept(reader, staleAccept, a);
+        Assert.Equal(writerAccept.Ballot, a.LastAcceptRejected!.Value.ConflictingBallot);
+        Assert.Null(reader.LastSendPrepare);
+        AssertNotCompleted(reader);
+        RouteAccept(reader, staleAccept, b);
+        Assert.Equal(writerAccept.Ballot, b.LastAcceptRejected!.Value.ConflictingBallot);
+        var retryPrepare = AssertPrepare(reader, new Ballot(3, 1));
+        AssertNotCompleted(reader);
+        Assert.Equal(newer, a.AcceptedValue);
+        Assert.Equal(newer, b.AcceptedValue);
+
+        reader.ResetRecording();
+        RoutePrepare(reader, retryPrepare, a);
+        Assert.Null(reader.LastSendAccept);
+        AssertNotCompleted(reader);
+        RoutePrepare(reader, retryPrepare, b);
+        var freshAccept = AssertAccept(reader, retryPrepare.Ballot, newer, new Ballot(4, 1));
+        Assert.Equal(new[] { cached, newer }, readInputs);
+        AssertNotCompleted(reader);
+        RouteAccept(reader, freshAccept, a);
+        AssertNotCompleted(reader);
+        RouteAccept(reader, freshAccept, b);
+        AssertCompleted(reader, newer);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ProposerEngine_NotApplicable_IgnoresOutputAndPreservesRecoveredValue(bool returnDefault)
+    {
+        var recovered = new TestValue(7, "whole-history");
+        var ignored = returnDefault ? default : new TestValue(99, "must-not-be-accepted");
+        var ballot = new Ballot(1, 1);
+        var a = new RecordingAcceptorEngine<TestValue, string>("A", ballot, ballot, recovered);
+        var b = new RecordingAcceptorEngine<TestValue, string>("B", ballot, ballot, recovered);
+        var engine = CreateThreeNodeProposer(2);
+        var operation = new Operation<TestValue, TestValue>
+        {
+            Input = ignored,
+            Name = "Not applicable with ignored output",
+            Apply = static (_, output) => (OperationStatus.NotApplicable, output),
+        };
+
+        engine.StartProposal(operation);
+        var prepare = AssertPrepare(engine, new Ballot(1, 2));
+        RoutePrepare(engine, prepare, a);
+        RoutePrepare(engine, prepare, b);
+        var identityAccept = AssertAccept(engine, prepare.Ballot, recovered);
+        AssertNotCompleted(engine);
+        RouteAccept(engine, identityAccept, a);
+        AssertNotCompleted(engine);
+        RouteAccept(engine, identityAccept, b);
+
+        AssertCompleted(engine, recovered);
+        Assert.Equal(recovered, a.AcceptedValue);
+        Assert.Equal(recovered, b.AcceptedValue);
+    }
+
+    [Fact]
+    public void ProposerEngine_FailedCas_PreservesValueUntilIdentityAcceptQuorum()
+    {
+        var recovered = new TestValue(7, "unchanged");
+        var ballot = new Ballot(1, 1);
+        var a = new RecordingAcceptorEngine<TestValue, string>("A", ballot, ballot, recovered);
+        var b = new RecordingAcceptorEngine<TestValue, string>("B", ballot, ballot, recovered);
+        var engine = CreateThreeNodeProposer(2);
+
+        // Version 6 cannot replace the recovered version 7: AppendOperation returns NotApplicable.
+        engine.StartProposal(AppendOperation(6, "must-not-append"));
+        var prepare = AssertPrepare(engine, new Ballot(1, 2));
+        RoutePrepare(engine, prepare, a);
+        RoutePrepare(engine, prepare, b);
+        var identityAccept = AssertAccept(engine, prepare.Ballot, recovered);
+        AssertNotCompleted(engine);
+        RouteAccept(engine, identityAccept, a);
+        AssertNotCompleted(engine);
+        RouteAccept(engine, identityAccept, b);
+
+        AssertCompleted(engine, recovered);
+        Assert.Equal(recovered, a.AcceptedValue);
+        Assert.Equal(recovered, b.AcceptedValue);
+    }
+
+    private static RecordingProposerEngine<TestValue, string> CreateThreeNodeProposer(
+        int proposerId, ProposerModePolicy? modePolicy = null) =>
+        new($"p{proposerId}", proposerId, default, ["A", "B", "C"], modePolicy ?? ProposerModePolicy.StaticClassic);
+
+    private static IOperation<TestValue> ReadOperation() =>
+        new Operation<int, TestValue>
+        {
+            Input = 0,
+            Name = "Read current value",
+            Apply = static (current, _) => (OperationStatus.NotApplicable, current),
+        };
+
+    private static void RoutePrepare(
+        RecordingProposerEngine<TestValue, string> proposer,
+        PrepareRequest request,
+        RecordingAcceptorEngine<TestValue, string> acceptor)
+    {
+        acceptor.ResetRecording();
+        acceptor.Prepare(request);
+        if (acceptor.LastPreparePromise is { } promise)
+        {
+            proposer.HandlePreparePromised(promise);
+        }
+        else
+        {
+            proposer.HandlePrepareRejected(acceptor.LastPrepareRejection!.Value);
+        }
+    }
+
+    private static void RouteAccept(
+        RecordingProposerEngine<TestValue, string> proposer,
+        AcceptRequest<TestValue> request,
+        RecordingAcceptorEngine<TestValue, string> acceptor)
+    {
+        acceptor.ResetRecording();
+        acceptor.Accept(request);
+        if (acceptor.LastAcceptAccepted is { } accepted)
+        {
+            proposer.HandleAcceptAccepted(accepted);
+        }
+        else
+        {
+            proposer.HandleAcceptRejected(acceptor.LastAcceptRejected!.Value);
+        }
+    }
+
+    private static void AssertNotCompleted(RecordingProposerEngine<TestValue, string> engine)
+    {
+        Assert.Null(engine.LastProposalCompleted);
+        Assert.Null(engine.LastValueCommitted);
+    }
+
+    private static void AssertCompleted(RecordingProposerEngine<TestValue, string> engine, TestValue expected)
+    {
+        Assert.NotNull(engine.LastProposalCompleted);
+        Assert.Equal(expected, engine.LastProposalCompleted!.Value.CommittedValue);
+        Assert.NotNull(engine.LastValueCommitted);
+        Assert.Equal(expected, engine.LastValueCommitted!.Value.Value);
+        Assert.False(engine.HasCurrentOperation);
     }
 
     private static RecordingProposerEngine<TestValue, string> CreateClassicProposer() =>

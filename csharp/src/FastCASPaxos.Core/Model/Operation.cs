@@ -3,6 +3,9 @@ namespace FastCASPaxos.Model;
 public enum OperationStatus
 {
     Failed,
+    /// <summary>
+    /// Establishes the current value through an identity accept quorum and returns it unchanged.
+    /// </summary>
     NotApplicable,
     Success
 }

@@ -1,0 +1,25 @@
+name: C# CI
+
+on:
+  push:
+    paths:
+      - 'csharp/**'
+      - '.github/workflows/csharp.yml'
+  pull_request:
+    paths:
+      - 'csharp/**'
+      - '.github/workflows/csharp.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Core and simulation tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Test
+        run: dotnet test csharp/FastCASPaxos.slnx --configuration Release --verbosity minimal

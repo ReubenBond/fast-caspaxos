@@ -581,9 +581,10 @@ public abstract class ProposerEngine<TValue, TRoute>
     private void ContinueCurrentRequest()
     {
         // Apply the current operation against the latest recovered value. Success produces the
-        // next accept value, NotApplicable returns immediately, and Failed restarts with a fresh
-        // prepare so the proposer can re-read cluster state before trying again.
-        var (operationStatus, acceptValue) = RequireCurrentOperation().Apply(ReadCachedValueOrDefault("apply the current operation"));
+        // next accept value, NotApplicable establishes the current value through an identity
+        // accept, and Failed restarts with a fresh prepare before trying again.
+        var currentValue = ReadCachedValueOrDefault("apply the current operation");
+        var (operationStatus, acceptValue) = RequireCurrentOperation().Apply(currentValue);
         if (operationStatus == OperationStatus.Success)
         {
             StartAcceptWithValue(acceptValue);
@@ -592,7 +593,9 @@ public abstract class ProposerEngine<TValue, TRoute>
 
         if (operationStatus == OperationStatus.NotApplicable)
         {
-            CompleteCurrentRequest();
+            // Quorum acceptance makes a recovered value durable across later reads and checks
+            // that a reused piggybacked promise still permits this value to be chosen.
+            StartAcceptWithValue(currentValue);
             return;
         }
 

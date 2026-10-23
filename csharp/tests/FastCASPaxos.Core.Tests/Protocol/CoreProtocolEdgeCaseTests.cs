@@ -372,8 +372,17 @@ public sealed class CoreProtocolEdgeCaseTests
         engine.ResetRecording();
         engine.HandlePreparePromised(
             SuccessPrepare(prepare.Ballot.Round, "a4", ballot: Ballot.InitialClassic(1), value: promisedValue));
-        Assert.NotNull(engine.LastProposalCompleted);
+        var identityAccept = AssertAccept(engine, prepare.Ballot, rejectedValue);
+        Assert.Null(engine.LastProposalCompleted);
+        Assert.Null(engine.LastValueCommitted);
 
+        engine.HandleAcceptAccepted(SuccessAccept(identityAccept.Ballot.Round, "a1"));
+        Assert.Null(engine.LastProposalCompleted);
+        engine.HandleAcceptAccepted(SuccessAccept(identityAccept.Ballot.Round, "a2"));
+        Assert.Null(engine.LastProposalCompleted);
+        engine.HandleAcceptAccepted(SuccessAccept(identityAccept.Ballot.Round, "a4"));
+
+        Assert.NotNull(engine.LastProposalCompleted);
         Assert.Equal(rejectedValue, engine.LastProposalCompleted!.Value.CommittedValue);
         Assert.Equal(rejectedValue, engine.CachedValue);
     }
@@ -554,7 +563,7 @@ public sealed class CoreProtocolEdgeCaseTests
     }
 
     [Fact]
-    public void ProposerEngine_PrepareRecovery_ReadReturnsRecoveredHistoryWithoutStandaloneRepairCommit()
+    public void ProposerEngine_PrepareRecovery_ReadReturnsRecoveredHistoryAfterIdentityAcceptQuorum()
     {
         var engine = CreateClassicProposer();
 
@@ -601,10 +610,20 @@ public sealed class CoreProtocolEdgeCaseTests
 
         engine.ResetRecording();
         engine.HandlePreparePromised(SuccessPrepare(repairPrepare.Ballot.Round, "a3", ballot: new Ballot(2, 1), value: new TestValue(1, "B")));
-        Assert.NotNull(engine.LastProposalCompleted);
+        var identityAccept = AssertAccept(engine, repairPrepare.Ballot, new TestValue(1, "B"));
+        Assert.Null(engine.LastProposalCompleted);
+        Assert.Null(engine.LastValueCommitted);
 
+        engine.HandleAcceptAccepted(SuccessAccept(identityAccept.Ballot.Round, "a1"));
+        Assert.Null(engine.LastProposalCompleted);
+        engine.HandleAcceptAccepted(SuccessAccept(identityAccept.Ballot.Round, "a2"));
+        Assert.Null(engine.LastProposalCompleted);
+        engine.HandleAcceptAccepted(SuccessAccept(identityAccept.Ballot.Round, "a3"));
+
+        Assert.NotNull(engine.LastProposalCompleted);
         Assert.Equal(new TestValue(1, "B"), engine.LastProposalCompleted!.Value.CommittedValue);
         Assert.Equal(new TestValue(1, "B"), engine.CachedValue);
+        Assert.Equal(new TestValue(1, "B"), engine.LastValueCommitted!.Value.Value);
     }
 
     private static RecordingProposerEngine<TestValue, string> CreateClassicProposer() =>

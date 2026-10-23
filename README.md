@@ -166,6 +166,7 @@ Notes:
 
 - The initial fast ballot `(1, 0)` is implicitly prepared at acceptors, so the first fast round can skip a standalone `prepare`.
 - In practice, a proposer only skips `prepare` when it already has a prepared ballot and enough local knowledge to compute `newValue`.
+- Reads and inapplicable updates establish the recovered value through an identity `accept` quorum before replying. This preserves the value and its logical version while ensuring that later operations recover it. Reusing a piggybacked prepared ballot still requires an `accept` quorum; a superseding ballot forces fresh prepare/recovery.
 
 ### Acceptor
 
@@ -176,19 +177,21 @@ state:
     acceptedValue := ⊥
 
 function onPrepare(b):
-    if b >= promisedBallot:
+    maxBallot := max(promisedBallot, acceptedBallot)
+    if b >= maxBallot:
         promisedBallot := b
-    reply prepareResponse(acceptedBallot, acceptedValue, promisedBallot)
+        maxBallot := b
+    reply prepareResponse(acceptedBallot, acceptedValue, maxBallot)
 
 function onAccept(b, v, next):
-    maxBallot := max(promisedBallot, acceptedBallot)
-    if b < maxBallot:
-        reply reject(maxBallot)
-        return
-
     // Optimization: idempotency from possibly multiple proposers
     if b == acceptedBallot and v == acceptedValue:
         reply accept(promisedBallot)
+        return
+
+    maxBallot := max(promisedBallot, acceptedBallot)
+    if b < maxBallot:
+        reply reject(maxBallot)
         return
 
     if b == acceptedBallot and v != acceptedValue:

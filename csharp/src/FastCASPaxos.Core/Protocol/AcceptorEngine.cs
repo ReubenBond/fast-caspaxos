@@ -53,12 +53,13 @@ public static class AcceptorEngine
         ref AcceptorState<TValue> state,
         PrepareRequest request)
     {
-        if (request.Ballot < state.PromisedBallot)
+        var maxBallot = Ballot.Max(state.PromisedBallot, state.AcceptedBallot);
+        if (request.Ballot < maxBallot)
         {
             return AcceptorPrepareResult.Rejected(
                 acceptedBallot: state.AcceptedBallot,
                 acceptedValue: state.AcceptedValue,
-                conflictingBallot: state.PromisedBallot);
+                conflictingBallot: maxBallot);
         }
 
         state.PromisedBallot = request.Ballot;
@@ -79,10 +80,11 @@ public static class AcceptorEngine
             return AcceptorAcceptResult.Accepted(state.PromisedBallot);
         }
 
-        // Once this acceptor has moved on to a higher promise, older ballots must lose.
-        if (request.Ballot < state.PromisedBallot)
+        // Accept can reach a node that missed prepare, so both ballots constrain later requests.
+        var maxBallot = Ballot.Max(state.PromisedBallot, state.AcceptedBallot);
+        if (request.Ballot < maxBallot)
         {
-            return AcceptorAcceptResult.Rejected(state.PromisedBallot);
+            return AcceptorAcceptResult.Rejected(maxBallot);
         }
 
         // Each ballot is allowed to carry only one value. If we reach the same ballot again after

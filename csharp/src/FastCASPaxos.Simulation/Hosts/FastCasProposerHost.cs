@@ -171,6 +171,13 @@ public sealed class FastCasProposerHost<TValue> : IFastCasProposerNodeHost<TValu
             default:
                 throw new InvalidOperationException($"Proposer host '{Address}' cannot handle message type '{message.GetType().Name}'.");
         }
+
+        // Start queued work after the engine has cleared the completed operation.
+        if (_activeRequest is null && !_engine.HasPendingProposal)
+        {
+            ApplyPendingLearnedCommit();
+            ProcessNextQueuedRequest();
+        }
     }
 
     /// <summary>
@@ -325,8 +332,6 @@ public sealed class FastCasProposerHost<TValue> : IFastCasProposerNodeHost<TValu
     {
         ResetPendingRetryState();
         _activeRequest = null;
-        ApplyPendingLearnedCommit();
-        ProcessNextQueuedRequest();
     }
 
     private void BroadcastCommittedValue(Ballot acceptedBallot, TValue value, Ballot preparedBallot)
@@ -371,40 +376,9 @@ public sealed class FastCasProposerHost<TValue> : IFastCasProposerNodeHost<TValu
 
     private void ProcessNextQueuedRequest()
     {
-        while (_requestQueue.TryDequeue(out var nextRequest))
+        if (_requestQueue.TryDequeue(out var nextRequest))
         {
-            // Short-circuit NotApplicable operations so we never start the engine while still
-            // inside CompleteCurrentRequest's try/finally, which would wipe out the new
-            // CurrentOperation when the finally block runs.
-            var (status, _) = nextRequest.Operation.Apply(_engine.CachedValue);
-            if (status == OperationStatus.NotApplicable)
-            {
-                var response = new ProposeResponse<TValue>(_engine.Ballot.Round, _engine.CachedValue);
-                if (nextRequest.IsForwardedExecution)
-                {
-                    _transport.Send(new FastCasForwardProposeResponseMessage<TValue>(
-                        Address,
-                        nextRequest.ReplyTo,
-                        nextRequest.OriginalCaller,
-                        nextRequest.RequestId,
-                        _engine.Ballot,
-                        _engine.PreparedBallot ?? Ballot.Zero,
-                        response));
-                }
-                else
-                {
-                    _transport.Send(new FastCasProposeResponseMessage<TValue>(
-                        Address,
-                        nextRequest.ReplyTo,
-                        nextRequest.RequestId,
-                        response));
-                }
-
-                continue;
-            }
-
             StartActiveRequest(nextRequest);
-            return;
         }
     }
 
