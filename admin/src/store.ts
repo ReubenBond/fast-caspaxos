@@ -97,6 +97,7 @@ export class ClusterStore {
       peer, lastSeen: this.now(), opened: false, connection: 'connecting', versions: new Map(),
       status: new Resource(async (signal) => {
         const status = await this.api.status(peer.httpEndpoint, signal);
+        signal.throwIfAborted();
         if (status.nodeId !== peer.id) throw new Error(`Expected node ${peer.id}; host reports ${status.nodeId}.`);
         if (node.boot && status.bootId !== node.boot) throw new Error('Node restarted; awaiting stream resynchronization.');
         node.boot ??= status.bootId;
@@ -154,10 +155,17 @@ export class ClusterStore {
     if (node.boot && item.bootId !== node.boot && item.kind !== 'reset') return;
     if (item.kind !== 'reset' && item.kind !== 'heartbeat'
       && node.sequence !== undefined && sequence <= node.sequence) return;
+    const recovering = node.connection === 'stale' || node.connection === 'unreachable' || node.connection === 'reconnecting';
     node.lastSeen = this.now();
     node.opened = true;
     node.connection = 'connected';
     node.error = undefined;
+    if (recovering && item.kind !== 'reset') {
+      node.status.invalidate();
+      node.local?.invalidate();
+      this.inventory?.invalidate();
+      this.current?.invalidate();
+    }
     if (item.kind === 'reset') {
       node.boot = item.bootId;
       node.sequence = sequence;
@@ -165,10 +173,10 @@ export class ClusterStore {
       node.versions.clear();
       node.storage = undefined;
       node.lastOperation = undefined;
-      node.status.invalidate();
-      node.local?.invalidate();
-      this.restartInventory();
-      this.current?.invalidate();
+      node.status.reset();
+      node.local?.reset();
+      this.resetInventory();
+      this.current?.reset();
     } else if (item.kind === 'heartbeat') {
       node.storage = { status: item.data.storageStatus,
         error: item.data.storageStatus === node.storage?.status ? node.storage.error : undefined };
@@ -178,10 +186,10 @@ export class ClusterStore {
       node.boot ??= item.bootId;
       if (node.sequence !== undefined && sequence > node.sequence + 1n) {
         node.reset = 'Sequence gap: resynchronizing snapshots';
-        node.status.invalidate();
-        node.local?.invalidate();
-        this.inventory?.invalidate();
-        this.current?.invalidate();
+        node.status.reset();
+        node.local?.reset();
+        this.resetInventory();
+        this.current?.reset();
       }
       node.sequence = sequence;
       if (item.kind === 'storage') node.storage = item.data;
@@ -229,9 +237,15 @@ export class ClusterStore {
     else this.inventory?.invalidate();
   }
 
+  private resetInventory(): void {
+    if (this.after !== null) this.setQuery(this.prefix, null);
+    else this.inventory?.reset();
+  }
+
   private checkHealth(): void {
     for (const node of this.nodes) {
-      const interval = node.status.state.value?.heartbeatMilliseconds ?? 15_000;
+      const interval = node.status.state.value?.heartbeatMilliseconds;
+      if (interval === undefined) continue;
       if (this.now() - node.lastSeen > interval * 3) {
         const connection = node.connection === 'reconnecting' || node.connection === 'unreachable' ? 'unreachable' : 'stale';
         if (node.connection !== connection) {

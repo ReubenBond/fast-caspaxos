@@ -100,6 +100,37 @@ describe('ClusterStore subscriptions, ordering and refreshes', () => {
     expect(h.store.nodes[0]!.connection).toBe('stale');
   });
 
+  it('waits for an authoritative per-node heartbeat interval and preserves status-fetch errors', async () => {
+    h.status.mockResolvedValueOnce(status()).mockImplementation(async (origin) => {
+      if (origin === peers[0]!.httpEndpoint) throw new Error('node status unavailable');
+      return status('b', { heartbeatMilliseconds: 2000 });
+    });
+    await start();
+    const node = h.store.nodes[0]!;
+    expect(node.status.state).toMatchObject({
+      loading: false, stale: true, error: 'node status unavailable',
+    });
+    expect(node.status.state.value).toBeUndefined();
+    await advance(60_000);
+    // Neither the bootstrap interval, another node's interval, nor a guessed
+    // fallback establishes this node's heartbeat deadline.
+    expect(node.connection).toBe('connected');
+    expect(node.status.state.error).toBe('node status unavailable');
+    expect(h.store.nodes[1]!.connection).toBe('stale');
+    expect(h.status).toHaveBeenCalledTimes(3);
+
+    h.status.mockResolvedValueOnce(status('a', { heartbeatMilliseconds: 30_000 }));
+    node.status.invalidate();
+    await advance(300);
+    expect(node.status.state.error).toBeUndefined();
+    expect(node.status.state.value?.heartbeatMilliseconds).toBe(30_000);
+    await advance(29_300);
+    expect(node.connection).toBe('connected');
+    await advance(1000);
+    expect(node.connection).toBe('stale');
+    expect(h.status).toHaveBeenCalledTimes(4);
+  });
+
   it('fences in-flight reads on disconnect and resynchronizes observations on native reopen', async () => {
     await start('chosen');
     const pending = deferred<Register>();
@@ -128,7 +159,7 @@ describe('ClusterStore subscriptions, ordering and refreshes', () => {
     expect(h.streams).toHaveBeenCalledTimes(2);
   });
 
-  it('marks observations stale without polling reads when the heartbeat watchdog expires', async () => {
+  it('marks observations stale without polling and refreshes them when same-boot heartbeats resume', async () => {
     await start('chosen');
     await advance(3600);
     expect(h.store.nodes.map((node) => node.connection)).toEqual(['stale', 'stale']);
@@ -139,7 +170,45 @@ describe('ClusterStore subscriptions, ordering and refreshes', () => {
     expect(h.read).toHaveBeenCalledTimes(1);
     expect(h.keys).toHaveBeenCalledTimes(1);
     expect(h.state).toHaveBeenCalledTimes(2);
+    expect(h.status).toHaveBeenCalledTimes(3);
     expect(h.store.nodes.map((node) => node.storage?.status)).toEqual(['ready', 'ready']);
+
+    h.read.mockResolvedValueOnce({ present: true, bytes: new Uint8Array([66]), etag: '"recovered"' });
+    h.keys.mockResolvedValueOnce({ keys: ['chosen', 'new-key'], continuation: null });
+    h.state.mockResolvedValueOnce(snapshot('a', { cursor: 'a-boot:2' }));
+    h.status.mockResolvedValueOnce(status('a', { heartbeatMilliseconds: 2000 }));
+    // Recovery arrives on the existing stream, without native open or reset.
+    h.sources[0]!.send(event('heartbeat', '0', { storageStatus: 'ready' }));
+    expect(h.store.nodes.map((node) => node.connection)).toEqual(['connected', 'stale']);
+    expect(h.store.current!.state.stale).toBe(true);
+    await advance(299);
+    expect(h.read).toHaveBeenCalledTimes(1);
+    expect(h.keys).toHaveBeenCalledTimes(1);
+    expect(h.state).toHaveBeenCalledTimes(2);
+    expect(h.status).toHaveBeenCalledTimes(3);
+    await advance(1);
+    expect(h.store.current!.state).toEqual({
+      value: { present: true, bytes: new Uint8Array([66]), etag: '"recovered"' }, loading: false, stale: false,
+    });
+    expect(h.store.inventory!.state).toEqual({
+      value: { keys: ['chosen', 'new-key'], continuation: null }, loading: false, stale: false,
+    });
+    expect(h.store.nodes[0]!.local!.state.stale).toBe(false);
+    expect(h.store.nodes[0]!.local!.state.value?.cursor).toBe('a-boot:2');
+    expect(h.store.nodes[0]!.status.state.value?.heartbeatMilliseconds).toBe(2000);
+    expect(h.store.nodes[1]!.local!.state.stale).toBe(true);
+    for (let heartbeat = 0; heartbeat < 3; heartbeat++) {
+      await advance(1000);
+      h.sources[0]!.send(event('heartbeat', '0', { storageStatus: 'ready' }));
+    }
+    await advance(400);
+    expect(h.read).toHaveBeenCalledTimes(2);
+    expect(h.keys).toHaveBeenCalledTimes(2);
+    expect(h.state).toHaveBeenCalledTimes(3);
+    expect(h.state.mock.calls.at(-1)![0]).toBe(peers[0]!.httpEndpoint);
+    expect(h.status).toHaveBeenCalledTimes(4);
+    expect(h.status.mock.calls.at(-1)![0]).toBe(peers[0]!.httpEndpoint);
+    expect(h.streams).toHaveBeenCalledTimes(2);
   });
 
   it('orders adjacent sequences beyond Number precision and rejects duplicate or older observations', async () => {
@@ -373,6 +442,31 @@ describe('ClusterStore subscriptions, ordering and refreshes', () => {
     await advance(400);
     expect(h.store.nodes[0]!.local!.state.value?.bootId).toBe('new-boot');
     expect(h.store.nodes[0]!.local!.state.stale).toBe(false);
+  });
+
+  it('fences a pre-reset logical read before publishing the new boot-generation observation', async () => {
+    await start('chosen');
+    const late = deferred<Register>();
+    let signal!: AbortSignal;
+    h.read.mockImplementationOnce((_origin, _key, value) => { signal = value; return late.promise; })
+      .mockResolvedValueOnce({ present: true, bytes: new Uint8Array([66]), etag: '"new-generation"' });
+    h.store.current!.invalidate();
+    await advance(300);
+    h.status.mockImplementation(async (origin) => origin === peers[0]!.httpEndpoint
+      ? status('a', { bootId: 'new-boot', cursor: 'new-boot:0' }) : status('b'));
+    h.state.mockImplementation(async (origin) => origin === peers[0]!.httpEndpoint
+      ? snapshot('a', { bootId: 'new-boot', cursor: 'new-boot:0' }) : snapshot('b'));
+    h.sources[0]!.send(event('reset', '0', { reason: 'restart' }, 'a', 'new-boot'));
+    expect(signal.aborted).toBe(true);
+    late.resolve({ present: true, bytes: new Uint8Array([99]), etag: '"old-generation"' });
+    await advance(0);
+    expect(h.store.current!.state).toMatchObject({ value: initialRegister(), loading: false, stale: true });
+    await advance(400);
+    expect(h.store.current!.state).toEqual({
+      value: { present: true, bytes: new Uint8Array([66]), etag: '"new-generation"' }, loading: false, stale: false,
+    });
+    expect(h.store.nodes[0]!.boot).toBe('new-boot');
+    expect(h.read).toHaveBeenCalledTimes(3);
   });
 
   it('does not overwrite newer stream storage with an older status completion', async () => {
