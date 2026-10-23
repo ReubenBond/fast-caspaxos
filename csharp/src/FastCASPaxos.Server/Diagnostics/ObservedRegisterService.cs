@@ -30,7 +30,7 @@ public sealed class ObservedRegisterService(IRegisterService inner, NodeEventJou
             journal.Publish("operation", new OperationObservation(operation, id, KeyPreview.From(key), outcome,
                 PayloadPreview.From(current?.Value),
                 current?.Version is { } version ? Convert.ToBase64String(version.Span) : null,
-                error?.GetType().Name));
+                error?.GetType().Name, current?.IsPresent));
             return result;
         }
         catch (Exception error)

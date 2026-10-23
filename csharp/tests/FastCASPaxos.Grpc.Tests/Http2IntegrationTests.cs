@@ -305,7 +305,7 @@ public sealed class Http2IntegrationTests
                 AcceptorDatabase = directory.Database($"acceptor-{id}"),
                 ProposerId = proposer,
                 ProposerDatabase = directory.Database($"proposer-{id}"),
-                Peers = [new() { Id = id, Endpoint = "http://127.0.0.1:1" }],
+                Peers = [new() { Id = id, Endpoint = "http://127.0.0.1:1", HttpEndpoint = "http://127.0.0.1:11" }],
             });
             try
             {
