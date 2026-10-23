@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using FastCASPaxos.Model;
+using FastCASPaxos.Server.Diagnostics;
 
 namespace FastCASPaxos.Server;
 
@@ -39,7 +40,27 @@ internal static class RegisterEncoding
 
     public static RegisterValue Decode(ByteString value)
     {
-        var bytes = value.ToArray().AsSpan();
+        var bytes = value.Span;
+        var version = DecodeVersion(bytes);
+        return version is null ? new RegisterValue(null, null) : new RegisterValue(new ByteString(bytes[13..]), version);
+    }
+
+    internal static RegisterPreview Preview(ByteString value)
+    {
+        try
+        {
+            var version = DecodeVersion(value.Span);
+            return version is null ? new("register", false, null, null)
+                : new("register", true, Convert.ToBase64String(version.Span), PayloadPreview.From(value.Span[13..]));
+        }
+        catch (InvalidDataException)
+        {
+            return new("opaque", null, null, null);
+        }
+    }
+
+    private static ByteString? DecodeVersion(ReadOnlySpan<byte> bytes)
+    {
         if (bytes.Length < 5 || !bytes[..4].SequenceEqual(Header))
         {
             throw new InvalidDataException("Accepted bytes are not a register envelope.");
@@ -47,7 +68,7 @@ internal static class RegisterEncoding
 
         if (bytes[4] == 0 && bytes.Length == 5)
         {
-            return new RegisterValue(null, null);
+            return null;
         }
 
         if (bytes[4] != 1 || bytes.Length < 13)
@@ -58,6 +79,6 @@ internal static class RegisterEncoding
         var version = new ByteString(bytes.Slice(5, 8));
         try { ValidateVersion(version); }
         catch (ArgumentException exception) { throw new InvalidDataException("The accepted register version is malformed.", exception); }
-        return new RegisterValue(new ByteString(bytes[13..]), version);
+        return version;
     }
 }

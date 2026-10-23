@@ -37,6 +37,7 @@ function Start-Node([int]$index) {
     for ($i = 0; $i -lt 3; $i++) {
         $info.ArgumentList.Add("--FastCASPaxos:Peers:${i}:Id=$(@('a', 'b', 'c')[$i])")
         $info.ArgumentList.Add("--FastCASPaxos:Peers:${i}:Endpoint=http://127.0.0.1:$($BasePort + $i)")
+        $info.ArgumentList.Add("--FastCASPaxos:Peers:${i}:HttpEndpoint=http://127.0.0.1:$($BasePort + 3 + $i)")
     }
     $process = [Diagnostics.Process]::Start($info)
     $processes[$index] = $process

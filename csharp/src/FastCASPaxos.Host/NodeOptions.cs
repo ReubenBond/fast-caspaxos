@@ -7,6 +7,7 @@ public sealed class PeerOptions
 {
     public string Id { get; set; } = "";
     public string Endpoint { get; set; } = "";
+    public string HttpEndpoint { get; set; } = "";
 }
 
 public sealed class NodeOptions
@@ -29,6 +30,10 @@ public sealed class NodeOptions
     public int MaxConcurrentConnections { get; set; } = 256;
     public int MaxStreamsPerConnection { get; set; } = 128;
     public long MaxRequestBodyBytes { get; set; } = 4 * 1024 * 1024;
+    public List<string> TrustedAdminOrigins { get; set; } = [];
+    public int EventHistoryCapacity { get; set; } = 1024;
+    public int MaxEventStreams { get; set; } = 64;
+    public TimeSpan HeartbeatInterval { get; set; } = TimeSpan.FromSeconds(15);
 
     public void Validate()
     {
@@ -47,6 +52,11 @@ public sealed class NodeOptions
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxConcurrentConnections);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxStreamsPerConnection);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxRequestBodyBytes);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(EventHistoryCapacity);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(MaxEventStreams);
+        ValidateDuration(HeartbeatInterval, nameof(HeartbeatInterval));
+        ArgumentNullException.ThrowIfNull(TrustedAdminOrigins);
+        foreach (var origin in TrustedAdminOrigins) ValidateHttpOrigin(origin);
         ValidateDuration(OperationTimeout, nameof(OperationTimeout));
         ValidateDuration(AttemptTimeout, nameof(AttemptTimeout));
         ValidateDuration(RetryBackoff, nameof(RetryBackoff));
@@ -55,6 +65,7 @@ public sealed class NodeOptions
         ArgumentNullException.ThrowIfNull(Peers);
         var ids = new HashSet<string>(StringComparer.Ordinal);
         var endpoints = new HashSet<Uri>();
+        var httpEndpoints = new HashSet<Uri>();
         foreach (var peer in Peers)
         {
             ArgumentNullException.ThrowIfNull(peer);
@@ -66,18 +77,33 @@ public sealed class NodeOptions
                 || endpoint.Query.Length != 0 || endpoint.Fragment.Length != 0)
                 throw new ArgumentException($"Peer '{peer.Id}' requires an absolute HTTP(S) origin.");
             if (!endpoints.Add(endpoint)) throw new ArgumentException($"Duplicate peer endpoint '{endpoint}'.");
+            var httpEndpoint = ValidateHttpOrigin(peer.HttpEndpoint);
+            if (!httpEndpoints.Add(httpEndpoint))
+                throw new ArgumentException($"Duplicate advertised HTTP endpoint '{httpEndpoint}'.");
         }
         if (!ids.Contains(AcceptorId))
             throw new ArgumentException("The fixed peer set must contain this node's acceptor id exactly once.");
     }
 
-    internal RegisterServiceOptions RegisterOptions() => new()
+    internal static Uri ValidateHttpOrigin(string origin)
+    {
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var endpoint)
+            || (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps)
+            || endpoint.AbsolutePath != "/" || endpoint.UserInfo.Length != 0
+            || endpoint.Query.Length != 0 || endpoint.Fragment.Length != 0
+            || endpoint.Host is "*" or "+" or "0.0.0.0" or "[::]")
+            throw new ArgumentException("Advertised HTTP endpoints and trusted admin origins require browser-reachable absolute HTTP(S) origins.");
+        return endpoint;
+    }
+
+    internal RegisterServiceOptions RegisterOptions(TimeProvider timeProvider) => new()
     {
         Mode = ProposerModePolicy.Parse(Mode),
         Capacity = Capacity,
         OperationTimeout = OperationTimeout,
         AttemptTimeout = AttemptTimeout,
         RetryBackoff = RetryBackoff,
+        TimeProvider = timeProvider,
     };
 
     private static void ValidateDuration(TimeSpan value, string name)

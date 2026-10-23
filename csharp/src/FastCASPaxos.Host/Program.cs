@@ -20,14 +20,18 @@ builder.Services.AddGrpc(grpc =>
     grpc.MaxReceiveMessageSize = options.MaxReceiveMessageBytes;
     grpc.MaxSendMessageSize = options.MaxSendMessageBytes;
     grpc.EnableDetailedErrors = false;
+    grpc.Interceptors.Add<DiagnosticServerInterceptor>();
 });
+builder.Services.AddAdminCors(options);
 
 await using var node = await NodeRuntime.OpenAsync(options);
 builder.Services.AddSingleton(node.Acceptor);
 builder.Services.AddSingleton(node.Registers);
 await using var app = builder.Build();
+app.UseCors();
 app.MapGrpcService<AcceptorGrpcService>();
 app.MapGrpcService<RegisterGrpcService>();
-app.MapRegisterApi(maxRequestBodyBytes: options.MaxRequestBodyBytes);
+app.MapRegisterApi(maxRequestBodyBytes: options.MaxRequestBodyBytes).RequireCors(AdminEndpoints.CorsPolicy);
+app.MapAdminApi(node);
 app.MapGet("/health/live", () => Results.Text("Serving register requests."));
 await app.RunAsync();
