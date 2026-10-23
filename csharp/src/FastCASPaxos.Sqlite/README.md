@@ -127,6 +127,12 @@ a key with no accepted value. Passing null for `known` fetches any accepted
 state. A transfer verifies its bytes against the stored hash and reports an
 integrity failure through the writer's normal failure boundary.
 
+Protocol transitions, full-value inventory, and local inspection use the same
+SHA-256 verification when loading accepted bytes. A mismatch retires the writer
+before those bytes can influence recovery, receive an acknowledgement, or be
+rehash-persisted by a later accept. The failed transaction preserves the original
+row and its corruption evidence. Digest-only inventory reads persisted metadata.
+
 `ILocalAcceptorInspection.InspectAsync(key)` returns the persisted local row or
 null. `InspectKeysAsync(prefix, afterKey, limit)` uses the same ordering and
 pagination, including promise-only rows. Both execute read-only SQL on the

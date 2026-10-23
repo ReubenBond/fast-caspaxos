@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Threading.Channels;
@@ -121,7 +122,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
-                SELECT key, promised_round, promised_proposer, accepted_round, accepted_proposer, value
+                SELECT key, promised_round, promised_proposer, accepted_round, accepted_proposer, value, value_hash
                 FROM acceptor_state
                 WHERE accepted_round IS NOT NULL
                     AND key >= $prefix
@@ -152,7 +153,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
                     DecodeKey(reader.GetFieldValue<byte[]>(0)),
                     new Ballot(reader.GetInt32(1), reader.GetInt32(2)),
                     new Ballot(reader.GetInt32(3), reader.GetInt32(4)),
-                    new ByteString(reader.GetFieldValue<byte[]>(5))));
+                    ReadAcceptedValue(reader, 5)));
             }
 
             return new KeyPage(entries.AsReadOnly(), null);
@@ -214,10 +215,9 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
                 if (digest == known) return new ConditionalAcceptorState(ConditionalAcceptorStatus.Unchanged);
             }
             var state = Load(connection, transaction, encodedKey, out _);
-            if (state.AcceptedValue is not { } value || !AcceptedDigest.Hash(value).Equals(digest.ValueHash))
-                throw new InvalidDataException("Accepted bytes do not match their persisted SHA-256.");
+            Debug.Assert(state.AcceptedValue is not null);
             return new ConditionalAcceptorState(ConditionalAcceptorStatus.Different,
-                new(key, state.PromisedBallot, state.AcceptedBallot, value));
+                new(key, state.PromisedBallot, state.AcceptedBallot, state.AcceptedValue));
         }, cancellationToken);
     }
 
@@ -243,7 +243,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
-                SELECT key, promised_round, promised_proposer, accepted_round, accepted_proposer, value
+                SELECT key, promised_round, promised_proposer, accepted_round, accepted_proposer, value, value_hash
                 FROM acceptor_state WHERE key >= $prefix
                 """ + (prefixEnd is null ? "" : " AND key < $end")
                 + (afterKey is null ? "" : " AND key > $after") + " ORDER BY key LIMIT $limit;";
@@ -259,7 +259,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
                 entries.Add(new(DecodeKey(reader.GetFieldValue<byte[]>(0)),
                     new Ballot(reader.GetInt32(1), reader.GetInt32(2)),
                     reader.IsDBNull(3) ? Ballot.Zero : new Ballot(reader.GetInt32(3), reader.GetInt32(4)),
-                    reader.IsDBNull(5) ? null : new ByteString(reader.GetFieldValue<byte[]>(5))));
+                    reader.IsDBNull(5) ? null : ReadAcceptedValue(reader, 5)));
             }
             return new LocalAcceptorPage(entries.AsReadOnly(), null);
         }, cancellationToken);
@@ -473,7 +473,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT promised_round, promised_proposer, accepted_round, accepted_proposer, value
+            SELECT promised_round, promised_proposer, accepted_round, accepted_proposer, value, value_hash
             FROM acceptor_state WHERE key = $key;
             """;
         command.Parameters.AddWithValue("$key", key);
@@ -488,8 +488,17 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         {
             PromisedBallot = new Ballot(reader.GetInt32(0), reader.GetInt32(1)),
             AcceptedBallot = reader.IsDBNull(2) ? Ballot.Zero : new Ballot(reader.GetInt32(2), reader.GetInt32(3)),
-            AcceptedValue = reader.IsDBNull(4) ? null : new ByteString(reader.GetFieldValue<byte[]>(4))
+            AcceptedValue = reader.IsDBNull(4) ? null : ReadAcceptedValue(reader, 4)
         };
+    }
+
+    private static ByteString ReadAcceptedValue(SqliteDataReader reader, int valueOrdinal)
+    {
+        var value = reader.GetFieldValue<byte[]>(valueOrdinal);
+        var hash = reader.GetFieldValue<byte[]>(valueOrdinal + 1);
+        if (!SHA256.HashData(value).AsSpan().SequenceEqual(hash))
+            throw new InvalidDataException("Accepted bytes do not match their persisted SHA-256.");
+        return new(value);
     }
 
     private static bool SaveIfChanged(
