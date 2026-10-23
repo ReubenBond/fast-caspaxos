@@ -171,6 +171,112 @@ public sealed class SqliteDigestTests
     }
 
     [Fact]
+    public async Task Repair_CorruptHigherBallotReplica_CannotReplaceHealthyCommittedBytes()
+    {
+        var databases = Enumerable.Range(0, 5).Select(_ => new TestDatabase()).ToArray();
+        using var allocator = new TestDatabase();
+        using var ballots = new SqliteProposerBallotSource(allocator.Path, 3);
+        ballots.Reserve(10);
+        var servers = new List<SqliteAcceptorServer>();
+        InvalidDataException? integrityFailure = null;
+        try
+        {
+            foreach (var database in databases) servers.Add(await database.OpenAsync());
+            foreach (var server in servers)
+            {
+                Assert.True((await server.AcceptAsync("key", new(new(3, 1), Value, new(4, 1)))).IsAccepted);
+                Assert.True((await server.PrepareAsync("key", new(new(5, 2)))).IsPromised);
+            }
+            Assert.True((await servers[1].AcceptAsync("key", new(new(5, 2), Value, default))).IsAccepted);
+            using (var connection = databases[1].Connect())
+                TestDatabase.Execute(connection, "UPDATE acceptor_state SET value=X'646566';");
+
+            var repair = new DurabilityRepair("peer-0", servers.Select((server, index) =>
+                new RepairPeer($"peer-{index}", server, server)), ballots);
+            var result = await repair.RunPassAsync().WaitAsync(TestDatabase.Timeout);
+
+            foreach (var index in new[] { 0, 2, 3, 4 })
+                Assert.Equal(Value, (await servers[index].FetchIfDifferentAsync("key", null)).State!.AcceptedValue);
+            integrityFailure = Assert.IsType<InvalidDataException>(Assert.Single(result.Errors));
+            Assert.Equal((1L, 1L, 0L), (result.Examined, result.Repaired, result.Pending));
+            using var observer = databases[1].Connect();
+            Assert.Equal("def"u8.ToArray(), (byte[])Scalar(observer, "SELECT value FROM acceptor_state;"));
+            Assert.Equal(AbcHash.ToArray(), ReadHash(observer));
+            Assert.Equal(5L, Scalar(observer, "SELECT accepted_round FROM acceptor_state;"));
+        }
+        finally
+        {
+            for (var index = 0; index < servers.Count; index++)
+            {
+                if (index == 1 && integrityFailure is not null)
+                    Assert.Same(integrityFailure, await Assert.ThrowsAsync<InvalidDataException>(() => servers[index].DisposeAsync().AsTask()));
+                else await servers[index].DisposeAsync();
+            }
+            foreach (var database in databases) database.Dispose();
+        }
+    }
+
+    [Theory]
+    [InlineData("prepare", false)]
+    [InlineData("prepare", true)]
+    [InlineData("accept", false)]
+    [InlineData("accept", true)]
+    [InlineData("retry", false)]
+    [InlineData("retry", true)]
+    [InlineData("list", false)]
+    [InlineData("list", true)]
+    [InlineData("inspect", false)]
+    [InlineData("inspect", true)]
+    [InlineData("inspect-list", false)]
+    [InlineData("inspect-list", true)]
+    public async Task AcceptedBytes_CorruptionRetiresWriterBeforeReadOrTransition(string operation, bool corruptHash)
+    {
+        using var database = new TestDatabase();
+        await using (var seed = await database.OpenAsync())
+            await seed.AcceptAsync("key", new(new(3, 1), Value, new(4, 1)));
+        using (var connection = database.Connect())
+            TestDatabase.Execute(connection, corruptHash
+                ? "UPDATE acceptor_state SET value_hash=zeroblob(32);"
+                : "UPDATE acceptor_state SET value=X'646566';");
+        var expectedHash = corruptHash ? new ByteString(new byte[32]) : AbcHash;
+        var expectedValue = corruptHash ? Value : new ByteString("def"u8);
+        var server = await database.OpenAsync();
+        InvalidDataException? failure = null;
+        try
+        {
+            // Fingerprint inventory reads metadata; consuming accepted bytes checks their integrity.
+            Assert.Equal(new AcceptedDigest(new(3, 1), expectedHash),
+                Assert.Single((await server.ListDigestsAsync()).Entries).Digest);
+            failure = await Assert.ThrowsAsync<InvalidDataException>(async () =>
+            {
+                switch (operation)
+                {
+                    case "prepare": await server.PrepareAsync("key", new(new(8, 2))); break;
+                    case "accept": await server.AcceptAsync("key", new(new(8, 2), ByteString.Empty, default)); break;
+                    case "retry": await server.AcceptAsync("key", new(new(3, 1), expectedValue, default)); break;
+                    case "list": await server.ListKeysAsync(); break;
+                    case "inspect": await server.InspectAsync("key"); break;
+                    case "inspect-list": await server.InspectKeysAsync(); break;
+                    default: throw new InvalidOperationException("Unknown fixture operation.");
+                }
+            });
+            Assert.Equal("Accepted bytes do not match their persisted SHA-256.", failure.Message);
+            Assert.Same(failure, await Assert.ThrowsAsync<InvalidDataException>(() => server.ListDigestsAsync().AsTask()));
+            using var observer = database.Connect();
+            Assert.Equal(expectedValue.ToArray(), (byte[])Scalar(observer, "SELECT value FROM acceptor_state;"));
+            Assert.Equal(expectedHash.ToArray(), ReadHash(observer));
+            Assert.Equal(3L, Scalar(observer, "SELECT accepted_round FROM acceptor_state;"));
+            Assert.Equal(4L, Scalar(observer, "SELECT promised_round FROM acceptor_state;"));
+        }
+        finally
+        {
+            if (failure is not null)
+                Assert.Same(failure, await Assert.ThrowsAsync<InvalidDataException>(() => server.DisposeAsync().AsTask()));
+            else await server.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task Open_V1Migration_PreservesBallotsAndBytesAndBackfillsHashes()
     {
         using var database = new TestDatabase();
