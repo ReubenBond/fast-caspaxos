@@ -4,6 +4,7 @@
     <Project Path="src/FastCASPaxos.Server/FastCASPaxos.Server.csproj" />
     <Project Path="src/FastCASPaxos.Sqlite/FastCASPaxos.Sqlite.csproj" />
     <Project Path="src/FastCASPaxos.Grpc/FastCASPaxos.Grpc.csproj" />
+    <Project Path="src/FastCASPaxos.Rest/FastCASPaxos.Rest.csproj" />
     <Project Path="src/FastCASPaxos.Host/FastCASPaxos.Host.csproj" />
     <Project Path="src/Clockwork/Clockwork.csproj" />
     <Project Path="src/FastCASPaxos.Simulation/FastCASPaxos.Simulation.csproj" />
@@ -15,6 +16,7 @@
     <Project Path="tests/FastCASPaxos.Server.Tests/FastCASPaxos.Server.Tests.csproj" />
     <Project Path="tests/FastCASPaxos.Sqlite.Tests/FastCASPaxos.Sqlite.Tests.csproj" />
     <Project Path="tests/FastCASPaxos.Grpc.Tests/FastCASPaxos.Grpc.Tests.csproj" />
+    <Project Path="tests/FastCASPaxos.Rest.Tests/FastCASPaxos.Rest.Tests.csproj" />
     <Project Path="tests/FastCASPaxos.Simulation.Tests/FastCASPaxos.Simulation.Tests.csproj" />
   </Folder>
   <Folder Name="/samples/">

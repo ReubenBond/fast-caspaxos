@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\FastCASPaxos.Grpc\FastCASPaxos.Grpc.csproj" />
+    <ProjectReference Include="..\FastCASPaxos.Rest\FastCASPaxos.Rest.csproj" />
     <ProjectReference Include="..\FastCASPaxos.Sqlite\FastCASPaxos.Sqlite.csproj" />
   </ItemGroup>
 </Project>

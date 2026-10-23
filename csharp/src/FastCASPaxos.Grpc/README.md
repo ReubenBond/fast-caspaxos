@@ -17,7 +17,9 @@ dotnet run --project csharp\src\FastCASPaxos.Host -c Release --no-build
 
 The default node listens on `http://127.0.0.1:5001`, serves both gRPC APIs,
 and uses a single-member cluster. Its durable files live in the host project's
-`data` directory. `/health/live` returns HTTP 200 over HTTP/2 once the host is
+`data` directory. The same host exposes the
+[HTTP/REST register API](../FastCASPaxos.Rest/README.md) on
+`http://127.0.0.1:5000` over HTTP/1.1. `/health/live` returns HTTP 200 on either listener once the host is
 serving requests. This is process liveness; a register operation establishes
 quorum availability.
 
@@ -32,9 +34,10 @@ pwsh -File csharp\samples\Run-Node.ps1 -Node b -DataDirectory C:\fastcaspaxos-da
 pwsh -File csharp\samples\Run-Node.ps1 -Node c -DataDirectory C:\fastcaspaxos-data
 ```
 
-The script configures the same three identities on ports 5001, 5002, and 5003,
+The script configures the same three identities on gRPC ports 5001, 5002, and 5003,
 distinct acceptor files, and proposer identities 1, 2, and 3 with distinct
-allocator files. `-BasePort` changes all three ports together. On Linux, pass
+allocator files. REST uses ports 5004, 5005, and 5006. `-BasePort` changes all
+six ports together: gRPC uses offsets 0-2 and REST uses offsets 3-5. On Linux, pass
 an absolute path such as `/var/lib/fastcaspaxos` for `-DataDirectory`.
 
 Run a fresh-key smoke operation through all three endpoints:
@@ -59,8 +62,9 @@ pwsh -File csharp\scripts\Test-GrpcCluster.ps1
 ```
 
 This script starts the built executables, checks HTTP/2 liveness, exercises
-both healthy and degraded register operations, restarts all processes using
-the same files, and verifies both values. It owns and removes its temporary
+healthy and degraded register operations over HTTP/1.1 REST and HTTP/2 gRPC,
+restarts all processes using the same files, and verifies retained values and
+REST ETags. It owns and removes its temporary
 database directory and stops only its own processes.
 
 ## Configuration
@@ -88,6 +92,7 @@ settings fail startup with diagnostics.
 | `PeerCallTimeout` | Outgoing protocol RPC deadline, `00:00:05`; attempts also pass cancellation. |
 | `MaxReceiveMessageBytes`, `MaxSendMessageBytes` | Serialized gRPC message limits, each `4194304`, for servers and peer channels. Allow for protobuf and register-envelope overhead. |
 | `MaxConcurrentConnections`, `MaxStreamsPerConnection` | Kestrel bounds, `256` and `128`. |
+| `MaxRequestBodyBytes` | Kestrel request-body bound for REST, `4194304`; configure peer message limits for envelope/framing overhead. |
 
 Durations are positive and at most one day. File paths resolve relative to the
 ASP.NET content root; parent directories are created on startup. Acceptor and
@@ -104,8 +109,10 @@ slot. Fixed membership and unique proposer identities are deployment
 invariants. Restart each node with its original files and configuration.
 
 Configure listeners through `Kestrel:Endpoints`, including `Url`, `Protocols`,
-and `Certificate`. The default plaintext endpoint uses `Http2`; TLS endpoints
-can use HTTP/2 via ALPN. Use standard Kestrel certificate configuration and
+and `Certificate`. The default plaintext gRPC endpoint uses `Http2`, and the
+separate REST listener uses `Http1`. A TLS `Http1AndHttp2` listener negotiates
+either protocol through ALPN; plaintext h2c uses the dedicated `Http2`
+listener. Use standard Kestrel certificate configuration and
 secret providers for certificate credentials. The host uses the platform's
 normal HTTPS certificate validation for outgoing peer connections.
 
@@ -248,8 +255,8 @@ and [register restart guide](../FastCASPaxos.Server/README.md#membership-ballots
 
 ## Verification
 
-The C# workflow runs the full solution, compiles the .NET 8 transport, and
-executes the three-process smoke/outage/restart script. Focused real HTTP/2
+The C# workflow runs the full solution, compiles the .NET 8 transports, and
+executes the three-process REST/gRPC smoke/outage/restart script. Focused real HTTP/2
 integration coverage is available with:
 
 ```powershell
