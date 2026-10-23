@@ -13,12 +13,12 @@
     <ProjectReference Include="..\FastCASPaxos.Sqlite\FastCASPaxos.Sqlite.csproj" />
   </ItemGroup>
   <Target Name="RestoreAdminDependencies" Condition="'$(BuildAdminConsole)' == 'true'"
-          Inputs="$(AdminRoot)\package-lock.json" Outputs="$(AdminRoot)\node_modules\.package-lock.json">
+          Inputs="$(AdminRoot)\package.json;$(AdminRoot)\package-lock.json" Outputs="$(AdminRoot)\node_modules\.package-lock.json">
     <Exec WorkingDirectory="$(AdminRoot)" Command="npm ci --no-audit --no-fund" />
   </Target>
   <Target Name="BuildAdminAssets" BeforeTargets="PrepareForBuild" DependsOnTargets="RestoreAdminDependencies"
           Condition="'$(BuildAdminConsole)' == 'true'"
-          Inputs="$(AdminRoot)\package-lock.json;$(AdminRoot)\index.html;$(AdminRoot)\tsconfig.json;$(AdminRoot)\vite.config.ts;@(AdminSource)"
+          Inputs="$(AdminRoot)\package.json;$(AdminRoot)\package-lock.json;$(AdminRoot)\index.html;$(AdminRoot)\tsconfig.json;$(AdminRoot)\vite.config.ts;@(AdminSource)"
           Outputs="$(AdminRoot)\dist\index.html">
     <Exec WorkingDirectory="$(AdminRoot)" Command="npm run build" />
   </Target>

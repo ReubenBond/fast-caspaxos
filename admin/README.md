@@ -110,8 +110,11 @@ continue. Arrival order is observational; per-node sequence and call correlation
 carry ordering evidence across independent host clocks.
 
 Reads coalesce on a 300 ms deadline, with one in-flight request per resource and
-at most one trailing refresh. Generation fences discard responses invalidated by
-later events, selection, query, host, or boot changes. State rendering batches
+at most one trailing refresh. Successful same-resource reads advance visible
+observations even when events arrive during the read; those observations remain
+explicitly stale while a trailing refresh is pending. Hard generation fences
+discard responses after disconnect, abort, selection, query, host, or boot changes.
+State rendering batches
 every 100 ms; reads have a 15-second abort deadline. Disconnects fence queued and
 in-flight reads, and reconnection resynchronizes observations. Teardown closes
 streams and cancels requests and timers.

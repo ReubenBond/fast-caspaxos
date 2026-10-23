@@ -2,10 +2,12 @@ import { errorText } from './api';
 
 export interface ResourceState<T> { value?: T; loading: boolean; stale: boolean; error?: string }
 
-// One in-flight read per resource. A revision fences both late responses and invalidations.
+// Soft invalidations keep successful observations moving while a hard generation
+// fence protects disconnects, resets, replacement, and disposal.
 export class Resource<T> {
   state: ResourceState<T> = { loading: true, stale: true };
   private revision = 0;
+  private generation = 0;
   private disposed = false;
   private pending = false;
   private controller?: AbortController;
@@ -15,6 +17,7 @@ export class Resource<T> {
 
   markStale(): void {
     if (this.disposed) return;
+    this.generation++;
     this.revision++;
     this.pending = false;
     clearTimeout(this.timer);
@@ -22,6 +25,11 @@ export class Resource<T> {
     this.controller?.abort();
     this.state = { ...this.state, loading: false, stale: true };
     this.changed();
+  }
+
+  reset(): void {
+    this.markStale();
+    this.invalidate();
   }
 
   invalidate(): void {
@@ -43,6 +51,7 @@ export class Resource<T> {
 
   private async run(): Promise<void> {
     const revision = this.revision;
+    const generation = this.generation;
     this.pending = false;
     const controller = this.controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(new Error('Read timed out. Refresh to try again.')), 15_000);
@@ -50,9 +59,12 @@ export class Resource<T> {
     this.changed();
     try {
       const value = await this.load(controller.signal);
-      if (!this.disposed && revision === this.revision) this.state = { value, loading: false, stale: false };
+      if (!this.disposed && generation === this.generation) {
+        if (controller.signal.aborted) throw controller.signal.reason;
+        this.state = { value, loading: false, stale: revision !== this.revision };
+      }
     } catch (error) {
-      if (!this.disposed && revision === this.revision) {
+      if (!this.disposed && generation === this.generation) {
         this.state = { ...this.state, loading: false, stale: true, error: errorText(error) };
       }
     } finally {

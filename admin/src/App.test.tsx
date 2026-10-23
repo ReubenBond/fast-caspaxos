@@ -416,6 +416,56 @@ describe('Timeline and inventory interactions', () => {
 
   function send(item: NodeEvent, source = 0) { act(() => h.sources[source]!.send(item)); }
 
+  it('shows advancing stale observations under continuous invalidation without enabling unknown-write reconciliation', async () => {
+    render(<App store={h.store} />);
+    await tick(400);
+    fireEvent.click(screen.getByRole('button', { name: 'chosen' }));
+    await tick(400);
+    const inspector = within(screen.getByRole('region', { name: 'Register inspector' }));
+    const editor = inspector.getByRole('textbox', { name: /^New complete value for/ });
+    fireEvent.change(editor, { target: { value: 'protected draft' } });
+    h.write.mockResolvedValueOnce({ kind: 'unknown', message: 'response lost' });
+    fireEvent.click(inspector.getByRole('button', { name: 'Compare and swap' }));
+    await tick(0);
+    expect(inspector.getByText('Write outcome unknown.')).toBeInTheDocument();
+
+    const reads = Array.from({ length: 4 }, () => deferred<Register>());
+    for (const read of reads) h.read.mockReturnValueOnce(read.promise);
+    fireEvent.click(inspector.getByRole('button', { name: 'Refresh to reconcile' }));
+    for (let cycle = 0; cycle < 3; cycle++) {
+      await tick(300);
+      send(event('operation', String(cycle + 1), {
+        operation: 'compare-exchange', operationId: `concurrent-${cycle + 1}`, key: key(), outcome: 'applied',
+      }));
+      reads[cycle]!.resolve({
+        present: true, bytes: new Uint8Array([66 + cycle]), etag: `"observation-${cycle + 1}"`,
+      });
+      await tick(100);
+      expect(inspector.getByLabelText('Current value').textContent).toBe(['B', 'C', 'D'][cycle]);
+      expect(inspector.getByText('Stale observation')).toBeInTheDocument();
+      expect(h.store.current!.state).toMatchObject({ loading: false, stale: true });
+      expect(h.read).toHaveBeenCalledTimes(cycle + 2);
+      expect(inspector.queryByRole('button', { name: 'Use observed version for this draft' })).not.toBeInTheDocument();
+      expect(inspector.getByRole('button', { name: 'Compare and swap' })).toBeDisabled();
+      expect(editor).toHaveValue('protected draft');
+      expect(inspector.getByText('Expected ETag', { exact: false })).toHaveTextContent('Expected ETag "v1"');
+      expect(h.write).toHaveBeenCalledTimes(1);
+    }
+    await tick(300);
+    reads[3]!.resolve({ present: true, bytes: new Uint8Array([69]), etag: '"quiescent"' });
+    await tick(100);
+    expect(inspector.getAllByLabelText('Current value').map((element) => element.textContent)).toEqual(['E', 'E']);
+    expect(inspector.queryByText('Stale observation')).not.toBeInTheDocument();
+    expect(h.store.current!.state).toMatchObject({ loading: false, stale: false });
+    expect(h.read).toHaveBeenCalledTimes(5);
+    expect(inspector.getByRole('button', { name: 'Compare and swap' })).toBeDisabled();
+    fireEvent.click(inspector.getByRole('button', { name: 'Use observed version for this draft' }));
+    expect(inspector.getByText('Expected ETag', { exact: false })).toHaveTextContent('Expected ETag "quiescent"');
+    expect(editor).toHaveValue('protected draft');
+    expect(inspector.getByRole('button', { name: 'Compare and swap' })).toBeEnabled();
+    expect(h.write).toHaveBeenCalledTimes(1);
+  });
+
   it('combines host, event and case-insensitive message filters without changing subscriptions', async () => {
     await start();
     render(<TimelineHost store={h.store} />);

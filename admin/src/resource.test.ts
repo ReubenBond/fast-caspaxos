@@ -28,10 +28,9 @@ describe('Resource revision and lifetime', () => {
     for (let index = 0; index < 100; index++) resource.invalidate();
     await advance(1000);
     expect(load).toHaveBeenCalledTimes(1);
-    first.resolve('obsolete');
+    first.resolve('intermediate');
     await advance(0);
-    expect(resource.state.value).toBeUndefined();
-    expect(resource.state.stale).toBe(true);
+    expect(resource.state).toEqual({ value: 'intermediate', loading: false, stale: true });
     await advance(299);
     expect(load).toHaveBeenCalledTimes(1);
     await advance(1);
@@ -60,18 +59,90 @@ describe('Resource revision and lifetime', () => {
     expect(resource.state).toEqual({ value: 'recovered', loading: false, stale: false });
   });
 
-  it('fences a stale rejection as well as a stale success', async () => {
-    const first = deferred<string>();
-    const load = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValueOnce('new');
+  it('surfaces same-generation read failure after soft invalidation and clears it on bounded retry progress', async () => {
+    const failing = deferred<string>();
+    const recovery = deferred<string>();
+    const load = vi.fn().mockResolvedValueOnce('last good')
+      .mockReturnValueOnce(failing.promise).mockReturnValueOnce(recovery.promise);
     const { resource } = create(load);
     resource.invalidate();
     await advance(300);
     resource.invalidate();
-    first.reject(new Error('obsolete failure'));
+    await advance(300);
+    for (let invalidation = 0; invalidation < 100; invalidation++) resource.invalidate();
+    await advance(1000);
+    expect(load).toHaveBeenCalledTimes(2);
+    failing.reject(new Error('read unavailable'));
     await advance(0);
+    expect(resource.state).toEqual({
+      value: 'last good', loading: false, stale: true, error: 'read unavailable',
+    });
+    await advance(299);
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(resource.state.error).toBe('read unavailable');
+    await advance(1);
+    expect(load).toHaveBeenCalledTimes(3);
+    expect(resource.state).toMatchObject({ value: 'last good', loading: true, stale: true });
+    expect(resource.state.error).toBeUndefined();
+    recovery.resolve('recovered');
+    await advance(0);
+    expect(resource.state).toEqual({ value: 'recovered', loading: false, stale: false });
+    await advance(1000);
+    expect(load).toHaveBeenCalledTimes(3);
+  });
+
+  it('publishes stale progress through consecutive invalidation cycles and becomes fresh after quiescence', async () => {
+    const reads = Array.from({ length: 4 }, () => deferred<string>());
+    const signals: AbortSignal[] = [];
+    const load = vi.fn<(signal: AbortSignal) => Promise<string>>((signal) => {
+      signals.push(signal);
+      return reads[signals.length - 1]!.promise;
+    });
+    const { resource } = create(load);
+    resource.invalidate();
+    await advance(300);
+    for (let cycle = 0; cycle < 3; cycle++) {
+      for (let invalidation = 0; invalidation < 10; invalidation++) resource.invalidate();
+      expect(load).toHaveBeenCalledTimes(cycle + 1);
+      expect(signals[cycle]!.aborted).toBe(false);
+      reads[cycle]!.resolve(`observation-${cycle + 1}`);
+      await advance(0);
+      expect(resource.state).toEqual({ value: `observation-${cycle + 1}`, loading: false, stale: true });
+      await advance(299);
+      expect(load).toHaveBeenCalledTimes(cycle + 1);
+      await advance(1);
+      expect(load).toHaveBeenCalledTimes(cycle + 2);
+    }
+    reads[3]!.resolve('quiescent observation');
+    await advance(0);
+    expect(resource.state).toEqual({ value: 'quiescent observation', loading: false, stale: false });
+    await advance(1000);
+    expect(load).toHaveBeenCalledTimes(4);
+  });
+
+  it.each(['success', 'failure'] as const)('reset fences an old-generation %s and schedules a new read', async (outcome) => {
+    const late = deferred<string>();
+    let signal!: AbortSignal;
+    const load = vi.fn<(signal: AbortSignal) => Promise<string>>()
+      .mockResolvedValueOnce('baseline')
+      .mockImplementationOnce((value) => { signal = value; return late.promise; })
+      .mockResolvedValueOnce('new generation');
+    const { resource } = create(load);
+    resource.invalidate();
+    await advance(300);
+    resource.invalidate();
+    await advance(300);
+    resource.reset();
+    expect(signal.aborted).toBe(true);
+    expect(resource.state).toMatchObject({ value: 'baseline', loading: false, stale: true });
+    if (outcome === 'success') late.resolve('old generation');
+    else late.reject(new Error('old-generation failure'));
+    await advance(0);
+    expect(resource.state).toMatchObject({ value: 'baseline', loading: false, stale: true });
     expect(resource.state.error).toBeUndefined();
     await advance(300);
-    expect(resource.state).toEqual({ value: 'new', loading: false, stale: false });
+    expect(resource.state).toEqual({ value: 'new generation', loading: false, stale: false });
+    expect(load).toHaveBeenCalledTimes(3);
   });
 
   it('markStale retains the last value and fences an in-flight completion without fetching', async () => {
@@ -155,6 +226,30 @@ describe('Resource revision and lifetime', () => {
     expect(resource.state.value).toBe('recovered');
   });
 
+  it('does not publish a successful response delivered after its read deadline', async () => {
+    const late = deferred<string>();
+    let signal!: AbortSignal;
+    const load = vi.fn<(signal: AbortSignal) => Promise<string>>()
+      .mockResolvedValueOnce('baseline')
+      .mockImplementationOnce((value) => { signal = value; return late.promise; })
+      .mockResolvedValueOnce('recovered');
+    const { resource } = create(load);
+    resource.invalidate();
+    await advance(300);
+    resource.invalidate();
+    await advance(300);
+    resource.invalidate();
+    await advance(15_000);
+    expect(signal.aborted).toBe(true);
+    late.resolve('too late');
+    await advance(0);
+    expect(resource.state).toMatchObject({
+      value: 'baseline', loading: false, stale: true, error: 'Read timed out. Refresh to try again.',
+    });
+    await advance(300);
+    expect(resource.state).toEqual({ value: 'recovered', loading: false, stale: false });
+  });
+
   it('cancels scheduled work and fences late completion after disposal', async () => {
     const scheduledLoad = vi.fn().mockResolvedValue('unused');
     const scheduled = create(scheduledLoad);
@@ -175,6 +270,7 @@ describe('Resource revision and lifetime', () => {
     await advance(30_000);
     resource.invalidate();
     resource.markStale();
+    resource.reset();
     expect(resource.state.value).toBeUndefined();
     expect(changed).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
