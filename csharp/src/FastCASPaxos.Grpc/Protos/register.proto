@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+package fastcaspaxos.v1;
+option csharp_namespace = "FastCASPaxos.Grpc.Wire";
+
+service Acceptor {
+  rpc Prepare(PrepareRequest) returns (PrepareResponse);
+  rpc Accept(AcceptRequest) returns (AcceptResponse);
+  rpc ListKeys(ListKeysRequest) returns (AcceptorKeyPage);
+}
+
+service Register {
+  rpc Read(ReadRequest) returns (RegisterState);
+  rpc CompareExchange(CompareExchangeRequest) returns (CompareExchangeResponse);
+  rpc ListKeys(ListKeysRequest) returns (RegisterKeyPage);
+}
+
+message Empty {}
+message Ballot {
+  int32 round = 1;
+  int32 proposer_id = 2;
+}
+message AcceptedState {
+  Ballot ballot = 1;
+  optional bytes value = 2;
+}
+message PrepareRequest {
+  optional string key = 1;
+  Ballot ballot = 2;
+}
+message PrepareResponse {
+  // Absence means the key has never accepted a value.
+  AcceptedState accepted = 1;
+  oneof outcome {
+    Ballot promised = 2; // Echoes the requested ballot.
+    Ballot rejected = 3; // Conflicting ballot.
+  }
+}
+message AcceptRequest {
+  optional string key = 1;
+  Ballot ballot = 2;
+  optional bytes value = 3;
+  // Absence or (0, 0) means no piggybacked prepare.
+  Ballot next_ballot = 4;
+}
+message AcceptResponse {
+  oneof outcome {
+    Ballot accepted = 1; // The acceptor's promised ballot.
+    Ballot rejected = 2; // Conflicting ballot.
+  }
+}
+message ListKeysRequest {
+  string prefix = 1;
+  optional string after_key = 2; // Exclusive; empty is distinct from absent.
+  int32 limit = 3; // Positive.
+}
+message AcceptorEntry {
+  optional string key = 1;
+  Ballot promised_ballot = 2;
+  AcceptedState accepted = 3;
+}
+message AcceptorKeyPage {
+  repeated AcceptorEntry entries = 1;
+  optional string continuation_key = 2;
+}
+message ReadRequest { optional string key = 1; }
+message PresentValue {
+  optional bytes value = 1;
+  optional bytes version = 2; // Opaque.
+}
+message RegisterState {
+  oneof state {
+    Empty absent = 1;
+    PresentValue present = 2;
+  }
+}
+message CompareExchangeRequest {
+  optional string key = 1;
+  optional bytes expected_version = 2; // Absence requests create-if-absent.
+  optional bytes value = 3;
+}
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_CANCELLED = 1;
+  ERROR_CODE_DEADLINE = 2;
+  ERROR_CODE_UNAVAILABLE = 3;
+  ERROR_CODE_INTERNAL = 4;
+}
+message OperationError {
+  ErrorCode code = 1;
+  string message = 2;
+}
+message UnknownOutcome {
+  RegisterState current = 1; // Optional later observation.
+  OperationError error = 2; // Optional diagnostic cause.
+}
+message CompareExchangeResponse {
+  oneof outcome {
+    RegisterState applied = 1;
+    RegisterState mismatch = 2;
+    UnknownOutcome unknown = 3;
+  }
+}
+message RegisterKeyPage {
+  repeated string keys = 1;
+  optional string continuation_key = 2;
+}
