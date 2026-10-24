@@ -14,7 +14,7 @@ public sealed class DeterminismScenarioTests
         var left = await CaptureTrace(seed: 9901);
         var right = await CaptureTrace(seed: 9901);
 
-        Assert.Equal(left, right);
+        Assert.Equal<string>(left, right);
     }
 
     [Fact]
@@ -23,7 +23,7 @@ public sealed class DeterminismScenarioTests
         var left = await CaptureTrace(seed: 9901);
         var right = await CaptureTrace(seed: 9902);
 
-        Assert.NotEqual(left, right);
+        Assert.NotEqual<string>(left, right);
     }
 
     private static async Task<ImmutableArray<string>> CaptureTrace(int seed)
