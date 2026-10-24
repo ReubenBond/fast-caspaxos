@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace Clockwork;
 
 /// <summary>
@@ -12,7 +14,7 @@ public sealed class SimulationTaskScheduler(SimulationTaskQueue taskQueue) : Tas
     /// <summary>
     /// Gets the scheduled tasks in the queue.
     /// </summary>
-    public IReadOnlyList<Task> Tasks => taskQueue.GetItemsOfType<ScheduledTaskItem, Task>(item => item.Task);
+    public ImmutableArray<Task> Tasks => taskQueue.GetItemsOfType<ScheduledTaskItem, Task>(item => item.Task);
 
     /// <inheritdoc />
     protected override void QueueTask(Task task) => taskQueue.Enqueue(new ScheduledTaskItem(task, this));

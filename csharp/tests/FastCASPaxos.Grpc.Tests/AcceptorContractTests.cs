@@ -13,12 +13,12 @@ namespace FastCASPaxos.Grpc.Tests;
 public sealed class AcceptorContractTests
 {
     [Fact]
-    public async Task PrepareAndAccept_MatchCoreOracleAcrossRetriesAndConflicts()
+    public async Task PrepareAndAcceptMatchCoreOracleAcrossRetriesAndConflicts()
     {
         using var directory = new TestDirectory();
         await using var sqlite = await SqliteAcceptorServer.OpenAsync(directory.Database("acceptor"));
         var client = new GrpcKeyedAcceptor(new ContractCallInvoker(Service(sqlite)));
-        var oracle = AcceptorState<ByteString?>.CreateInitial(null);
+        var oracle = AcceptorState.CreateInitial<ByteString?>(null);
         var key = "key\0\U0001f600";
 
         async Task Prepare(int round)
@@ -54,7 +54,7 @@ public sealed class AcceptorContractTests
     }
 
     [Fact]
-    public async Task AcceptWithoutPrepare_PreservesLowerPromiseAndAcceptedInventory()
+    public async Task AcceptWithoutPreparePreservesLowerPromiseAndAcceptedInventory()
     {
         using var directory = new TestDirectory();
         var path = directory.Database("acceptor");
@@ -79,7 +79,7 @@ public sealed class AcceptorContractTests
     }
 
     [Fact]
-    public async Task Prepare_NeverAcceptedAndAcceptedEmptyRemainDistinct()
+    public async Task PrepareNeverAcceptedAndAcceptedEmptyRemainDistinct()
     {
         using var directory = new TestDirectory();
         await using var sqlite = await SqliteAcceptorServer.OpenAsync(directory.Database("acceptor"));
@@ -108,7 +108,7 @@ public sealed class AcceptorContractTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Accept_AbsentAndExplicitZeroNextBallotReachDomainAsZero(bool explicitZero)
+    public async Task AcceptAbsentAndExplicitZeroNextBallotReachDomainAsZero(bool explicitZero)
     {
         var domain = new DelegateAcceptor
         {
@@ -128,7 +128,7 @@ public sealed class AcceptorContractTests
     }
 
     [Fact]
-    public async Task BallotBoundaries_PreserveMaximumRoundAndNonnegativeProposer()
+    public async Task BallotBoundariesPreserveMaximumRoundAndNonnegativeProposer()
     {
         using var directory = new TestDirectory();
         await using var sqlite = await SqliteAcceptorServer.OpenAsync(directory.Database("acceptor"));

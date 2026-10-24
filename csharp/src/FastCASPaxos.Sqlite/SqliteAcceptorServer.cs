@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+using System.Globalization;
 using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Runtime.ExceptionServices;
@@ -48,7 +50,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
     /// </summary>
     public static async ValueTask<SqliteAcceptorServer> OpenAsync(
         string databasePath, int queueCapacity = 256, int maxBatchSize = 64,
-        CancellationToken cancellationToken = default, NodeEventJournal? diagnostics = null)
+        NodeEventJournal? diagnostics = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(queueCapacity);
@@ -141,12 +143,12 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
 
             command.Parameters.AddWithValue("$limit", (long)limit + 1);
             using var reader = command.ExecuteReader();
-            var entries = new List<KeyedAcceptorState>();
+            var entries = ImmutableArray.CreateBuilder<KeyedAcceptorState>();
             while (reader.Read())
             {
                 if (entries.Count == limit)
                 {
-                    return new KeyPage(entries.AsReadOnly(), entries[^1].Key);
+                    return new KeyPage(entries.ToImmutable(), entries[^1].Key);
                 }
 
                 entries.Add(new KeyedAcceptorState(
@@ -156,7 +158,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
                     ReadAcceptedValue(reader, 5)));
             }
 
-            return new KeyPage(entries.AsReadOnly(), null);
+            return new KeyPage(entries.DrainToImmutable(), null);
         }, cancellationToken);
     }
 
@@ -181,14 +183,14 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
             if (afterKey is not null) command.Parameters.AddWithValue("$after", EncodeKey(afterKey));
             command.Parameters.AddWithValue("$limit", (long)limit + 1);
             using var reader = command.ExecuteReader();
-            var entries = new List<KeyDigest>();
+            var entries = ImmutableArray.CreateBuilder<KeyDigest>();
             while (reader.Read())
             {
-                if (entries.Count == limit) return new AcceptorDigestPage(entries.AsReadOnly(), entries[^1].Key);
+                if (entries.Count == limit) return new AcceptorDigestPage(entries.ToImmutable(), entries[^1].Key);
                 entries.Add(new(DecodeKey(reader.GetFieldValue<byte[]>(0)),
                     new(new(reader.GetInt32(1), reader.GetInt32(2)), new(reader.GetFieldValue<byte[]>(3)))));
             }
-            return new AcceptorDigestPage(entries.AsReadOnly(), null);
+            return new AcceptorDigestPage(entries.DrainToImmutable(), null);
         }, cancellationToken);
     }
 
@@ -251,16 +253,16 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
             if (afterKey is not null) command.Parameters.AddWithValue("$after", EncodeKey(afterKey));
             command.Parameters.AddWithValue("$limit", (long)limit + 1);
             using var reader = command.ExecuteReader();
-            var entries = new List<LocalAcceptorState>();
+            var entries = ImmutableArray.CreateBuilder<LocalAcceptorState>();
             while (reader.Read())
             {
-                if (entries.Count == limit) return new LocalAcceptorPage(entries.AsReadOnly(), entries[^1].Key);
+                if (entries.Count == limit) return new LocalAcceptorPage(entries.ToImmutable(), entries[^1].Key);
                 entries.Add(new(DecodeKey(reader.GetFieldValue<byte[]>(0)),
                     new Ballot(reader.GetInt32(1), reader.GetInt32(2)),
                     reader.IsDBNull(3) ? Ballot.Zero : new Ballot(reader.GetInt32(3), reader.GetInt32(4)),
                     reader.IsDBNull(5) ? null : ReadAcceptedValue(reader, 5)));
             }
-            return new LocalAcceptorPage(entries.AsReadOnly(), null);
+            return new LocalAcceptorPage(entries.DrainToImmutable(), null);
         }, cancellationToken);
     }
 
@@ -402,13 +404,13 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         command.CommandText = "PRAGMA synchronous=FULL;";
         command.ExecuteNonQuery();
         command.CommandText = "PRAGMA synchronous;";
-        if (Convert.ToInt32(command.ExecuteScalar()) != 2)
+        if (Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture) != 2)
         {
             throw new InvalidOperationException("The acceptor database requires SQLite synchronous=FULL.");
         }
 
         command.CommandText = "PRAGMA foreign_keys;";
-        if (Convert.ToInt32(command.ExecuteScalar()) != 1)
+        if (Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture) != 1)
         {
             throw new InvalidOperationException("The acceptor database requires SQLite foreign key enforcement.");
         }
@@ -416,9 +418,9 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         using var transaction = connection.BeginTransaction(deferred: false);
         command.Transaction = transaction;
         command.CommandText = "PRAGMA application_id;";
-        var applicationId = Convert.ToInt32(command.ExecuteScalar());
+        var applicationId = Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
         command.CommandText = "PRAGMA user_version;";
-        var schemaVersion = Convert.ToInt32(command.ExecuteScalar());
+        var schemaVersion = Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
         if (applicationId == ApplicationId && schemaVersion == 2)
         {
             transaction.Commit();
@@ -427,7 +429,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
 
         var migrate = applicationId == ApplicationId && schemaVersion == 1;
         command.CommandText = "SELECT count(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%';";
-        if (!migrate && (applicationId != 0 || schemaVersion != 0 || Convert.ToInt64(command.ExecuteScalar()) != 0))
+        if (!migrate && (applicationId != 0 || schemaVersion != 0 || Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture) != 0))
         {
             throw new InvalidDataException("The file is not a supported FastCASPaxos acceptor database.");
         }
@@ -480,7 +482,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         exists = reader.Read();
         if (!exists)
         {
-            return AcceptorState<ByteString?>.CreateInitial(null);
+            return AcceptorState.CreateInitial<ByteString?>(null);
         }
 
         return new AcceptorState<ByteString?>

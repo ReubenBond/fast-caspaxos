@@ -28,7 +28,7 @@ internal static class Program
             var batchResult = await SimulationBatchRunner.RunAsync(
                 new SimulationBatchOptions
                 {
-                    ScenarioNames = options.Scenarios,
+                    ScenarioNames = [.. options.Scenarios],
                     ScenarioParameters = new Dictionary<string, string>(options.ScenarioParameters, StringComparer.OrdinalIgnoreCase),
                     Seed = options.Seed,
                     Rounds = options.Rounds,
@@ -265,7 +265,7 @@ internal static class Program
     }
 
     private static void SetScenarioParameter(
-        IDictionary<string, string> parameters,
+        Dictionary<string, string> parameters,
         string name,
         string value) =>
         parameters[name] = value;

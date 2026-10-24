@@ -8,7 +8,7 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class RandomizedScenarioTests
 {
     [Fact]
-    public async Task RandomizedAppendMix_ConvergesToSingleDeterministicResult()
+    public async Task RandomizedAppendMixConvergesToSingleDeterministicResult()
     {
         await using var cluster = new FastCasSimulationCluster<StringValue>(
             seed: 333,

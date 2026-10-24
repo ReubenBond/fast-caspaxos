@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
 using FastCASPaxos.Simulation.Contracts;
@@ -19,8 +20,8 @@ public sealed record AcceptorSafetyMonitorArtifact(
     int UpdateCount,
     string? LastObservedAt,
     string? LastUpdatedAcceptor,
-    IReadOnlyList<AcceptorSafetyMonitorCommitArtifact> Commits,
-    IReadOnlyList<AcceptorSafetyMonitorSnapshotArtifact> FinalSnapshot);
+    ImmutableArray<AcceptorSafetyMonitorCommitArtifact> Commits,
+    ImmutableArray<AcceptorSafetyMonitorSnapshotArtifact> FinalSnapshot);
 
 public sealed record AcceptorSafetyMonitorCommitArtifact(
     int Sequence,
@@ -29,7 +30,7 @@ public sealed record AcceptorSafetyMonitorCommitArtifact(
     string Ballot,
     int Version,
     string? Value,
-    IReadOnlyList<string> Witnesses);
+    ImmutableArray<string> Witnesses);
 
 public sealed record AcceptorSafetyMonitorSnapshotArtifact(
     string Acceptor,
@@ -77,15 +78,9 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
     public void Observe(
         DateTimeOffset timestamp,
         FastCasAddress updatedAcceptor,
-        IReadOnlyList<FastCasAcceptorStateSnapshot<TValue>> snapshots)
+        ReadOnlySpan<FastCasAcceptorStateSnapshot<TValue>> snapshots)
     {
-        ArgumentNullException.ThrowIfNull(snapshots);
-
-        var orderedSnapshots = new FastCasAcceptorStateSnapshot<TValue>[snapshots.Count];
-        for (var i = 0; i < orderedSnapshots.Length; i++)
-        {
-            orderedSnapshots[i] = snapshots[i];
-        }
+        var orderedSnapshots = snapshots.ToArray();
 
         if (orderedSnapshots.Length > 1)
         {
@@ -147,8 +142,8 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
             UpdateCount,
             _lastObservedAt?.ToString("O", CultureInfo.InvariantCulture),
             _lastUpdatedAcceptor is { } lastUpdatedAcceptor ? GetFormattedAddress(lastUpdatedAcceptor) : null,
-            new FrozenCommitList(this, _commitHistory, _commitHistory.Count),
-            new FrozenSnapshotList(this, _lastSnapshot));
+            CreateCommitArtifacts(),
+            CreateSnapshotArtifacts());
         _cachedArtifact = artifact;
         _artifactDirty = false;
         return artifact;
@@ -157,7 +152,7 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
     private static void ValidateAcceptedBallotConsistency(
         DateTimeOffset timestamp,
         FastCasAddress updatedAcceptor,
-        IReadOnlyList<FastCasAcceptorStateSnapshot<TValue>> snapshots)
+        FastCasAcceptorStateSnapshot<TValue>[] snapshots)
     {
         foreach (var ballotGroup in snapshots
             .Where(snapshot => !snapshot.AcceptedBallot.IsZero)
@@ -190,10 +185,10 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
     private static bool TryResolveCommittedValue(
         DateTimeOffset timestamp,
         FastCasAddress updatedAcceptor,
-        IReadOnlyList<FastCasAcceptorStateSnapshot<TValue>> snapshots,
+        FastCasAcceptorStateSnapshot<TValue>[] snapshots,
         out ResolvedCommit committed)
     {
-        var acceptorCount = snapshots.Count;
+        var acceptorCount = snapshots.Length;
         var candidates = snapshots
             .Where(snapshot => !snapshot.AcceptedBallot.IsZero)
             .GroupBy(snapshot => snapshot.AcceptedBallot)
@@ -220,7 +215,7 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
         return true;
     }
 
-    private static IReadOnlyList<ResolvedCommit> ResolveCommittedCandidates(
+    private static ResolvedCommit[] ResolveCommittedCandidates(
         DateTimeOffset timestamp,
         FastCasAddress updatedAcceptor,
         IGrouping<Ballot, FastCasAcceptorStateSnapshot<TValue>> ballotGroup,
@@ -234,10 +229,10 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
                 return Array.Empty<ResolvedCommit>();
             }
 
-            var witnesses = new FastCasAddress[ballotWitnesses.Length];
-            for (var i = 0; i < witnesses.Length; i++)
+            var witnesses = ImmutableArray.CreateBuilder<FastCasAddress>(ballotWitnesses.Length);
+            foreach (var witness in ballotWitnesses)
             {
-                witnesses[i] = ballotWitnesses[i].Acceptor;
+                witnesses.Add(witness.Acceptor);
             }
 
             return
@@ -245,7 +240,7 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
                 new ResolvedCommit(
                     ballotGroup.Key,
                     ballotWitnesses[0].AcceptedValue,
-                    witnesses),
+                    witnesses.MoveToImmutable()),
             ];
         }
 
@@ -304,12 +299,34 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
         return formatted;
     }
 
+    private ImmutableArray<AcceptorSafetyMonitorCommitArtifact> CreateCommitArtifacts()
+    {
+        var commits = ImmutableArray.CreateBuilder<AcceptorSafetyMonitorCommitArtifact>(_commitHistory.Count);
+        foreach (var commit in _commitHistory)
+        {
+            commits.Add(CreateCommitArtifact(commits.Count + 1, commit));
+        }
+
+        return commits.MoveToImmutable();
+    }
+
+    private ImmutableArray<AcceptorSafetyMonitorSnapshotArtifact> CreateSnapshotArtifacts()
+    {
+        var snapshots = ImmutableArray.CreateBuilder<AcceptorSafetyMonitorSnapshotArtifact>(_lastSnapshot.Length);
+        foreach (var snapshot in _lastSnapshot)
+        {
+            snapshots.Add(CreateSnapshotArtifact(snapshot));
+        }
+
+        return snapshots.MoveToImmutable();
+    }
+
     private AcceptorSafetyMonitorCommitArtifact CreateCommitArtifact(int sequence, ObservedCommit commit)
     {
-        var witnesses = new string[commit.Witnesses.Count];
-        for (var i = 0; i < witnesses.Length; i++)
+        var witnesses = ImmutableArray.CreateBuilder<string>(commit.Witnesses.Length);
+        foreach (var witness in commit.Witnesses)
         {
-            witnesses[i] = GetFormattedAddress(commit.Witnesses[i]);
+            witnesses.Add(GetFormattedAddress(witness));
         }
 
         return new AcceptorSafetyMonitorCommitArtifact(
@@ -319,7 +336,7 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
             Ballot: commit.Ballot.ToString(),
             Version: commit.Value.Version,
             Value: FormatValue(commit.Value),
-            Witnesses: witnesses);
+            Witnesses: witnesses.MoveToImmutable());
     }
 
     private AcceptorSafetyMonitorSnapshotArtifact CreateSnapshotArtifact(
@@ -351,78 +368,15 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
                 _owner.GetFormattedAddress(right.Acceptor));
     }
 
-    private sealed class FrozenCommitList(
-        FastCasAcceptorSafetyMonitor<TValue> owner,
-        IReadOnlyList<ObservedCommit> commits,
-        int count)
-        : IReadOnlyList<AcceptorSafetyMonitorCommitArtifact>
-    {
-        private readonly FastCasAcceptorSafetyMonitor<TValue> _owner = owner;
-        private readonly IReadOnlyList<ObservedCommit> _commits = commits;
-
-        public int Count { get; } = count;
-
-        public AcceptorSafetyMonitorCommitArtifact this[int index]
-        {
-            get
-            {
-                ArgumentOutOfRangeException.ThrowIfNegative(index);
-                ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, Count);
-                return _owner.CreateCommitArtifact(index + 1, _commits[index]);
-            }
-        }
-
-        public IEnumerator<AcceptorSafetyMonitorCommitArtifact> GetEnumerator()
-        {
-            for (var i = 0; i < Count; i++)
-            {
-                yield return this[i];
-            }
-        }
-
-        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
-    }
-
-    private sealed class FrozenSnapshotList(
-        FastCasAcceptorSafetyMonitor<TValue> owner,
-        IReadOnlyList<FastCasAcceptorStateSnapshot<TValue>> snapshots)
-        : IReadOnlyList<AcceptorSafetyMonitorSnapshotArtifact>
-    {
-        private readonly FastCasAcceptorSafetyMonitor<TValue> _owner = owner;
-        private readonly IReadOnlyList<FastCasAcceptorStateSnapshot<TValue>> _snapshots = snapshots;
-
-        public int Count => _snapshots.Count;
-
-        public AcceptorSafetyMonitorSnapshotArtifact this[int index]
-        {
-            get
-            {
-                ArgumentOutOfRangeException.ThrowIfNegative(index);
-                ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, Count);
-                return _owner.CreateSnapshotArtifact(_snapshots[index]);
-            }
-        }
-
-        public IEnumerator<AcceptorSafetyMonitorSnapshotArtifact> GetEnumerator()
-        {
-            for (var i = 0; i < Count; i++)
-            {
-                yield return this[i];
-            }
-        }
-
-        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
-    }
-
     private readonly record struct ResolvedCommit(
         Ballot Ballot,
         TValue Value,
-        IReadOnlyList<FastCasAddress> Witnesses);
+        ImmutableArray<FastCasAddress> Witnesses);
 
     private readonly record struct ObservedCommit(
         DateTimeOffset Timestamp,
         FastCasAddress UpdatedAcceptor,
         Ballot Ballot,
         TValue Value,
-        IReadOnlyList<FastCasAddress> Witnesses);
+        ImmutableArray<FastCasAddress> Witnesses);
 }

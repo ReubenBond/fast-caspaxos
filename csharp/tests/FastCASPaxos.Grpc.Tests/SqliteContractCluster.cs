@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Protocol;
 using FastCASPaxos.Server;
 using FastCASPaxos.Sqlite;
@@ -48,8 +49,8 @@ internal sealed class SqliteContractCluster(TestDirectory directory) : IAsyncDis
         _ballots.Add(ballots);
         var offline = new GrpcKeyedAcceptor(StubCallInvoker.Fail(
             new RpcException(new Status(StatusCode.Unavailable, "Peer is offline."))));
-        var routes = Clients.Select((client, index) =>
-            new AcceptorPeer($"peer-{index}", index == offlinePeer ? offline : client));
+        ImmutableArray<AcceptorPeer> routes = [.. Clients.Select((client, index) =>
+            new AcceptorPeer($"peer-{index}", index == offlinePeer ? offline : client))];
         var service = new ReplicatedRegisterService(routes, ballots, new()
         {
             Mode = ProposerModePolicy.Parse(mode),

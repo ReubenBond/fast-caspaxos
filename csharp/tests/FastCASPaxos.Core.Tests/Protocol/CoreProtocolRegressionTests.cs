@@ -18,7 +18,7 @@ public sealed class CoreProtocolRegressionTests
     [InlineData(false, 10, 2, true)]
     [InlineData(false, 10, 3, true)]
     [InlineData(false, 11, 1, true)]
-    public void AcceptorEngine_Prepare_UsesEffectiveBallotFloor(
+    public void AcceptorEnginePrepareUsesEffectiveBallotFloor(
         bool acceptedIsFloor, int round, int proposer, bool shouldPromise)
     {
         var floor = new Ballot(10, 2);
@@ -52,7 +52,7 @@ public sealed class CoreProtocolRegressionTests
     [InlineData(false, 10, 2, true)]
     [InlineData(false, 10, 3, true)]
     [InlineData(false, 11, 1, true)]
-    public void AcceptorEngine_Accept_UsesEffectiveBallotFloor(
+    public void AcceptorEngineAcceptUsesEffectiveBallotFloor(
         bool acceptedIsFloor, int round, int proposer, bool shouldAccept)
     {
         var floor = new Ballot(10, 2);
@@ -80,7 +80,7 @@ public sealed class CoreProtocolRegressionTests
     [InlineData(10, 1, 7, "accepted", false)]
     [InlineData(10, 2, 8, "accepted", false)]
     [InlineData(10, 2, 7, "different", false)]
-    public void AcceptorEngine_Accept_IdempotenceRequiresExactBallotAndEntireValue(
+    public void AcceptorEngineAcceptIdempotenceRequiresExactBallotAndEntireValue(
         int round, int proposer, int version, string payload, bool shouldAccept)
     {
         var acceptedBallot = new Ballot(10, 2);
@@ -101,7 +101,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void AcceptorEngine_DelayedAccept_CannotEraseChosenValue()
+    public void AcceptorEngineDelayedAcceptCannotEraseChosenValue()
     {
         var a = new RecordingAcceptorEngine<TestValue, string>("A", default);
         var b = new RecordingAcceptorEngine<TestValue, string>("B", default);
@@ -163,7 +163,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void AcceptorEngine_Accept_PiggybacksFuturePrepare()
+    public void AcceptorEngineAcceptPiggybacksFuturePrepare()
     {
         var engine = new RecordingAcceptorEngine<TestValue, string>("a1", default);
         var ballot = Ballot.InitialClassic(1);
@@ -183,7 +183,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void AcceptorEngine_Accept_RejectsSameBallotDifferentValue()
+    public void AcceptorEngineAcceptRejectsSameBallotDifferentValue()
     {
         var engine = new RecordingAcceptorEngine<TestValue, string>("a1", default);
         var ballot = Ballot.InitialClassic(1);
@@ -206,7 +206,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void AcceptorEngine_Accept_TreatsSameBallotSameValueAsIdempotent()
+    public void AcceptorEngineAcceptTreatsSameBallotSameValueAsIdempotent()
     {
         var acceptedBallot = Ballot.InitialClassic(1);
         var promisedBallot = acceptedBallot.NextRound(2);
@@ -231,7 +231,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void AcceptorEngine_Accept_AllowsFastRoundWithoutVersionAdvance()
+    public void AcceptorEngineAcceptAllowsFastRoundWithoutVersionAdvance()
     {
         var ballot = Ballot.InitialFast();
         var engine = new RecordingAcceptorEngine<TestValue, string>(
@@ -252,7 +252,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void AcceptorEngine_Accept_AllowsClassicRoundConflictRepairAtSameVersion()
+    public void AcceptorEngineAcceptAllowsClassicRoundConflictRepairAtSameVersion()
     {
         var acceptedBallot = Ballot.InitialClassic(1);
         var repairBallot = acceptedBallot.NextRound(2);
@@ -275,7 +275,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void AcceptorEngine_Accept_AllowsClassicRoundNonSuccessor()
+    public void AcceptorEngineAcceptAllowsClassicRoundNonSuccessor()
     {
         var acceptedBallot = Ballot.InitialClassic(1);
         var repairBallot = acceptedBallot.NextRound(2);
@@ -298,7 +298,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void AcceptorEngine_Accept_AllowsFastRoundNonSuccessorWhenBallotAdvances()
+    public void AcceptorEngineAcceptAllowsFastRoundNonSuccessorWhenBallotAdvances()
     {
         var acceptedBallot = Ballot.InitialFast();
         var engine = new RecordingAcceptorEngine<TestValue, string>(
@@ -319,7 +319,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_StartProposal_CompletesClassicCommit()
+    public void ProposerEngineStartProposalCompletesClassicCommit()
     {
         var engine = CreateClassicProposer();
         var proposal = AppendOperation(1, "A");
@@ -357,7 +357,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_Completion_KeepsCurrentOperationAvailableUntilCallbackReturns()
+    public void ProposerEngineCompletionKeepsCurrentOperationAvailableUntilCallbackReturns()
     {
         var engine = CreateClassicProposer();
         var operation = new RoutedOperation<TestValue, string>("client", AppendOperation(0, "noop"));
@@ -394,7 +394,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_HandleAcceptResponse_RetriesPrepareUsingHighestRejectedBallot()
+    public void ProposerEngineHandleAcceptResponseRetriesPrepareUsingHighestRejectedBallot()
     {
         var engine = CreateClassicProposer();
         var proposal = AppendOperation(1, "A");
@@ -432,7 +432,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_PrepareRecovery_RebasesCurrentRequestWithoutRepairAccept()
+    public void ProposerEnginePrepareRecoveryRebasesCurrentRequestWithoutRepairAccept()
     {
         var engine = CreateClassicProposer();
         var proposal = AppendOperation(2, "B");
@@ -473,7 +473,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_HasQuorum_UsesFastAndClassicThresholds()
+    public void ProposerEngineHasQuorumUsesFastAndClassicThresholds()
     {
         var engine = CreateFastProposer();
 
@@ -484,7 +484,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_StartProposal_InitialFastBallotSkipsPrepareAndCommits()
+    public void ProposerEngineStartProposalInitialFastBallotSkipsPrepareAndCommits()
     {
         var engine = CreateFastProposer();
         var proposal = AppendOperation(1, "A");
@@ -505,7 +505,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_StartProposal_ReusesPreparedBallotAfterPreparedNextBallotQuorum()
+    public void ProposerEngineStartProposalReusesPreparedBallotAfterPreparedNextBallotQuorum()
     {
         var engine = CreateFastProposer();
         var firstProposal = AppendOperation(1, "A");
@@ -530,7 +530,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_LearnCommittedValue_ReusesLearnedPreparedNextFastBallot()
+    public void ProposerEngineLearnCommittedValueReusesLearnedPreparedNextFastBallot()
     {
         var engine = CreateFastProposer();
         var acceptedBallot = Ballot.InitialFast();
@@ -557,7 +557,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_LearnCommittedValue_IgnoresStaleAcceptedAndPreparedBallots()
+    public void ProposerEngineLearnCommittedValueIgnoresStaleAcceptedAndPreparedBallots()
     {
         var engine = CreateFastProposer();
         var firstAcceptedBallot = Ballot.InitialFast();
@@ -575,7 +575,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_LearnCommittedValue_PrefersHigherPreparedBallotAlreadyCached()
+    public void ProposerEngineLearnCommittedValuePrefersHigherPreparedBallotAlreadyCached()
     {
         var engine = CreateFastProposer();
         var firstAcceptedBallot = new Ballot(1, 1);
@@ -592,7 +592,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_LearnCommittedValue_IgnoresRequestWhileOperationIsInFlight()
+    public void ProposerEngineLearnCommittedValueIgnoresRequestWhileOperationIsInFlight()
     {
         var engine = CreateFastProposer();
         var initialFastBallot = Ballot.InitialFast();
@@ -620,7 +620,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_BeginOperation_DoesNotReusePreparedClassicBallotOwnedByAnotherProposer()
+    public void ProposerEngineBeginOperationDoesNotReusePreparedClassicBallotOwnedByAnotherProposer()
     {
         var engine = new RecordingProposerEngine<TestValue, string>(
             "p2",
@@ -646,7 +646,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_HandlePrepareResponse_WhenOperationCannotApply_RetriesPrepare()
+    public void ProposerEngineHandlePrepareResponseWhenOperationCannotApplyRetriesPrepare()
     {
         var engine = CreateClassicProposer();
         var initialProposal = AppendOperation(1, "A");
@@ -704,7 +704,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_FastConflict_RecoversWithoutExtraClassicRetryWhenNoFastValueCanStillWin()
+    public void ProposerEngineFastConflictRecoversWithoutExtraClassicRetryWhenNoFastValueCanStillWin()
     {
         var engine = CreateFastProposer();
         var initialFastBallot = Ballot.InitialFast();
@@ -747,7 +747,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_HandlePrepareResponse_FastSplitContinuesCurrentRequestWhenNoFastValueCanStillWin()
+    public void ProposerEngineHandlePrepareResponseFastSplitContinuesCurrentRequestWhenNoFastValueCanStillWin()
     {
         var engine = CreateClassicProposer();
         var proposal = AppendOperation(3, "C");
@@ -778,7 +778,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void OperationDriver_SchedulesPerProposerAndComputesCompletion()
+    public void OperationDriverSchedulesPerProposerAndComputesCompletion()
     {
         var driver = new RecordingOperationDriver<TestValue, string>("client", ["p1", "p2"]);
         driver.Enqueue("p1", AppendOperation(1, "A"));
@@ -815,7 +815,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_AdaptiveLearnedClassicLeaderHint_EnablesForwarding()
+    public void ProposerEngineAdaptiveLearnedClassicLeaderHintEnablesForwarding()
     {
         var engine = CreateAdaptiveProposer();
         var leaderBallot = Ballot.InitialClassic(2);
@@ -829,7 +829,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_AdaptiveLeaderMissThreshold_SwitchesFromForwardingToTakeover()
+    public void ProposerEngineAdaptiveLeaderMissThresholdSwitchesFromForwardingToTakeover()
     {
         var engine = CreateAdaptiveProposer(new AdaptiveProposerPolicy
         {
@@ -847,7 +847,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_AdaptiveModeState_IsIsolatedPerEngine()
+    public void ProposerEngineAdaptiveModeStateIsIsolatedPerEngine()
     {
         var sharedPolicy = ProposerModePolicy.Adaptive();
         var engine1 = new RecordingProposerEngine<TestValue, string>(
@@ -873,7 +873,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_AdaptiveFastConflict_BecomesSelfLedClassic()
+    public void ProposerEngineAdaptiveFastConflictBecomesSelfLedClassic()
     {
         var engine = CreateAdaptiveProposer();
 
@@ -909,7 +909,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_AdaptiveLearnedFastPreparedBallot_ReopensFastPath()
+    public void ProposerEngineAdaptiveLearnedFastPreparedBallotReopensFastPath()
     {
         var engine = CreateAdaptiveProposer(new AdaptiveProposerPolicy
         {
@@ -936,7 +936,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_Read_PartialAcceptedValueRequiresIdentityQuorumBeforeLaterRead()
+    public void ProposerEngineReadPartialAcceptedValueRequiresIdentityQuorumBeforeLaterRead()
     {
         var previous = new TestValue(7, "previous");
         var x = new TestValue(8, "X");
@@ -986,7 +986,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_Read_StalePiggybackedBallotRepreparesAndReturnsNewerValue()
+    public void ProposerEngineReadStalePiggybackedBallotRepreparesAndReturnsNewerValue()
     {
         var a = new RecordingAcceptorEngine<TestValue, string>("A", default);
         var b = new RecordingAcceptorEngine<TestValue, string>("B", default);
@@ -1071,7 +1071,7 @@ public sealed class CoreProtocolRegressionTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void ProposerEngine_NotApplicable_IgnoresOutputAndPreservesRecoveredValue(bool returnDefault)
+    public void ProposerEngineNotApplicableIgnoresOutputAndPreservesRecoveredValue(bool returnDefault)
     {
         var recovered = new TestValue(7, "whole-history");
         var ignored = returnDefault ? default : new TestValue(99, "must-not-be-accepted");
@@ -1102,7 +1102,7 @@ public sealed class CoreProtocolRegressionTests
     }
 
     [Fact]
-    public void ProposerEngine_FailedCas_PreservesValueUntilIdentityAcceptQuorum()
+    public void ProposerEngineFailedCasPreservesValueUntilIdentityAcceptQuorum()
     {
         var recovered = new TestValue(7, "unchanged");
         var ballot = new Ballot(1, 1);
@@ -1130,7 +1130,7 @@ public sealed class CoreProtocolRegressionTests
         int proposerId, ProposerModePolicy? modePolicy = null) =>
         new($"p{proposerId}", proposerId, default, ["A", "B", "C"], modePolicy ?? ProposerModePolicy.StaticClassic);
 
-    private static IOperation<TestValue> ReadOperation() =>
+    private static Operation<int, TestValue> ReadOperation() =>
         new Operation<int, TestValue>
         {
             Input = 0,
@@ -1201,7 +1201,7 @@ public sealed class CoreProtocolRegressionTests
             acceptors: ["a1", "a2", "a3", "a4", "a5"],
             ProposerModePolicy.Adaptive(adaptivePolicy));
 
-    private static IOperation<TestValue> AppendOperation(int expectedVersion, string suffix) =>
+    private static Operation<TestValue, TestValue> AppendOperation(int expectedVersion, string suffix) =>
         new Operation<TestValue, TestValue>
         {
             Input = new TestValue(expectedVersion, suffix),

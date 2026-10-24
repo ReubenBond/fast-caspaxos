@@ -9,7 +9,7 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class SetScenarioTests
 {
     [Fact]
-    public async Task UniqueAdds_ReachesExpectedSet()
+    public async Task UniqueAddsReachesExpectedSet()
     {
         await using var cluster = CreateCluster();
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
@@ -17,7 +17,8 @@ public sealed class SetScenarioTests
         var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
         var expected = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var (value, index) in new[] { "A", "B", "C" }.Select((value, index) => (value, index)))
+        string[] values = ["A", "B", "C"];
+        foreach (var (value, index) in values.Select((value, index) => (value, index)))
         {
             expected.Add(value);
             var response = cluster.RunProposal(proposers[index % proposers.Length], SetScenarioOperations.Add(value));
@@ -39,7 +40,7 @@ public sealed class SetScenarioTests
     }
 
     [Fact]
-    public async Task DuplicateAdds_AreIdempotent()
+    public async Task DuplicateAddsAreIdempotent()
     {
         await using var cluster = CreateCluster();
         cluster.CreateConfiguration(proposerCount: 2, acceptorCount: 5);

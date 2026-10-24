@@ -6,7 +6,7 @@ namespace FastCASPaxos.Sqlite.Tests;
 public sealed class SqliteProposerBallotSourceTests
 {
     [Fact]
-    public void Reserve_ReopenAndMinimumPreserveStrictOwnership()
+    public void ReserveReopenAndMinimumPreserveStrictOwnership()
     {
         using var database = new TestDatabase();
         using (var source = new SqliteProposerBallotSource(database.Path, 7))
@@ -24,7 +24,7 @@ public sealed class SqliteProposerBallotSourceTests
     }
 
     [Fact]
-    public async Task Reserve_ConcurrentInstancesNeverReuseRounds()
+    public async Task ReserveConcurrentInstancesNeverReuseRounds()
     {
         using var database = new TestDatabase();
         using var first = new SqliteProposerBallotSource(database.Path, 11);
@@ -50,7 +50,7 @@ public sealed class SqliteProposerBallotSourceTests
     }
 
     [Fact]
-    public void Open_WrongIdentityCannotResetAllocator()
+    public void OpenWrongIdentityCannotResetAllocator()
     {
         using var database = new TestDatabase();
         using (var owner = new SqliteProposerBallotSource(database.Path, 4))
@@ -61,7 +61,7 @@ public sealed class SqliteProposerBallotSourceTests
     }
 
     [Fact]
-    public void Reserve_ExhaustionDoesNotWrapOrResetOnReopen()
+    public void ReserveExhaustionDoesNotWrapOrResetOnReopen()
     {
         using var database = new TestDatabase();
         using (var source = new SqliteProposerBallotSource(database.Path, 1))
@@ -76,7 +76,7 @@ public sealed class SqliteProposerBallotSourceTests
     }
 
     [Fact]
-    public void ValidationAndDisposal_DoNotConsumeReservations()
+    public void ValidationAndDisposalDoNotConsumeReservations()
     {
         using var database = new TestDatabase();
         Assert.Throws<ArgumentException>(() => new SqliteProposerBallotSource("", 1));

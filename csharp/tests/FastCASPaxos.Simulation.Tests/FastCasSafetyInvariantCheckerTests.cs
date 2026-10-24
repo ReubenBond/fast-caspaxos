@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
 using FastCASPaxos.Protocol;
@@ -10,9 +11,9 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class FastCasSafetyInvariantCheckerTests
 {
     [Fact]
-    public void AssertSafety_RejectsDivergentCommittedValueAtSameVersion()
+    public void AssertSafetyRejectsDivergentCommittedValueAtSameVersion()
     {
-        var histories = new Dictionary<FastCasAddress, IReadOnlyList<StringValue>>
+        var histories = new Dictionary<FastCasAddress, ImmutableArray<StringValue>>
         {
             [FastCasAddress.Proposer(1)] = [new StringValue(1, "A")],
             [FastCasAddress.Proposer(2)] = [new StringValue(1, "B")],
@@ -26,9 +27,9 @@ public sealed class FastCasSafetyInvariantCheckerTests
     }
 
     [Fact]
-    public void AssertSafety_RejectsNonLinearHistory()
+    public void AssertSafetyRejectsNonLinearHistory()
     {
-        var histories = new Dictionary<FastCasAddress, IReadOnlyList<StringValue>>
+        var histories = new Dictionary<FastCasAddress, ImmutableArray<StringValue>>
         {
             [FastCasAddress.Proposer(1)] = [new StringValue(1, "A"), new StringValue(1, "B")],
         };
@@ -41,9 +42,9 @@ public sealed class FastCasSafetyInvariantCheckerTests
     }
 
     [Fact]
-    public void AssertSafety_RejectsResponseHistoryThatRegressesHighestVisibleVersion()
+    public void AssertSafetyRejectsResponseHistoryThatRegressesHighestVisibleVersion()
     {
-        var histories = new Dictionary<FastCasAddress, IReadOnlyList<StringValue>>
+        var histories = new Dictionary<FastCasAddress, ImmutableArray<StringValue>>
         {
             [FastCasAddress.Proposer(1)] = [new StringValue(1, "A"), new StringValue(2, "AB"), new StringValue(3, "ABC")],
         };
@@ -62,9 +63,9 @@ public sealed class FastCasSafetyInvariantCheckerTests
     }
 
     [Fact]
-    public void AssertSafety_AllowsResponseHistoryToReplaceFrontierValue()
+    public void AssertSafetyAllowsResponseHistoryToReplaceFrontierValue()
     {
-        var histories = new Dictionary<FastCasAddress, IReadOnlyList<StringValue>>
+        var histories = new Dictionary<FastCasAddress, ImmutableArray<StringValue>>
         {
             [FastCasAddress.Proposer(1)] = [new StringValue(1, "B"), new StringValue(2, "BC")],
             [FastCasAddress.Proposer(2)] = [new StringValue(1, "B"), new StringValue(2, "BC")],
@@ -82,9 +83,9 @@ public sealed class FastCasSafetyInvariantCheckerTests
     }
 
     [Fact]
-    public void AssertSafety_RejectsInvalidSuccessorChain()
+    public void AssertSafetyRejectsInvalidSuccessorChain()
     {
-        var histories = new Dictionary<FastCasAddress, IReadOnlyList<StringValue>>
+        var histories = new Dictionary<FastCasAddress, ImmutableArray<StringValue>>
         {
             [FastCasAddress.Proposer(1)] = [new StringValue(1, "A"), new StringValue(2, "Z")],
             [FastCasAddress.Proposer(2)] = [new StringValue(1, "A"), new StringValue(2, "Z")],

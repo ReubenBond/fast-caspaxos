@@ -2,20 +2,23 @@ using FastCASPaxos.Model;
 
 namespace FastCASPaxos.Protocol;
 
-public struct AcceptorState<TValue>
+public static class AcceptorState
 {
-    public AcceptorState()
-    {
-        AcceptedValue = default!;
-    }
-
-    public static AcceptorState<TValue> CreateInitial(TValue acceptedValue) =>
+    public static AcceptorState<TValue> CreateInitial<TValue>(TValue acceptedValue) =>
         new()
         {
             PromisedBallot = Ballot.InitialFast(),
             AcceptedBallot = Ballot.Zero,
             AcceptedValue = acceptedValue,
         };
+}
+
+public struct AcceptorState<TValue>
+{
+    public AcceptorState()
+    {
+        AcceptedValue = default!;
+    }
 
     public bool IsCommitted { get; set; }
 

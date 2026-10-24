@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
 
@@ -26,21 +27,25 @@ public sealed class ConsensusRegister<TValue, TRoute>
         TRoute acceptor,
         int proposerId,
         TValue initialValue,
-        IEnumerable<TRoute> acceptors,
+        ImmutableArray<TRoute> acceptors,
         ProposerModePolicy modePolicy,
         AcceptorState<TValue>? acceptorState = null,
         ProposerRuntime? proposerRuntime = null)
     {
-        ArgumentNullException.ThrowIfNull(acceptors);
+        if (acceptors.IsDefault)
+        {
+            throw new ArgumentNullException(nameof(acceptors));
+        }
+
         ArgumentNullException.ThrowIfNull(modePolicy);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(proposerId, 0);
 
         _proposer = proposer;
         _acceptor = acceptor;
-        var acceptorList = acceptors.Distinct().ToList();
+        ImmutableArray<TRoute> acceptorList = [.. acceptors.Distinct()];
         if (!acceptorList.Contains(acceptor))
         {
-            acceptorList.Add(acceptor);
+            acceptorList = acceptorList.Add(acceptor);
         }
 
         Proposer = proposer;
@@ -57,7 +62,7 @@ public sealed class ConsensusRegister<TValue, TRoute>
             modePolicy);
         ModePolicy = _proposerEngine.ModePolicy;
 
-        _acceptorState = acceptorState ?? AcceptorState<TValue>.CreateInitial(initialValue);
+        _acceptorState = acceptorState ?? Protocol.AcceptorState.CreateInitial(initialValue);
     }
 
     public TRoute Proposer { get; }
@@ -66,7 +71,7 @@ public sealed class ConsensusRegister<TValue, TRoute>
 
     public int ProposerId { get; }
 
-    public IReadOnlyList<TRoute> Acceptors { get; }
+    public ImmutableArray<TRoute> Acceptors { get; }
 
     public ProposerModePolicy ModePolicy { get; }
 
@@ -195,15 +200,15 @@ public sealed class ConsensusRegister<TValue, TRoute>
         return retried;
     }
 
-    public List<ConsensusRegisterOutputMessage<TValue, TRoute>> DrainMessages()
+    public ImmutableArray<ConsensusRegisterOutputMessage<TValue, TRoute>> DrainMessages()
     {
-        List<ConsensusRegisterOutputMessage<TValue, TRoute>> messages = [];
+        var messages = ImmutableArray.CreateBuilder<ConsensusRegisterOutputMessage<TValue, TRoute>>(_outbox.Count);
         while (_outbox.TryDequeue(out var message))
         {
             messages.Add(message);
         }
 
-        return messages;
+        return messages.MoveToImmutable();
     }
 
     private void EnqueueOrStart(PendingRequest request)
@@ -540,7 +545,7 @@ public sealed class ConsensusRegister<TValue, TRoute>
         int proposerId,
         ProposerRuntime runtime,
         TValue initialValue,
-        IEnumerable<TRoute> acceptors,
+        ImmutableArray<TRoute> acceptors,
         ProposerModePolicy modePolicy) : ProposerEngine<TValue, TRoute>(runtime, initialValue, acceptors, modePolicy)
     {
         private readonly ConsensusRegister<TValue, TRoute> _owner = owner;

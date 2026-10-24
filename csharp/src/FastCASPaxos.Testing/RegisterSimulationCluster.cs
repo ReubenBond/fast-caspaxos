@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Collections.Immutable;
 using System.Globalization;
 using Clockwork;
 using FastCASPaxos.Messages;
@@ -46,14 +47,13 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
         _runtime.Network.EnableDelays = true;
         _runtime.Network.BaseMessageDelay = TimeSpan.FromMilliseconds(1);
         _runtime.Network.MaxJitter = TimeSpan.FromMilliseconds(2);
-        Trace = _trace.AsReadOnly();
         Record($"cluster seed={seed} members={nodeCount} mode=fast");
     }
 
     public int Seed => _runtime.Seed;
     public int NodeCount { get; }
     public TimeProvider TimeProvider => _runtime.TimeProvider;
-    public IReadOnlyList<string> Trace { get; }
+    public ImmutableArray<string> Trace => [.. _trace];
     public TimeSpan OperationTimeout { get; init; } = TimeSpan.FromSeconds(2);
 
     /// <summary>
@@ -365,7 +365,7 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
             var keys = state.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)
                 && (afterKey is null || string.CompareOrdinal(key, afterKey) > 0))
                 .Take(limit == int.MaxValue ? limit : limit + 1).ToArray();
-            return new(keys.Take(limit).ToArray(), keys.Length > limit ? keys[limit - 1] : null);
+            return new([.. keys.AsSpan(0, Math.Min(limit, keys.Length))], keys.Length > limit ? keys[limit - 1] : null);
         }
     }
 

@@ -1,10 +1,11 @@
+using System.Collections.Immutable;
+
 namespace Clockwork;
 
 /// <summary>
 /// Extension members for <see cref="SimulationTaskQueue"/> providing query functionality
 /// over scheduled items.
 /// </summary>
-[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1034:Nested types should not be visible", Justification = "C# 14 extension members require this pattern")]
 public static class SimulationTaskQueueExtensions
 {
     extension(SimulationTaskQueue queue)
@@ -15,13 +16,13 @@ public static class SimulationTaskQueueExtensions
         /// <typeparam name="TItem">The type of scheduled item to find.</typeparam>
         /// <typeparam name="TResult">The type of result to extract from each item.</typeparam>
         /// <param name="extractor">A function to extract the result from each matching item.</param>
-        /// <returns>An enumerable of extracted results.</returns>
-        public IReadOnlyList<TResult> GetItemsOfType<TItem, TResult>(Func<TItem, TResult?> extractor)
+        /// <returns>The extracted results.</returns>
+        public ImmutableArray<TResult> GetItemsOfType<TItem, TResult>(Func<TItem, TResult?> extractor)
             where TItem : ScheduledItem
         {
             ArgumentNullException.ThrowIfNull(extractor);
 
-            var results = new List<TResult>();
+            var results = ImmutableArray.CreateBuilder<TResult>();
 
             foreach (var item in queue.ScheduledItems)
             {
@@ -35,7 +36,7 @@ public static class SimulationTaskQueueExtensions
                 }
             }
 
-            return results;
+            return results.DrainToImmutable();
         }
 
         /// <summary>
@@ -85,10 +86,10 @@ public static class SimulationTaskQueueExtensions
         /// </summary>
         /// <typeparam name="T">The type of scheduled item to find.</typeparam>
         /// <returns>A list of waiting items of the specified type.</returns>
-        public IReadOnlyList<T> GetWaitingItems<T>()
+        public ImmutableArray<T> GetWaitingItems<T>()
             where T : ScheduledItem
         {
-            var results = new List<T>();
+            var results = ImmutableArray.CreateBuilder<T>();
 
             foreach (var item in queue.ScheduledItems)
             {
@@ -98,7 +99,7 @@ public static class SimulationTaskQueueExtensions
                 }
             }
 
-            return results;
+            return results.DrainToImmutable();
         }
     }
 }

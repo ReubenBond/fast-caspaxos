@@ -12,7 +12,7 @@ public sealed class RegisterApiTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Get_PreservesRawBytesAndOpaqueEtag(bool empty)
+    public async Task GetPreservesRawBytesAndOpaqueEtag(bool empty)
     {
         var payload = empty ? ByteString.Empty : Payload;
         var version = empty ? ByteString.Empty : OpaqueVersion;
@@ -32,7 +32,7 @@ public sealed class RegisterApiTests
     }
 
     [Fact]
-    public async Task Get_AbsentIsNotAnEmptyRegister()
+    public async Task GetAbsentIsNotAnEmptyRegister()
     {
         var service = new ControlledService { Read = (_, _) => ValueTask.FromResult(new RegisterValue(null, null)) };
         await using var harness = new EndpointHarness(service);
@@ -48,7 +48,7 @@ public sealed class RegisterApiTests
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public async Task Put_CreateAndUpdatePreserveBytesVersionsAndLocation(bool update, bool empty)
+    public async Task PutCreateAndUpdatePreserveBytesVersionsAndLocation(bool update, bool empty)
     {
         var payload = empty ? ByteString.Empty : Payload;
         var expected = empty ? ByteString.Empty : OpaqueVersion;
@@ -86,7 +86,7 @@ public sealed class RegisterApiTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Put_MismatchUsesOnlyEstablishedCurrentEtag(bool present)
+    public async Task PutMismatchUsesOnlyEstablishedCurrentEtag(bool present)
     {
         var current = present ? new RegisterValue(Payload, OpaqueVersion) : new RegisterValue(null, null);
         var service = new ControlledService
@@ -105,7 +105,7 @@ public sealed class RegisterApiTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Put_OpaqueVersionValidationRemainsServiceOwned(bool empty)
+    public async Task PutOpaqueVersionValidationRemainsServiceOwned(bool empty)
     {
         var expected = empty ? ByteString.Empty : new ByteString([251, 255, 254]);
         var service = new ControlledService
@@ -133,7 +133,7 @@ public sealed class RegisterApiTests
     [InlineData(PageCase.MaxLimit)]
     [InlineData(PageCase.LeadingZeroLimit)]
     [InlineData(PageCase.EmptyPage)]
-    public async Task List_PreservesArgumentsOrderAndCursor(PageCase scenario)
+    public async Task ListPreservesArgumentsOrderAndCursor(PageCase scenario)
     {
         const string prefix = "dir/../% +\0\U0001F600";
         const string cursor = "cursor/.\0\U0001F680";
@@ -147,7 +147,7 @@ public sealed class RegisterApiTests
         };
         string[] keys = scenario == PageCase.EmptyPage ? [] : ["z", "", "a/\0\U0001F600"];
         string? continuation = scenario switch { PageCase.EmptyCursor => "", PageCase.PrefixAndCursor => cursor, _ => null };
-        var service = new ControlledService { List = (_, _, _, _) => ValueTask.FromResult(new RegisterKeyPage(keys, continuation)) };
+        var service = new ControlledService { List = (_, _, _, _) => ValueTask.FromResult(new RegisterKeyPage([.. keys], continuation)) };
         await using var harness = new EndpointHarness(service);
         using var cancellation = new CancellationTokenSource();
         var context = harness.Request(list: true, query: query, token: cancellation.Token);
@@ -168,7 +168,7 @@ public sealed class RegisterApiTests
     }
 
     [Fact]
-    public async Task MapRegisterApi_SupportsCustomPrefixAuthorizationAndResponseMetadata()
+    public async Task MapRegisterApiSupportsCustomPrefixAuthorizationAndResponseMetadata()
     {
         await using var harness = new EndpointHarness(pattern: "/custom/durable", authorize: true);
         Assert.Equal(3, harness.Endpoints.Length);
@@ -177,12 +177,12 @@ public sealed class RegisterApiTests
             Assert.StartsWith("/custom/durable", endpoint.RoutePattern.RawText);
             Assert.Equal("register-writers", Assert.Single(endpoint.Metadata.GetOrderedMetadata<IAuthorizeData>()).Policy);
             var responses = endpoint.Metadata.GetOrderedMetadata<IProducesResponseTypeMetadata>();
-            Assert.All(new[] { 400, 499, 500, 503 }, status => Assert.Contains(responses, response =>
+            Assert.All([400, 499, 500, 503], status => Assert.Contains(responses, response =>
                 response.StatusCode == status && response.ContentTypeIs("application/problem+json")));
             var method = Assert.Single(endpoint.Metadata.GetMetadata<HttpMethodMetadata>()!.HttpMethods);
             if (method == "PUT")
             {
-                Assert.All(new[] { 201, 204, 412, 413, 415, 428 },
+                Assert.All([201, 204, 412, 413, 415, 428],
                     status => Assert.Contains(responses, response => response.StatusCode == status));
                 Assert.Contains("application/octet-stream", endpoint.Metadata.GetMetadata<IAcceptsMetadata>()!.ContentTypes);
             }

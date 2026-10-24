@@ -5,3 +5,6 @@ charset = utf-8
 indent_style = space
 indent_size = 4
 insert_final_newline = true
+
+# Clockwork's SimulationTaskQueue is a time-ordered work queue; the suffix names it accurately.
+dotnet_code_quality.CA1711.allowed_suffixes = Queue

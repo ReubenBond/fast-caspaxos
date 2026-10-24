@@ -9,7 +9,7 @@ public sealed class OptionMatrixScenarioTests
 {
     [Theory]
     [MemberData(nameof(ProtocolOptionMatrix.AllModes), MemberType = typeof(ProtocolOptionMatrix))]
-    public async Task AppendSequence_ReachesExpectedValueAcrossAllModes(ProtocolModeCase mode)
+    public async Task AppendSequenceReachesExpectedValueAcrossAllModes(ProtocolModeCase mode)
     {
         await using var cluster = ProtocolOptionMatrix.CreateStringCluster(mode, seed: 9101);
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
@@ -31,7 +31,7 @@ public sealed class OptionMatrixScenarioTests
 
     [Theory]
     [MemberData(nameof(ProtocolOptionMatrix.AllModes), MemberType = typeof(ProtocolOptionMatrix))]
-    public async Task DuplicateWritesAndReads_RemainConsistentAcrossAllModes(ProtocolModeCase mode)
+    public async Task DuplicateWritesAndReadsRemainConsistentAcrossAllModes(ProtocolModeCase mode)
     {
         await using var cluster = ProtocolOptionMatrix.CreateStringCluster(mode, seed: 9102);
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
@@ -50,7 +50,7 @@ public sealed class OptionMatrixScenarioTests
 
     [Theory]
     [MemberData(nameof(ProtocolOptionMatrix.AllModes), MemberType = typeof(ProtocolOptionMatrix))]
-    public async Task MajorityPartition_BlocksUntilHealedAcrossAllModes(ProtocolModeCase mode)
+    public async Task MajorityPartitionBlocksUntilHealedAcrossAllModes(ProtocolModeCase mode)
     {
         await using var cluster = ProtocolOptionMatrix.CreateStringCluster(mode, seed: 9103);
         cluster.CreateConfiguration(proposerCount: 1, acceptorCount: 5);
@@ -74,7 +74,7 @@ public sealed class OptionMatrixScenarioTests
 
     [Theory]
     [MemberData(nameof(ProtocolOptionMatrix.AllModes), MemberType = typeof(ProtocolOptionMatrix))]
-    public async Task AcceptorRestart_AllowsNewCommitsAcrossAllModes(ProtocolModeCase mode)
+    public async Task AcceptorRestartAllowsNewCommitsAcrossAllModes(ProtocolModeCase mode)
     {
         await using var cluster = ProtocolOptionMatrix.CreateStringCluster(mode, seed: 9104);
         cluster.CreateConfiguration(proposerCount: 1, acceptorCount: 5);

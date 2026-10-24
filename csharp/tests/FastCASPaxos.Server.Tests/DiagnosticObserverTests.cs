@@ -17,7 +17,7 @@ public sealed class DiagnosticObserverTests
     [InlineData("outbound", true)]
     [InlineData("inbound", false)]
     [InlineData("inbound", true)]
-    public async Task Acceptor_PrepareAndAcceptPreserveResultsArgumentsAndCorrelation(string direction, bool reject)
+    public async Task AcceptorPrepareAndAcceptPreserveResultsArgumentsAndCorrelation(string direction, bool reject)
     {
         using var journal = new NodeEventJournal("a");
         var before = journal.Cursor;
@@ -98,7 +98,7 @@ public sealed class DiagnosticObserverTests
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public async Task Acceptor_FaultAndCancellationPreserveExceptionAndRestoreContext(bool accept, bool cancel)
+    public async Task AcceptorFaultAndCancellationPreserveExceptionAndRestoreContext(bool accept, bool cancel)
     {
         using var journal = new NodeEventJournal("a");
         var cursor = journal.Cursor;
@@ -137,7 +137,7 @@ public sealed class DiagnosticObserverTests
     }
 
     [Fact]
-    public async Task Acceptor_DuplicateAcceptanceRemainsSuccessfulAndListingPassesThrough()
+    public async Task AcceptorDuplicateAcceptanceRemainsSuccessfulAndListingPassesThrough()
     {
         using var journal = new NodeEventJournal("a");
         var inner = new ControlledPeer();
@@ -170,7 +170,7 @@ public sealed class DiagnosticObserverTests
     [InlineData(CompareExchangeStatus.Unknown, CurrentKind.None)]
     [InlineData(CompareExchangeStatus.Unknown, CurrentKind.Absent)]
     [InlineData(CompareExchangeStatus.Unknown, CurrentKind.PresentEmpty)]
-    public async Task Register_CompareExchangePreservesOutcomeCurrentErrorAndOperationContext(
+    public async Task RegisterCompareExchangePreservesOutcomeCurrentErrorAndOperationContext(
         CompareExchangeStatus status, CurrentKind currentKind)
     {
         using var journal = new NodeEventJournal("a");
@@ -218,7 +218,7 @@ public sealed class DiagnosticObserverTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Register_ReadAndListPreserveObjectsAndForwardArguments(bool absent)
+    public async Task RegisterReadAndListPreserveObjectsAndForwardArguments(bool absent)
     {
         using var journal = new NodeEventJournal("a");
         var inner = new RegisterStub { Current = absent ? new(null, null) : new(Payload, Version(1, 2)) };
@@ -252,7 +252,7 @@ public sealed class DiagnosticObserverTests
     [InlineData("list", true)]
     [InlineData("compare-exchange", false)]
     [InlineData("compare-exchange", true)]
-    public async Task Register_FaultAndCancellationAreNotConvertedIntoSuccess(string operation, bool cancel)
+    public async Task RegisterFaultAndCancellationAreNotConvertedIntoSuccess(string operation, bool cancel)
     {
         using var journal = new NodeEventJournal("a");
         using var cancellation = new CancellationTokenSource();

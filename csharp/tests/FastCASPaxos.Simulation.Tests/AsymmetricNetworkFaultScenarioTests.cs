@@ -7,7 +7,7 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class AsymmetricNetworkFaultScenarioTests
 {
     [Fact]
-    public async Task ReplyPathPartition_BlocksUntilHealedThenCompletes()
+    public async Task ReplyPathPartitionBlocksUntilHealedThenCompletes()
     {
         await using var cluster = CreateCluster(seed: 9821);
         cluster.CreateConfiguration(proposerCount: 1, acceptorCount: 5);
@@ -33,7 +33,7 @@ public sealed class AsymmetricNetworkFaultScenarioTests
     }
 
     [Fact]
-    public async Task RequestPathPartition_BlocksUntilHealedThenCompletes()
+    public async Task RequestPathPartitionBlocksUntilHealedThenCompletes()
     {
         await using var cluster = CreateCluster(seed: 9822);
         cluster.CreateConfiguration(proposerCount: 1, acceptorCount: 5);

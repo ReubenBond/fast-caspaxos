@@ -14,7 +14,7 @@ public sealed class OperationDriverCompletion<TValue, TRoute>
 
     public void EnsureExpectedValue(TValue expectedValue, Func<TValue, string>? printValue = null)
     {
-        if (!FinalValues.Any())
+        if (FinalValues.Count == 0)
         {
             throw new InvalidOperationException("Cannot validate an expected value before any proposer has produced a response.");
         }

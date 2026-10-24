@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Simulation;
 using FastCASPaxos.Simulation.Hosts;
 using FastCASPaxos.Simulation.Scenarios;
@@ -8,7 +9,7 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class DeterminismScenarioTests
 {
     [Fact]
-    public async Task SameSeed_ReplaysIdenticalTrace()
+    public async Task SameSeedReplaysIdenticalTrace()
     {
         var left = await CaptureTrace(seed: 9901);
         var right = await CaptureTrace(seed: 9901);
@@ -17,7 +18,7 @@ public sealed class DeterminismScenarioTests
     }
 
     [Fact]
-    public async Task DifferentSeeds_ChangeTimedTrace()
+    public async Task DifferentSeedsChangeTimedTrace()
     {
         var left = await CaptureTrace(seed: 9901);
         var right = await CaptureTrace(seed: 9902);
@@ -25,7 +26,7 @@ public sealed class DeterminismScenarioTests
         Assert.NotEqual(left, right);
     }
 
-    private static async Task<IReadOnlyList<string>> CaptureTrace(int seed)
+    private static async Task<ImmutableArray<string>> CaptureTrace(int seed)
     {
         await using var cluster = new FastCasSimulationCluster<StringValue>(
             seed,
@@ -60,7 +61,7 @@ public sealed class DeterminismScenarioTests
         }
 
         cluster.AssertSafetyInvariants();
-        return trace;
+        return [.. trace];
     }
 }
 

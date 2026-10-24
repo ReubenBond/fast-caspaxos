@@ -9,7 +9,7 @@ namespace FastCASPaxos.Server.Tests;
 public sealed class DurabilityRepairTests
 {
     [Fact]
-    public async Task RunPass_LocalMemberIsNotFirst_PrefersLocalFetchWithoutTrustingItsValue()
+    public async Task RunPassLocalMemberIsNotFirstPrefersLocalFetchWithoutTrustingItsValue()
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create(local: 2);
@@ -26,7 +26,7 @@ public sealed class DurabilityRepairTests
     }
 
     [Fact]
-    public async Task RunPass_ManyUnavailableKeys_BoundsDiagnosticsWithoutChainingPriorDeadlines()
+    public async Task RunPassManyUnavailableKeysBoundsDiagnosticsWithoutChainingPriorDeadlines()
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create();
@@ -42,7 +42,7 @@ public sealed class DurabilityRepairTests
         var result = await pass.WaitAsync(Watchdog);
 
         Assert.Equal((6L, 0L, 6L), (result.Examined, result.Repaired, result.Pending));
-        Assert.InRange(result.Errors.Count, 1, 4); // At most one error per member plus the last key deadline.
+        Assert.InRange(result.Errors.Length, 1, 4); // At most one error per member plus the last key deadline.
         var deadline = Assert.Single(result.Errors.OfType<RegisterUnavailableException>());
         var causes = Assert.IsType<AggregateException>(deadline.InnerException);
         Assert.Equal(2, causes.InnerExceptions.Count);
@@ -53,7 +53,7 @@ public sealed class DurabilityRepairTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task RunPass_ResponsiveLaggerHasHugePromise_JumpsAboveFloorAndRepairsIt(bool acceptRace)
+    public async Task RunPassResponsiveLaggerHasHugePromiseJumpsAboveFloorAndRepairsIt(bool acceptRace)
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create();
@@ -84,7 +84,7 @@ public sealed class DurabilityRepairTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task RunPass_DivergentAndMissingReplicas_RecoversNewestValueThroughClassicProposal(bool emptyValue)
+    public async Task RunPassDivergentAndMissingReplicasRecoversNewestValueThroughClassicProposal(bool emptyValue)
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create();
@@ -109,7 +109,7 @@ public sealed class DurabilityRepairTests
     }
 
     [Fact]
-    public async Task RunPass_LocalFastLoser_PreservesFastQuorumWinner()
+    public async Task RunPassLocalFastLoserPreservesFastQuorumWinner()
     {
         var cluster = new RepairTestCluster(5);
         var repair = cluster.Create();
@@ -135,7 +135,7 @@ public sealed class DurabilityRepairTests
     }
 
     [Fact]
-    public async Task RunPass_SplitUnchosenFastRound_ConvergesThroughRecovery()
+    public async Task RunPassSplitUnchosenFastRoundConvergesThroughRecovery()
     {
         var cluster = new RepairTestCluster(5);
         var repair = cluster.Create();
@@ -159,7 +159,7 @@ public sealed class DurabilityRepairTests
     }
 
     [Fact]
-    public async Task RunPass_HigherWriteBetweenPrepareAndAccept_PreservesNewerValue()
+    public async Task RunPassHigherWriteBetweenPrepareAndAcceptPreservesNewerValue()
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create();
@@ -203,7 +203,7 @@ public sealed class DurabilityRepairTests
     [Theory]
     [InlineData(false, 3)]
     [InlineData(true, 4)]
-    public async Task RunPass_MatchingReachableCommitQuorum_DoesNotFetchOrAllocateBallots(bool fast, int reachable)
+    public async Task RunPassMatchingReachableCommitQuorumDoesNotFetchOrAllocateBallots(bool fast, int reachable)
     {
         var cluster = new RepairTestCluster(5);
         var repair = cluster.Create();
@@ -224,7 +224,7 @@ public sealed class DurabilityRepairTests
     }
 
     [Fact]
-    public async Task RunPass_OnlyClassicMajorityMatchesFastBallot_StillRunsRecovery()
+    public async Task RunPassOnlyClassicMajorityMatchesFastBallotStillRunsRecovery()
     {
         var cluster = new RepairTestCluster(5);
         var repair = cluster.Create();
@@ -246,7 +246,7 @@ public sealed class DurabilityRepairTests
     }
 
     [Fact]
-    public async Task RunPass_SkewedOrdinalPages_RepairsUnionIncludingRemoteOnlyKeysOnce()
+    public async Task RunPassSkewedOrdinalPagesRepairsUnionIncludingRemoteOnlyKeysOnce()
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create(pageSize: 2);
@@ -279,7 +279,7 @@ public sealed class DurabilityRepairTests
     }
 
     [Fact]
-    public async Task RunPass_Departing_RepairsOnlyLocalKeysAcrossRemotePages()
+    public async Task RunPassDepartingRepairsOnlyLocalKeysAcrossRemotePages()
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create(pageSize: 2);
@@ -298,7 +298,7 @@ public sealed class DurabilityRepairTests
     }
 
     [Fact]
-    public async Task RunPass_Departing_DoesNotCountLocalVoteAndCompletesWhenRemoteReturns()
+    public async Task RunPassDepartingDoesNotCountLocalVoteAndCompletesWhenRemoteReturns()
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create();
@@ -322,7 +322,7 @@ public sealed class DurabilityRepairTests
     }
 
     [Fact]
-    public async Task RunPass_DepartingExplicitTarget_RequiresFreshRemoteAcknowledgement()
+    public async Task RunPassDepartingExplicitTargetRequiresFreshRemoteAcknowledgement()
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create(target: 1);
@@ -339,7 +339,7 @@ public sealed class DurabilityRepairTests
     }
 
     [Fact]
-    public async Task RunPass_DepartingMatchingDigestsOnDrainingPeers_CannotSatisfyRemoteTarget()
+    public async Task RunPassDepartingMatchingDigestsOnDrainingPeersCannotSatisfyRemoteTarget()
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create();
@@ -370,7 +370,7 @@ public sealed class DurabilityRepairTests
     }
 
     [Fact]
-    public async Task RunPass_DepartingRemoteTargetUnavailable_DeadlineReportsPendingThenRecovers()
+    public async Task RunPassDepartingRemoteTargetUnavailableDeadlineReportsPendingThenRecovers()
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create();
@@ -395,7 +395,7 @@ public sealed class DurabilityRepairTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task RunPass_DepartingCancellationDuringAccept_DoesNotWaitForLateTransport(bool durableBeforeCancel)
+    public async Task RunPassDepartingCancellationDuringAcceptDoesNotWaitForLateTransport(bool durableBeforeCancel)
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create();
@@ -408,9 +408,9 @@ public sealed class DurabilityRepairTests
             try
             {
                 AcceptorAcceptResult result = default;
-                if (durableBeforeCancel) result = await cluster.Peers[2].Inner.AcceptAsync(key, request);
+                if (durableBeforeCancel) result = await cluster.Peers[2].Inner.AcceptAsync(key, request, CancellationToken.None);
                 await blocked.WaitAsync(); // Deliberately ignore the caller's cancellation.
-                return durableBeforeCancel ? result : await cluster.Peers[2].Inner.AcceptAsync(key, request);
+                return durableBeforeCancel ? result : await cluster.Peers[2].Inner.AcceptAsync(key, request, CancellationToken.None);
             }
             finally { returned.TrySetResult(); }
         };
@@ -430,7 +430,7 @@ public sealed class DurabilityRepairTests
     }
 
     [Fact]
-    public async Task RunPass_CanceledSerializedWait_DoesNotStartAnotherInventory()
+    public async Task RunPassCanceledSerializedWaitDoesNotStartAnotherInventory()
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create();
@@ -456,7 +456,7 @@ public sealed class DurabilityRepairTests
     }
 
     [Fact]
-    public async Task RunPass_AttemptTimeout_CancelsCooperativePeer()
+    public async Task RunPassAttemptTimeoutCancelsCooperativePeer()
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create();
@@ -488,7 +488,7 @@ public sealed class DurabilityRepairTests
     }
 
     [Fact]
-    public async Task RunPass_HungPeerAcrossPagesAndPasses_RetainsAtMostOneCall()
+    public async Task RunPassHungPeerAcrossPagesAndPassesRetainsAtMostOneCall()
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create(pageSize: 2);
@@ -523,7 +523,7 @@ public sealed class DurabilityRepairTests
     }
 
     [Fact]
-    public async Task RunPass_LocalInventoryCorruption_IsNotReportedAsTemporaryUnavailability()
+    public async Task RunPassLocalInventoryCorruptionIsNotReportedAsTemporaryUnavailability()
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create();
@@ -538,7 +538,7 @@ public sealed class DurabilityRepairTests
     }
 
     [Fact]
-    public async Task RunPass_LocalInventoryFailure_ThrowsWithoutProposing()
+    public async Task RunPassLocalInventoryFailureThrowsWithoutProposing()
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create();
@@ -558,7 +558,7 @@ public sealed class DurabilityRepairTests
     }
 
     [Fact]
-    public async Task RunPass_LocalFetchFailure_ThrowsOriginalErrorWithoutProposing()
+    public async Task RunPassLocalFetchFailureThrowsOriginalErrorWithoutProposing()
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create();
@@ -582,7 +582,7 @@ public sealed class DurabilityRepairTests
     }
 
     [Fact]
-    public async Task RunPass_RemoteFetchFailure_ReportsPendingWithoutProposing()
+    public async Task RunPassRemoteFetchFailureReportsPendingWithoutProposing()
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create();
@@ -609,7 +609,7 @@ public sealed class DurabilityRepairTests
     }
 
     [Fact]
-    public async Task RunPass_ListedAcceptedKeyBecomesMissing_ThrowsInvariantFailureWithoutProposing()
+    public async Task RunPassListedAcceptedKeyBecomesMissingThrowsInvariantFailureWithoutProposing()
     {
         var cluster = new RepairTestCluster();
         var repair = cluster.Create();
@@ -628,7 +628,7 @@ public sealed class DurabilityRepairTests
     [InlineData(3, 2)]
     [InlineData(5, 3)]
     [InlineData(7, 4)]
-    public void Constructor_DefaultTarget_IsFixedMembershipMajority(int members, int expected) =>
+    public void ConstructorDefaultTargetIsFixedMembershipMajority(int members, int expected) =>
         Assert.Equal(expected, new RepairTestCluster(members).Create().TargetReplicas);
 
     [Theory]
@@ -638,7 +638,7 @@ public sealed class DurabilityRepairTests
     [InlineData("negative-target")]
     [InlineData("target-exceeds-membership")]
     [InlineData("zero-page")]
-    public void Constructor_InvalidMembershipOrOptions_Rejects(string caseId)
+    public void ConstructorInvalidMembershipOrOptionsRejects(string caseId)
     {
         var peers = Peers();
         var routes = peers.Select((peer, index) =>
@@ -652,6 +652,6 @@ public sealed class DurabilityRepairTests
             PageSize = caseId == "zero-page" ? 0 : 2
         };
 
-        Assert.ThrowsAny<ArgumentException>(() => new DurabilityRepair(local, routes, ballots, options));
+        Assert.ThrowsAny<ArgumentException>(() => new DurabilityRepair(local, [.. routes], ballots, options));
     }
 }

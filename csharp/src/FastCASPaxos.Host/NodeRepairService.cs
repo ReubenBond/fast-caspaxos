@@ -15,7 +15,7 @@ public sealed class NodeRepairService(NodeRuntime node, ILogger<NodeRepairServic
         try { await node.StopAsync(cancellationToken).ConfigureAwait(false); }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            logger.LogWarning("Shutdown cancellation ended the durability wait; replication may be incomplete. Retain this node's database and WAL.");
+            logger.DurabilityWaitCancelled();
         }
     }
 }

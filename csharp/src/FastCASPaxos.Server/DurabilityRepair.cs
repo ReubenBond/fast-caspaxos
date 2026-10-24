@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
 using FastCASPaxos.Protocol;
@@ -5,10 +6,14 @@ using System.Runtime.ExceptionServices;
 
 namespace FastCASPaxos.Server;
 
-/// <summary>Compares bounded inventory ranges and restores replicas through classic identity proposals.</summary>
-public sealed class DurabilityRepair
+/// <summary>
+/// Compares bounded inventory ranges and restores replicas through classic identity proposals.
+/// Dispose after every pass has completed.
+/// </summary>
+public sealed class DurabilityRepair : IDisposable
 {
-    private readonly RepairPeer[] _peers;
+    private readonly ImmutableArray<RepairPeer> _peers;
+    private readonly ImmutableArray<string> _peerIds;
     private readonly SemaphoreSlim[] _slots;
     private readonly SemaphoreSlim _scan = new(1);
     private readonly IProposerBallotSource _ballots;
@@ -16,23 +21,26 @@ public sealed class DurabilityRepair
     private readonly int _local;
     public int TargetReplicas { get; }
 
-    public DurabilityRepair(string localId, IEnumerable<RepairPeer> peers,
+    public DurabilityRepair(string localId, ImmutableArray<RepairPeer> peers,
         IProposerBallotSource ballots, DurabilityRepairOptions? options = null)
     {
-        ArgumentNullException.ThrowIfNull(peers);
+        if (peers.IsDefault) throw new ArgumentNullException(nameof(peers));
         ArgumentNullException.ThrowIfNull(ballots);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(ballots.ProposerId);
-        _peers = peers.ToArray();
+        _peers = peers;
         var ids = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var peer in _peers)
+        _local = -1;
+        for (var index = 0; index < _peers.Length; index++)
         {
+            var peer = _peers[index];
             ArgumentNullException.ThrowIfNull(peer);
             ArgumentException.ThrowIfNullOrEmpty(peer.Id);
             ArgumentNullException.ThrowIfNull(peer.Acceptor);
             ArgumentNullException.ThrowIfNull(peer.Digests);
             if (!ids.Add(peer.Id)) throw new ArgumentException("Repair requires distinct fixed acceptor identities.");
+            if (peer.Id == localId) _local = index;
         }
-        _local = Array.FindIndex(_peers, peer => peer.Id == localId);
+        _peerIds = [.. _peers.Select(peer => peer.Id)];
         if (_local < 0) throw new ArgumentException("Repair membership must include the local acceptor.");
         _ballots = ballots;
         _options = options ?? new();
@@ -140,12 +148,16 @@ public sealed class DurabilityRepair
                 }
                 cursor = frontier;
             } while (cursor is not null);
-            var reported = errors.Values.ToList();
+            var reported = ImmutableArray.CreateBuilder<Exception>(errors.Count + (lastRepairError is null ? 0 : 1));
+            reported.AddRange(errors.Values);
             if (lastRepairError is not null) reported.Add(lastRepairError);
-            return new(examined, repaired, pending, reported.AsReadOnly());
+            return new(examined, repaired, pending, reported.MoveToImmutable());
         }
         finally { _scan.Release(); }
     }
+
+    /// <summary>Releases the pass gate. Detached peer attempts retain their own slots until they finish.</summary>
+    public void Dispose() => _scan.Dispose();
 
     private async Task RepairKeyAsync(string key, ByteString seed, bool departing,
         Dictionary<int, Exception> errors, CancellationToken cancellationToken)
@@ -153,7 +165,7 @@ public sealed class DurabilityRepair
         using var deadline = new CancellationTokenSource(_options.OperationTimeout, _options.TimeProvider);
         using var operation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         var token = operation.Token;
-        var engine = new Engine(_ballots, _peers.Select(peer => peer.Id), seed);
+        var engine = new Engine(_ballots, _peerIds, seed);
         engine.StartProposal(new Identity());
         try
         {
@@ -173,7 +185,7 @@ public sealed class DurabilityRepair
                         .Select(r => r.Value.ConflictingBallot).DefaultIfEmpty(Ballot.Zero).Max();
                     if (!conflict.IsZero)
                     {
-                        engine = new Engine(_ballots, _peers.Select(peer => peer.Id), seed, checked(conflict.Round + 1));
+                        engine = new Engine(_ballots, _peerIds, seed, checked(conflict.Round + 1));
                         engine.StartProposal(new Identity());
                     }
                     else
@@ -216,7 +228,7 @@ public sealed class DurabilityRepair
                     // The same classic proposal is safe to retry after a lost reply. A fresh recovery
                     // handles superseding writes when the required remote acknowledgements are missing.
                     if (engine.Completed || !conflict.IsZero)
-                        engine = new Engine(_ballots, _peers.Select(peer => peer.Id), seed,
+                        engine = new Engine(_ballots, _peerIds, seed,
                             conflict.IsZero ? 1 : checked(conflict.Round + 1));
                     if (!engine.HasPendingProposal) engine.StartProposal(new Identity());
                 }
@@ -235,7 +247,7 @@ public sealed class DurabilityRepair
         Func<RepairPeer, CancellationToken, ValueTask<T>> operation, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        if (!_slots[index].Wait(0)) return new(index, default!, new RegisterBusyException());
+        if (!_slots[index].Wait(0, CancellationToken.None)) return new(index, default!, new RegisterBusyException());
         using var attempt = CancellationTokenSource.CreateLinkedTokenSource(token);
         var task = ExecuteAsync();
         try
@@ -257,7 +269,7 @@ public sealed class DurabilityRepair
         }
     }
 
-    private static void RecordErrors<T>(IEnumerable<PeerResult<T>> responses, Dictionary<int, Exception> errors)
+    private static void RecordErrors<T>(ReadOnlySpan<PeerResult<T>> responses, Dictionary<int, Exception> errors)
     {
         foreach (var response in responses)
             if (response.Error is { } error) errors[response.Index] = error;
@@ -278,7 +290,7 @@ public sealed class DurabilityRepair
     {
         public (OperationStatus Status, ByteString Result) Apply(ByteString current) => (OperationStatus.NotApplicable, current);
     }
-    private sealed class Engine(IProposerBallotSource source, IEnumerable<string> peers, ByteString seed, int minimumRound = 1)
+    private sealed class Engine(IProposerBallotSource source, ImmutableArray<string> peers, ByteString seed, int minimumRound = 1)
         : ProposerEngine<ByteString, string>(new ProposerRuntime(), seed, peers, ProposerModePolicy.Parse("classic"))
     {
         public override int ProposerId => source.ProposerId;

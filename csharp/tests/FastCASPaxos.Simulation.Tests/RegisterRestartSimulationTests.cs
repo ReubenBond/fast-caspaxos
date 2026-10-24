@@ -13,7 +13,7 @@ public sealed class RegisterRestartSimulationTests
     [Theory]
     [InlineData("classic")]
     [InlineData("leader")]
-    public async Task Restart_LaggingReplicaAcceptRetryPreservesNewerQuorum(string mode)
+    public async Task RestartLaggingReplicaAcceptRetryPreservesNewerQuorum(string mode)
     {
         // Every request/reply runs through Clockwork queues. A fixed seed, fixed 1ms links
         // and one completed exchange per phase pin the trace without sleeps or thread-pool races.
@@ -52,8 +52,8 @@ public sealed class RegisterRestartSimulationTests
             Assert.True(cluster.RunUntil(() => replies.Count == 1, maxIterations: 1000));
             Assert.Equal(sentAt + TimeSpan.FromMilliseconds(2), cluster.Clock.UtcNow);
             var reply = Assert.Single(replies);
-            Assert.Equal(request.To, reply.From);
-            Assert.Equal(probe, reply.To);
+            Assert.Equal(request.Destination, reply.From);
+            Assert.Equal(probe, reply.Destination);
             replies.Clear();
             return reply;
         }

@@ -7,19 +7,19 @@ public interface IFastCasTransportMessage<TValue>
 {
     FastCasAddress From { get; }
 
-    FastCasAddress To { get; }
+    FastCasAddress Destination { get; }
 }
 
 public sealed record FastCasProposeRequestMessage<TValue>(
     FastCasAddress From,
-    FastCasAddress To,
+    FastCasAddress Destination,
     int RequestId,
     IOperation<TValue> Payload)
     : IFastCasTransportMessage<TValue>;
 
 public sealed record FastCasForwardProposeRequestMessage<TValue>(
     FastCasAddress From,
-    FastCasAddress To,
+    FastCasAddress Destination,
     FastCasAddress OriginalCaller,
     int RequestId,
     IOperation<TValue> Payload)
@@ -27,50 +27,50 @@ public sealed record FastCasForwardProposeRequestMessage<TValue>(
 
 public sealed record FastCasPrepareRequestMessage<TValue>(
     FastCasAddress From,
-    FastCasAddress To,
+    FastCasAddress Destination,
     PrepareRequest Payload)
     : IFastCasTransportMessage<TValue>;
 
 public sealed record FastCasPreparePromiseMessage<TValue>(
     FastCasAddress From,
-    FastCasAddress To,
+    FastCasAddress Destination,
     PreparePromise<TValue, FastCasAddress> Payload)
     : IFastCasTransportMessage<TValue>;
 
 public sealed record FastCasPrepareRejectionMessage<TValue>(
     FastCasAddress From,
-    FastCasAddress To,
+    FastCasAddress Destination,
     PrepareRejection<TValue, FastCasAddress> Payload)
     : IFastCasTransportMessage<TValue>;
 
 public sealed record FastCasAcceptRequestMessage<TValue>(
     FastCasAddress From,
-    FastCasAddress To,
+    FastCasAddress Destination,
     AcceptRequest<TValue> Payload)
     : IFastCasTransportMessage<TValue>;
 
 public sealed record FastCasAcceptAcceptedMessage<TValue>(
     FastCasAddress From,
-    FastCasAddress To,
+    FastCasAddress Destination,
     AcceptAccepted<FastCasAddress> Payload)
     : IFastCasTransportMessage<TValue>;
 
 public sealed record FastCasAcceptRejectedMessage<TValue>(
     FastCasAddress From,
-    FastCasAddress To,
+    FastCasAddress Destination,
     AcceptRejected<FastCasAddress> Payload)
     : IFastCasTransportMessage<TValue>;
 
 public sealed record FastCasProposeResponseMessage<TValue>(
     FastCasAddress From,
-    FastCasAddress To,
+    FastCasAddress Destination,
     int RequestId,
     ProposeResponse<TValue> Payload)
     : IFastCasTransportMessage<TValue>;
 
 public sealed record FastCasForwardProposeResponseMessage<TValue>(
     FastCasAddress From,
-    FastCasAddress To,
+    FastCasAddress Destination,
     FastCasAddress OriginalCaller,
     int RequestId,
     Ballot AcceptedBallot,
@@ -80,7 +80,7 @@ public sealed record FastCasForwardProposeResponseMessage<TValue>(
 
 public sealed record FastCasLearnCommittedValueMessage<TValue>(
     FastCasAddress From,
-    FastCasAddress To,
+    FastCasAddress Destination,
     Ballot AcceptedBallot,
     TValue Value,
     Ballot PreparedBallot = default)

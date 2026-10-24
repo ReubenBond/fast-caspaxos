@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Globalization;
 using FastCASPaxos.Protocol;
 
@@ -62,7 +63,7 @@ internal sealed record ParameterizedAppendSequenceOptions(
             modePolicy);
     }
 
-    public IReadOnlyList<KeyValuePair<string, string>> DescribeParameters() =>
+    public ImmutableArray<KeyValuePair<string, string>> DescribeParameters() =>
     [
         new("proposer-count", ProposerCount.ToString(CultureInfo.InvariantCulture)),
         new("acceptor-count", AcceptorCount.ToString(CultureInfo.InvariantCulture)),

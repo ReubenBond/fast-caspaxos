@@ -9,7 +9,7 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class AcceptorSafetyMonitorTests
 {
     [Fact]
-    public void Observe_TracksClassicCommitHistoryWhenCommittedValueChanges()
+    public void ObserveTracksClassicCommitHistoryWhenCommittedValueChanges()
     {
         var monitor = new FastCasAcceptorSafetyMonitor<TestValue>();
         var firstBallot = Ballot.InitialClassic(1);
@@ -38,7 +38,7 @@ public sealed class AcceptorSafetyMonitorTests
             ]);
 
         var artifact = monitor.CreateArtifact();
-        Assert.Equal(2, artifact.Commits.Count);
+        Assert.Equal(2, artifact.Commits.Length);
         Assert.Equal(1, artifact.Commits[0].Version);
         Assert.Equal(2, artifact.Commits[1].Version);
         Assert.Equal("Ballot(r1, p1)", artifact.Commits[0].Ballot);
@@ -46,7 +46,7 @@ public sealed class AcceptorSafetyMonitorTests
     }
 
     [Fact]
-    public void Observe_RequiresFastQuorumBeforeInferringCommit()
+    public void ObserveRequiresFastQuorumBeforeInferringCommit()
     {
         var monitor = new FastCasAcceptorSafetyMonitor<TestValue>();
         var fastBallot = Ballot.InitialFast();
@@ -76,12 +76,12 @@ public sealed class AcceptorSafetyMonitorTests
 
         var artifact = monitor.CreateArtifact();
         Assert.Single(artifact.Commits);
-        Assert.Equal(4, artifact.Commits[0].Witnesses.Count);
+        Assert.Equal(4, artifact.Commits[0].Witnesses.Length);
         Assert.Equal(1, artifact.Commits[0].Version);
     }
 
     [Fact]
-    public void Observe_AllowsConflictingFastRoundValuesUntilOneValueWinsFastQuorum()
+    public void ObserveAllowsConflictingFastRoundValuesUntilOneValueWinsFastQuorum()
     {
         var monitor = new FastCasAcceptorSafetyMonitor<TestValue>();
         var fastBallot = Ballot.InitialFast();
@@ -101,7 +101,7 @@ public sealed class AcceptorSafetyMonitorTests
     }
 
     [Fact]
-    public void Observe_ThrowsWhenAcceptedBallotCarriesConflictingValues()
+    public void ObserveThrowsWhenAcceptedBallotCarriesConflictingValues()
     {
         var monitor = new FastCasAcceptorSafetyMonitor<TestValue>();
         var classicBallot = Ballot.InitialClassic(1);

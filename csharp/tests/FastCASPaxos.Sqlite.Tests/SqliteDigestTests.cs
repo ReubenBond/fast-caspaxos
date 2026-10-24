@@ -14,7 +14,7 @@ public sealed class SqliteDigestTests
         "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"));
 
     [Fact]
-    public async Task Accept_HashPersistsAcrossReopenAndPromiseOnlyUpdates()
+    public async Task AcceptHashPersistsAcrossReopenAndPromiseOnlyUpdates()
     {
         using var database = new TestDatabase();
         var expected = new AcceptedDigest(new(3, 1), AbcHash);
@@ -50,7 +50,7 @@ public sealed class SqliteDigestTests
     [InlineData("equal")]
     [InlineData("ballot-different")]
     [InlineData("hash-different")]
-    public async Task Read_ReportsExactOutcomeAndTransfersBytesOnlyWhenDifferent(string scenario)
+    public async Task ReadReportsExactOutcomeAndTransfersBytesOnlyWhenDifferent(string scenario)
     {
         using var database = new TestDatabase();
         await using var server = await database.OpenAsync();
@@ -69,11 +69,11 @@ public sealed class SqliteDigestTests
             Assert.True(result is AcceptorUnchanged);
         else
             Assert.Equal(new KeyedAcceptorState("", new(4, 2), new(3, 0), ByteString.Empty), ReadState(result));
-        Assert.Equal(scenario is "missing" or "promise-only" ? 0 : 1, (await server.ListDigestsAsync()).Entries.Count);
+        Assert.Equal(scenario is "missing" or "promise-only" ? 0 : 1, (await server.ListDigestsAsync()).Entries.Length);
     }
 
     [Fact]
-    public async Task Read_RepeatedFullMissingAndUnchangedResults_NeverInsertOrUpdateRows()
+    public async Task ReadRepeatedFullMissingAndUnchangedResultsNeverInsertOrUpdateRows()
     {
         using var database = new TestDatabase();
         await using (var server = await database.OpenAsync())
@@ -87,14 +87,13 @@ public sealed class SqliteDigestTests
                 CREATE TRIGGER forbid_read_update BEFORE UPDATE ON acceptor_state
                 BEGIN SELECT RAISE(ABORT, 'read must not update'); END;
                 """);
-            IKeyedAcceptor acceptor = server;
             for (var iteration = 0; iteration < 3; iteration++)
             {
                 Assert.Equal(new KeyedAcceptorState("value", new(9, 2), new(3, 1), Value),
-                    ReadState(await acceptor.ReadAsync("value")));
-                Assert.True(await acceptor.ReadAsync("value", new(new(3, 1), AbcHash)) is AcceptorUnchanged);
-                Assert.True(await acceptor.ReadAsync("promise") is AcceptorMissing);
-                Assert.True(await acceptor.ReadAsync("missing") is AcceptorMissing);
+                    ReadState(await server.ReadAsync("value")));
+                Assert.True(await server.ReadAsync("value", new(new(3, 1), AbcHash)) is AcceptorUnchanged);
+                Assert.True(await server.ReadAsync("promise") is AcceptorMissing);
+                Assert.True(await server.ReadAsync("missing") is AcceptorMissing);
                 Assert.Equal(2L, Scalar(observer, "SELECT count(*) FROM acceptor_state;"));
                 Assert.Null(await server.InspectAsync("missing"));
                 Assert.Equal(new Ballot(8, 2), (await server.InspectAsync("promise"))!.PromisedBallot);
@@ -108,7 +107,7 @@ public sealed class SqliteDigestTests
     }
 
     [Fact]
-    public async Task ListDigests_OrdinalPagingAndPrefix_ExcludePromisesAndPreserveUtf16Keys()
+    public async Task ListDigestsOrdinalPagingAndPrefixExcludePromisesAndPreserveUtf16Keys()
     {
         using var database = new TestDatabase();
         await using var server = await database.OpenAsync();
@@ -122,16 +121,16 @@ public sealed class SqliteDigestTests
         do
         {
             var page = await server.ListDigestsAsync(afterKey: cursor, limit: 3);
-            Assert.InRange(page.Entries.Count, 1, 3);
+            Assert.InRange(page.Entries.Length, 1, 3);
             Assert.All(page.Entries, entry => Assert.Equal(new AcceptedDigest(new(3, 1), AbcHash), entry.Digest));
             seen.AddRange(page.Entries.Select(entry => entry.Key));
             if (page.ContinuationKey is not null) Assert.Equal(page.Entries[^1].Key, page.ContinuationKey);
             cursor = page.ContinuationKey;
         } while (cursor is not null);
         Assert.Equal(expected, seen);
-        Assert.Equal(new[] { "a\0", "aa" },
+        Assert.Equal(["a\0", "aa"],
             (await server.ListDigestsAsync(prefix: "a", afterKey: "a", limit: int.MaxValue)).Entries.Select(entry => entry.Key));
-        Assert.Equal(new[] { "\uffff", "\uffffx" },
+        Assert.Equal(["\uffff", "\uffffx"],
             (await server.ListDigestsAsync(prefix: "\uffff")).Entries.Select(entry => entry.Key));
         var final = await server.ListDigestsAsync(afterKey: "\uffffx");
         Assert.Empty(final.Entries);
@@ -139,7 +138,7 @@ public sealed class SqliteDigestTests
     }
 
     [Fact]
-    public async Task DigestReads_InvalidArgumentsAndPreCancellation_DoNotReachWriter()
+    public async Task DigestReadsInvalidArgumentsAndPreCancellationDoNotReachWriter()
     {
         using var database = new TestDatabase();
         await using var server = await database.OpenAsync();
@@ -159,7 +158,7 @@ public sealed class SqliteDigestTests
     }
 
     [Fact]
-    public async Task Accept_CommitFailure_RollsBackValueAndHashTogether()
+    public async Task AcceptCommitFailureRollsBackValueAndHashTogether()
     {
         using var database = new TestDatabase();
         var server = await database.OpenAsync();
@@ -182,7 +181,7 @@ public sealed class SqliteDigestTests
     }
 
     [Fact]
-    public async Task Read_CorruptPersistedHash_FailsRatherThanTransferringBytes()
+    public async Task ReadCorruptPersistedHashFailsRatherThanTransferringBytes()
     {
         using var database = new TestDatabase();
         await using (var seed = await database.OpenAsync())
@@ -205,7 +204,7 @@ public sealed class SqliteDigestTests
     }
 
     [Fact]
-    public async Task Repair_CorruptHigherBallotReplica_CannotReplaceHealthyCommittedBytes()
+    public async Task RepairCorruptHigherBallotReplicaCannotReplaceHealthyCommittedBytes()
     {
         var databases = Enumerable.Range(0, 5).Select(_ => new TestDatabase()).ToArray();
         using var allocator = new TestDatabase();
@@ -225,8 +224,8 @@ public sealed class SqliteDigestTests
             using (var connection = databases[1].Connect())
                 TestDatabase.Execute(connection, "UPDATE acceptor_state SET value=X'646566';");
 
-            var repair = new DurabilityRepair("peer-0", servers.Select((server, index) =>
-                new RepairPeer($"peer-{index}", server, server)), ballots);
+            var repair = new DurabilityRepair("peer-0", [.. servers.Select((server, index) =>
+                new RepairPeer($"peer-{index}", server, server))], ballots);
             var result = await repair.RunPassAsync().WaitAsync(TestDatabase.Timeout);
 
             foreach (var index in new[] { 0, 2, 3, 4 })
@@ -263,7 +262,7 @@ public sealed class SqliteDigestTests
     [InlineData("inspect", true)]
     [InlineData("inspect-list", false)]
     [InlineData("inspect-list", true)]
-    public async Task AcceptedBytes_CorruptionRetiresWriterBeforeReadOrTransition(string operation, bool corruptHash)
+    public async Task AcceptedBytesCorruptionRetiresWriterBeforeReadOrTransition(string operation, bool corruptHash)
     {
         using var database = new TestDatabase();
         await using (var seed = await database.OpenAsync())
@@ -311,14 +310,14 @@ public sealed class SqliteDigestTests
     }
 
     [Fact]
-    public async Task Open_V1Migration_PreservesBallotsAndBytesAndBackfillsHashes()
+    public async Task OpenV1MigrationPreservesBallotsAndBytesAndBackfillsHashes()
     {
         using var database = new TestDatabase();
         CreateV1(database);
         await using (var migrated = await database.OpenAsync())
         {
             var page = await migrated.ListDigestsAsync();
-            Assert.Equal(new[] { "abc", "empty" }, page.Entries.Select(entry => entry.Key));
+            Assert.Equal(["abc", "empty"], page.Entries.Select(entry => entry.Key));
             Assert.Equal(new AcceptedDigest(new(3, 0), AbcHash), page.Entries[0].Digest);
             Assert.Equal(new AcceptedDigest(new(4, 1), EmptyHash), page.Entries[1].Digest);
             Assert.Equal(new KeyedAcceptorState("abc", new(9, 2), new(3, 0), Value),
@@ -342,7 +341,7 @@ public sealed class SqliteDigestTests
     }
 
     [Fact]
-    public async Task Open_FailedV1Migration_RollsBackSchemaVersionAndOriginalRows()
+    public async Task OpenFailedV1MigrationRollsBackSchemaVersionAndOriginalRows()
     {
         using var database = new TestDatabase();
         CreateV1(database);

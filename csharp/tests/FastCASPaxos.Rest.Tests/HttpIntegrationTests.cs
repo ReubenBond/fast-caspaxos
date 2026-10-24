@@ -21,7 +21,7 @@ public sealed class HttpIntegrationTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task InspectorGet_RepeatedRefreshPreservesDurableBallotsAndDoesNotCreateMissingRows(bool present)
+    public async Task InspectorGetRepeatedRefreshPreservesDurableBallotsAndDoesNotCreateMissingRows(bool present)
     {
         // Execute the real REST endpoint and register/SQLite stack in process, without a socket.
         using var directory = new TestDirectory();
@@ -51,7 +51,7 @@ public sealed class HttpIntegrationTests
             Assert.Equal(present ? Tag(version) : "", request.Response.Headers.ETag.ToString());
         }
 
-        Assert.Equal(new[] { "read", "read", "read" }, observed.Calls.Select(call => call.Operation));
+        Assert.Equal(["read", "read", "read"], observed.Calls.Select(call => call.Operation));
         Assert.Equal(new FastCASPaxos.Model.Ballot(2, 1), ballots.Reserve(1)); // No hidden allocation during any GET.
         foreach (var store in stores)
         {
@@ -67,7 +67,7 @@ public sealed class HttpIntegrationTests
     }
 
     [Fact]
-    public async Task Http1AndGrpc_ShareDurableStateAndRetainPayloadAndEtagAfterRestart()
+    public async Task Http1AndGrpcShareDurableStateAndRetainPayloadAndEtagAfterRestart()
     {
         using var directory = new TestDirectory();
         const string key = "rest/../literal%2F +\0\U0001F600";
@@ -142,7 +142,7 @@ public sealed class HttpIntegrationTests
     }
 
     [Fact]
-    public async Task Http1_ListUsesExclusiveEmptyCursorAndOrdinalPrefixPages()
+    public async Task Http1ListUsesExclusiveEmptyCursorAndOrdinalPrefixPages()
     {
         using var directory = new TestDirectory();
         await using var node = await RunningNode.Start(directory.Options());
@@ -153,7 +153,7 @@ public sealed class HttpIntegrationTests
             Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         }
         var first = await Page(node.Http, "/v1/registers?limit=1");
-        Assert.Equal([""], first.Keys);
+        Assert.Equal<string>([""], first.Keys);
         Assert.Equal("", first.ContinuationKey);
         var afterEmpty = await Page(node.Http, "/v1/registers?after=&limit=100");
         Assert.Equal(keys.Where(key => key.Length != 0).Order(StringComparer.Ordinal), afterEmpty.Keys);
@@ -166,7 +166,7 @@ public sealed class HttpIntegrationTests
         {
             var page = await Page(node.Http, "/v1/registers?prefix=prefix%2F&limit=2"
                 + (cursor is null ? "" : "&after=" + Uri.EscapeDataString(cursor)));
-            Assert.InRange(page.Keys.Count, 1, 2);
+            Assert.InRange(page.Keys.Length, 1, 2);
             collected.AddRange(page.Keys);
             cursor = page.ContinuationKey;
             if (cursor is null) break;
@@ -182,7 +182,7 @@ public sealed class HttpIntegrationTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Http1_BodyLimitRejectsFixedAndChunkedRequestsBeforeMutation(bool chunked)
+    public async Task Http1BodyLimitRejectsFixedAndChunkedRequestsBeforeMutation(bool chunked)
     {
         using var directory = new TestDirectory();
         var options = directory.Options();
@@ -219,7 +219,7 @@ public sealed class HttpIntegrationTests
     }
 
     [Fact]
-    public async Task Http1_BodyLimitIsIndependentOfGrpcMessageLimits()
+    public async Task Http1BodyLimitIsIndependentOfGrpcMessageLimits()
     {
         using var directory = new TestDirectory();
         var options = directory.Options();
@@ -251,7 +251,7 @@ public sealed class HttpIntegrationTests
     }
 
     [Fact]
-    public void NodeOptions_RequestBodyLimitDefaultsAndRejectsNonpositiveValues()
+    public void NodeOptionsRequestBodyLimitDefaultsAndRejectsNonpositiveValues()
     {
         Assert.Equal(4L * 1024 * 1024, new NodeOptions().MaxRequestBodyBytes);
         using var directory = new TestDirectory();
@@ -290,7 +290,7 @@ public sealed class HttpIntegrationTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         NoStore(response);
         using var json = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync());
-        return new(json.RootElement.GetProperty("keys").EnumerateArray().Select(key => key.GetString()!).ToArray(),
+        return new([.. json.RootElement.GetProperty("keys").EnumerateArray().Select(key => key.GetString()!)],
             json.RootElement.GetProperty("continuation").GetString());
     }
 

@@ -15,7 +15,7 @@ public sealed class RepairContractTests
         "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"));
 
     [Fact]
-    public async Task DigestWire_RoundTripsOrdinalPagesEmptyCursorAndAcceptedBallot()
+    public async Task DigestWireRoundTripsOrdinalPagesEmptyCursorAndAcceptedBallot()
     {
         using var directory = new TestDirectory();
         await using var store = await SqliteAcceptorServer.OpenAsync(directory.Database("digests"));
@@ -25,11 +25,11 @@ public sealed class RepairContractTests
         var client = new GrpcAcceptorDigestSource(new RepairContractInvoker(store));
 
         var first = await client.ListDigestsAsync(limit: 2);
-        Assert.Equal(new[] { "", "\0" }, first.Entries.Select(entry => entry.Key));
+        Assert.Equal(["", "\0"], first.Entries.Select(entry => entry.Key));
         Assert.Equal("\0", first.ContinuationKey);
         Assert.All(first.Entries, entry => Assert.Equal(new AcceptedDigest(new(3, 0), EmptyHash), entry.Digest));
         var second = await client.ListDigestsAsync(afterKey: first.ContinuationKey, limit: 2);
-        Assert.Equal(new[] { "A", "a" }, second.Entries.Select(entry => entry.Key));
+        Assert.Equal(["A", "a"], second.Entries.Select(entry => entry.Key));
         Assert.Equal("a", second.ContinuationKey);
         var last = await client.ListDigestsAsync(afterKey: second.ContinuationKey, limit: 2);
         Assert.Equal("é", Assert.Single(last.Entries).Key);
@@ -39,13 +39,13 @@ public sealed class RepairContractTests
     }
 
     [Fact]
-    public async Task ReadWire_DistinguishesMissingUnchangedAndFullStateIncludingEmptyBytes()
+    public async Task ReadWireDistinguishesMissingUnchangedAndFullStateIncludingEmptyBytes()
     {
         using var directory = new TestDirectory();
         await using var store = await SqliteAcceptorServer.OpenAsync(directory.Database("fetch"));
         await store.PrepareAsync("promise", new(new(9, 2)));
         await store.AcceptAsync("", new(new(3, 0), ByteString.Empty, new(9, 2)));
-        IKeyedAcceptor client = new GrpcKeyedAcceptor(new RepairContractInvoker(store));
+        var client = new GrpcKeyedAcceptor(new RepairContractInvoker(store));
         foreach (var key in new[] { "missing", "promise" })
         {
             var missing = await client.ReadAsync(key, null);
@@ -65,7 +65,7 @@ public sealed class RepairContractTests
     }
 
     [Fact]
-    public async Task ReadWire_RoutesToKeyedAcceptorRatherThanDigestListingSource()
+    public async Task ReadWireRoutesToKeyedAcceptorRatherThanDigestListingSource()
     {
         var source = new DelegateDigests();
         var known = new AcceptedDigest(new(3, 0), EmptyHash);
@@ -80,7 +80,7 @@ public sealed class RepairContractTests
                 return ValueTask.FromResult<AcceptorReadResult>(new AcceptorUnchanged());
             }
         };
-        IKeyedAcceptor client = new GrpcKeyedAcceptor(new RepairContractInvoker(source, acceptor: acceptor));
+        var client = new GrpcKeyedAcceptor(new RepairContractInvoker(source, acceptor: acceptor));
 
         Assert.True(await client.ReadAsync("requested", known, cancellation.Token) is AcceptorUnchanged);
 
@@ -99,7 +99,7 @@ public sealed class RepairContractTests
     [InlineData("negative-proposer")]
     [InlineData("short-hash")]
     [InlineData("long-hash")]
-    public async Task ConditionalFetchWire_InvalidRequest_RejectsBeforeSource(string scenario)
+    public async Task ConditionalFetchWireInvalidRequestRejectsBeforeSource(string scenario)
     {
         var source = new DelegateDigests();
         var request = new Wire.FetchIfDifferentRequest { Key = "key", Known = WireDigest() };
@@ -129,7 +129,7 @@ public sealed class RepairContractTests
     [InlineData("zero-ballot")]
     [InlineData("missing-promise")]
     [InlineData("different-but-matching")]
-    public async Task ConditionalFetchWire_MalformedResponse_RejectsAsDataLoss(string scenario)
+    public async Task ConditionalFetchWireMalformedResponseRejectsAsDataLoss(string scenario)
     {
         var response = new Wire.ConditionalAcceptorState { Different = Entry("key", promised: 9, accepted: 3) };
         AcceptedDigest? known = null;
@@ -162,7 +162,7 @@ public sealed class RepairContractTests
     [InlineData("equal-cursor")]
     [InlineData("wrong-continuation")]
     [InlineData("empty-continuation")]
-    public async Task DigestWire_MalformedPage_RejectsAsDataLoss(string scenario)
+    public async Task DigestWireMalformedPageRejectsAsDataLoss(string scenario)
     {
         var response = new Wire.AcceptorDigestPage
         {
@@ -195,7 +195,7 @@ public sealed class RepairContractTests
     [InlineData("default-union")]
     [InlineData("zero-accepted-ballot")]
     [InlineData("default-bytes")]
-    public async Task ConditionalFetchService_InvalidDomainResult_FailsInsteadOfSerializing(string scenario)
+    public async Task ConditionalFetchServiceInvalidDomainResultFailsInsteadOfSerializing(string scenario)
     {
         var state = new KeyedAcceptorState("other", new(9, 2), new(3, 1), ByteString.Empty);
         AcceptorReadResult outcome = scenario switch
@@ -220,7 +220,7 @@ public sealed class RepairContractTests
     [InlineData("list")]
     [InlineData("fetch")]
     [InlineData("stage")]
-    public async Task RepairClients_ForwardDeadlineAndCancelDispatchedCall(string operation)
+    public async Task RepairClientsForwardDeadlineAndCancelDispatchedCall(string operation)
     {
         var clock = new DiagnosticClock();
         using var cancellation = new CancellationTokenSource();
@@ -256,7 +256,7 @@ public sealed class RepairContractTests
     [InlineData("list")]
     [InlineData("fetch")]
     [InlineData("stage")]
-    public async Task RepairClients_UnavailablePeer_PreservesTransportFailure(string operation)
+    public async Task RepairClientsUnavailablePeerPreservesTransportFailure(string operation)
     {
         var error = new RpcException(new Status(StatusCode.Unavailable, "offline"));
         var invoker = StubCallInvoker.Fail(error);
@@ -276,7 +276,7 @@ public sealed class RepairContractTests
     }
 
     [Fact]
-    public async Task StageWire_InvokesSchedulerAndPreCancellationDoesNotStage()
+    public async Task StageWireInvokesSchedulerAndPreCancellationDoesNotStage()
     {
         var scheduler = new CountingRepairScheduler();
         var client = new GrpcRepairScheduler(new RepairContractInvoker(scheduler: scheduler));

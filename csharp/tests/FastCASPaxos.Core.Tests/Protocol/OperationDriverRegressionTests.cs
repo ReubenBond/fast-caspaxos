@@ -8,7 +8,7 @@ namespace FastCASPaxos.Core.Tests.Protocol;
 public sealed class OperationDriverRegressionTests
 {
     [Fact]
-    public void OperationDriver_StartReadyRequests_WrapsScheduledOperationWithDriverCaller()
+    public void OperationDriverStartReadyRequestsWrapsScheduledOperationWithDriverCaller()
     {
         var driver = new RecordingOperationDriver<TestValue, string>("client", ["p1"]);
         var operation = AppendOperation(1, "A");
@@ -23,7 +23,7 @@ public sealed class OperationDriverRegressionTests
     }
 
     [Fact]
-    public void OperationDriver_Completion_PrefersLatestResponsePerProposer()
+    public void OperationDriverCompletionPrefersLatestResponsePerProposer()
     {
         var driver = new RecordingOperationDriver<TestValue, string>("client", ["p1"]);
         driver.Enqueue("p1", AppendOperation(1, "A"));
@@ -52,7 +52,7 @@ public sealed class OperationDriverRegressionTests
     }
 
     [Fact]
-    public void OperationDriver_Completion_PrefersLatestSameVersionResponsePerProposer()
+    public void OperationDriverCompletionPrefersLatestSameVersionResponsePerProposer()
     {
         var driver = new RecordingOperationDriver<TestValue, string>("client", ["p1"]);
         driver.Enqueue("p1", ReadOperation());
@@ -79,7 +79,7 @@ public sealed class OperationDriverRegressionTests
     }
 
     [Fact]
-    public void OperationDriver_HandleResponse_AcceptsAnyRoundForScheduledRequest()
+    public void OperationDriverHandleResponseAcceptsAnyRoundForScheduledRequest()
     {
         var driver = new RecordingOperationDriver<TestValue, string>("client", ["p1"]);
         driver.Enqueue("p1", AppendOperation(1, "A"));
@@ -95,7 +95,7 @@ public sealed class OperationDriverRegressionTests
         Assert.NotNull(driver.LastCompletion);
     }
 
-    private static IOperation<TestValue> AppendOperation(int expectedVersion, string suffix) =>
+    private static Operation<TestValue, TestValue> AppendOperation(int expectedVersion, string suffix) =>
         new Operation<TestValue, TestValue>
         {
             Input = new TestValue(expectedVersion, suffix),
@@ -117,7 +117,7 @@ public sealed class OperationDriverRegressionTests
             },
         };
 
-    private static IOperation<TestValue> ReadOperation() =>
+    private static Operation<TestValue, TestValue> ReadOperation() =>
         new Operation<TestValue, TestValue>
         {
             Input = default,

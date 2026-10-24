@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -12,7 +13,7 @@ namespace FastCASPaxos.Host;
 public sealed record AdminPeer(string Id, string GrpcEndpoint, string HttpEndpoint, string EventsUrl);
 public sealed record NodeStatus(
     int SchemaVersion, string NodeId, int ProposerId, string BootId, DateTimeOffset StartedAt,
-    string Cursor, IReadOnlyList<AdminPeer> Peers, StorageObservation Storage, NodeEvent? LastOperation,
+    string Cursor, ImmutableArray<AdminPeer> Peers, StorageObservation Storage, NodeEvent? LastOperation,
     double HeartbeatMilliseconds, int HistoryCapacity);
 public sealed record LocalStateView(
     string Key, Ballot PromisedBallot, Ballot AcceptedBallot, PayloadPreview? AcceptedValue, RegisterPreview? Register)
@@ -28,7 +29,7 @@ public sealed record StateSnapshot(
     int SchemaVersion, string NodeId, string BootId, string Cursor, DateTimeOffset Timestamp, LocalStateView? Entry);
 public sealed record StatePage(
     int SchemaVersion, string NodeId, string BootId, string Cursor, DateTimeOffset Timestamp,
-    IReadOnlyList<LocalStateView> Entries, string? Continuation);
+    ImmutableArray<LocalStateView> Entries, string? Continuation);
 
 public static class AdminEndpoints
 {
@@ -91,7 +92,7 @@ public static class AdminEndpoints
             }
             catch (Exception error)
             {
-                logging.CreateLogger(typeof(AdminEndpoints)).LogWarning(error, "Cluster repair was only partially staged.");
+                logging.CreateLogger(typeof(AdminEndpoints)).ClusterRepairPartiallyStaged(error);
                 return Results.Problem(statusCode: 503, title: "repair-staging-incomplete",
                     detail: "Successfully contacted nodes retain their staged repair. Retry to contact remaining peers.");
             }
@@ -122,7 +123,7 @@ public static class AdminEndpoints
             var page = await node.Inspection.InspectKeysAsync(
                 query.GetValueOrDefault("prefix", ""), query.GetValueOrDefault("after"), limit, context.RequestAborted);
             return Results.Json(new StatePage(1, journal.NodeId, journal.BootId, cursor, journal.Clock.GetUtcNow(),
-                page.Entries.Select(LocalStateView.From).ToArray(), page.ContinuationKey), Json);
+                [.. page.Entries.Select(LocalStateView.From)], page.ContinuationKey), Json);
         }
         catch (ArgumentException error) { return Results.Problem(statusCode: 400, title: "invalid", detail: error.Message); }
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
@@ -131,13 +132,13 @@ public static class AdminEndpoints
         }
         catch (InvalidOperationException error) when (error.InnerException is System.Text.EncoderFallbackException)
         {
-            logging.CreateLogger(typeof(AdminEndpoints)).LogError(error, "Local key cannot be represented as HTTP Unicode text.");
+            logging.CreateLogger(typeof(AdminEndpoints)).LocalKeyNotUnicode(error);
             return Results.Problem(statusCode: 500, title: "invalid-text",
                 detail: "A local key cannot be represented as HTTP Unicode text; use the local inspection API.");
         }
         catch (Exception error)
         {
-            logging.CreateLogger(typeof(AdminEndpoints)).LogError(error, "Local acceptor inspection failed.");
+            logging.CreateLogger(typeof(AdminEndpoints)).InspectionFailed(error);
             return Results.Problem(statusCode: 503, title: "storage-unavailable", detail: "Consult node storage health and server logs.");
         }
     }
@@ -182,7 +183,7 @@ public static class AdminEndpoints
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
         catch (IOException error)
         {
-            logging.CreateLogger(typeof(AdminEndpoints)).LogDebug(error, "Diagnostic stream disconnected.");
+            logging.CreateLogger(typeof(AdminEndpoints)).DiagnosticStreamDisconnected(error);
         }
         finally { node.CloseEventStream(); }
     }

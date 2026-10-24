@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Globalization;
 using FastCASPaxos.Protocol;
 using FastCASPaxos.Simulation;
@@ -38,7 +39,7 @@ internal sealed record BenchmarkWorkloadOptions(
     TimeSpan BaseDelay,
     TimeSpan MaxJitter,
     LinkLatencyProfile Topology,
-    IReadOnlyList<FaultScheduleEntry> FaultSchedule,
+    ImmutableArray<FaultScheduleEntry> FaultSchedule,
     bool AgreementMode,
     bool AgreementConcurrentProposers,
     bool RegisterInitMode,
@@ -86,7 +87,7 @@ internal sealed record BenchmarkWorkloadOptions(
     public string ModeName => ModePolicy.Name;
 
     public string FaultLabel =>
-        FaultSchedule.Count == 0
+        FaultSchedule.Length == 0
             ? "none"
             : string.Join("+", FaultSchedule.Select(f =>
                 $"{f.Action.ToString().ToLowerInvariant()}-{f.TargetRole.ToString().ToLowerInvariant()}{f.TargetOrdinal}"));
@@ -104,7 +105,7 @@ internal sealed record BenchmarkWorkloadOptions(
         if (acceptorCount < MinimumAcceptorCount)
         {
             throw new ArgumentOutOfRangeException(
-                "acceptor-count",
+                nameof(parameters),
                 acceptorCount,
                 $"benchmark-workload requires at least {MinimumAcceptorCount} acceptors.");
         }
@@ -155,7 +156,7 @@ internal sealed record BenchmarkWorkloadOptions(
         if (leaderOrdinal is not null && leaderOrdinal > proposerCount)
         {
             throw new ArgumentOutOfRangeException(
-                "leader-ordinal",
+                nameof(parameters),
                 leaderOrdinal,
                 $"benchmark-workload 'leader-ordinal' must be between 1 and proposer-count ({proposerCount}).");
         }
@@ -208,7 +209,7 @@ internal sealed record BenchmarkWorkloadOptions(
             proposerResponseTimeoutOverride);
     }
 
-    public IReadOnlyList<KeyValuePair<string, string>> DescribeParameters() =>
+    public ImmutableArray<KeyValuePair<string, string>> DescribeParameters() =>
     [
         new("proposer-count", ProposerCount.ToString(CultureInfo.InvariantCulture)),
         new("acceptor-count", AcceptorCount.ToString(CultureInfo.InvariantCulture)),
@@ -243,7 +244,7 @@ internal sealed record BenchmarkWorkloadOptions(
     /// Returns the proposer designated as the distinguished leader. When <see cref="LeaderOrdinal"/>
     /// is set, the proposer whose ordinal matches is returned; otherwise defaults to the first proposer.
     /// </summary>
-    internal FastCasAddress GetInitialLeader(IReadOnlyList<FastCasAddress> proposers)
+    internal FastCasAddress GetInitialLeader(ReadOnlySpan<FastCasAddress> proposers)
     {
         if (LeaderOrdinal is not { } ordinal)
         {
@@ -313,7 +314,7 @@ internal sealed record BenchmarkWorkloadOptions(
                 break;
 
             default:
-                throw new ArgumentOutOfRangeException(nameof(Topology), Topology, null);
+                throw new InvalidOperationException($"Unsupported link latency profile '{Topology}'.");
         }
     }
 
@@ -620,7 +621,7 @@ internal sealed record BenchmarkWorkloadOptions(
         };
 
     private string FormatFaultSchedule() =>
-        FaultSchedule.Count == 0
+        FaultSchedule.Length == 0
             ? "none"
             : string.Join(",", FaultSchedule.Select(FormatFaultEntry));
 
@@ -639,7 +640,7 @@ internal sealed record BenchmarkWorkloadOptions(
         return $"{action}:{target}:{timing}";
     }
 
-    internal static IReadOnlyList<FaultScheduleEntry> ParseFaultSchedule(string schedule)
+    internal static ImmutableArray<FaultScheduleEntry> ParseFaultSchedule(string schedule)
     {
         if (string.IsNullOrWhiteSpace(schedule) ||
             string.Equals(schedule, "none", StringComparison.OrdinalIgnoreCase))
@@ -647,13 +648,14 @@ internal sealed record BenchmarkWorkloadOptions(
             return [];
         }
 
-        var entries = new List<FaultScheduleEntry>();
-        foreach (var part in schedule.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        var parts = schedule.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var entries = ImmutableArray.CreateBuilder<FaultScheduleEntry>(parts.Length);
+        foreach (var part in parts)
         {
             entries.Add(ParseFaultEntry(part));
         }
 
-        return entries;
+        return entries.MoveToImmutable();
     }
 
     private static FaultScheduleEntry ParseFaultEntry(string entry)

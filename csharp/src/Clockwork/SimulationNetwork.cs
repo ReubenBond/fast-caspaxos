@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Globalization;
 using Microsoft.Extensions.Logging;
@@ -33,9 +34,9 @@ public readonly record struct LinkLatency(TimeSpan BaseDelay, TimeSpan MaxJitter
 /// Provides hooks for injecting network faults like delays, partitions, and message loss.
 /// </summary>
 [DebuggerDisplay("{DebuggerDisplay,nq}")]
-public class SimulationNetwork
+public partial class SimulationNetwork
 {
-    private readonly Func<IReadOnlyList<SimulationNode>> _getNodes;
+    private readonly Func<ImmutableArray<SimulationNode>> _getNodes;
     private readonly SimulationRandom _random;
     private readonly ConcurrentDictionary<string, HashSet<string>> _partitions = new(StringComparer.Ordinal);
     private readonly Dictionary<(string Source, string Target), LinkLatency> _linkLatencies = [];
@@ -68,7 +69,7 @@ public class SimulationNetwork
     /// </summary>
     /// <param name="getNodes">Function to get the list of nodes in the simulation.</param>
     /// <param name="random">The deterministic random number generator.</param>
-    public SimulationNetwork(Func<IReadOnlyList<SimulationNode>> getNodes, SimulationRandom random)
+    public SimulationNetwork(Func<ImmutableArray<SimulationNode>> getNodes, SimulationRandom random)
     {
         ArgumentNullException.ThrowIfNull(getNodes);
         ArgumentNullException.ThrowIfNull(random);
@@ -376,46 +377,82 @@ public class SimulationNetwork
         }
     }
 
-#pragma warning disable CA1848 // Use the LoggerMessage delegates - these are virtual hooks, override for high-performance logging
-#pragma warning disable CA1873 // Logging message template - these are virtual hooks, override for high-performance logging
 
     /// <summary>Called when a unidirectional partition is created.</summary>
-    protected virtual void OnPartitionCreated(string source, string target) => _logger.LogDebug("Partition created: {Source} -> {Target}", source, target);
+    protected virtual void OnPartitionCreated(string source, string target) => Log.PartitionCreated(_logger, source, target);
 
     /// <summary>Called when a bidirectional partition is about to be created.</summary>
-    protected virtual void OnBidirectionalPartitionCreating(string node1, string node2) => _logger.LogDebug("Creating bidirectional partition: {Node1} <-> {Node2}", node1, node2);
+    protected virtual void OnBidirectionalPartitionCreating(string node1, string node2) => Log.BidirectionalPartitionCreating(_logger, node1, node2);
 
     /// <summary>Called when a unidirectional partition is healed.</summary>
-    protected virtual void OnPartitionHealed(string source, string target) => _logger.LogDebug("Partition healed: {Source} -> {Target}", source, target);
+    protected virtual void OnPartitionHealed(string source, string target) => Log.PartitionHealed(_logger, source, target);
 
     /// <summary>Called when a bidirectional partition is about to be healed.</summary>
-    protected virtual void OnBidirectionalPartitionHealing(string node1, string node2) => _logger.LogDebug("Healing bidirectional partition: {Node1} <-> {Node2}", node1, node2);
+    protected virtual void OnBidirectionalPartitionHealing(string node1, string node2) => Log.BidirectionalPartitionHealing(_logger, node1, node2);
 
     /// <summary>Called when all partitions are healed.</summary>
-    protected virtual void OnAllPartitionsHealed(int count) => _logger.LogDebug("All partitions healed: {Count} partitions", count);
+    protected virtual void OnAllPartitionsHealed(int count) => Log.AllPartitionsHealed(_logger, count);
 
     /// <summary>Called when a node is about to be isolated.</summary>
-    protected virtual void OnNodeIsolating(string nodeAddress) => _logger.LogDebug("Isolating node: {Node}", nodeAddress);
+    protected virtual void OnNodeIsolating(string nodeAddress) => Log.NodeIsolating(_logger, nodeAddress);
 
     /// <summary>Called when a node is about to be reconnected.</summary>
-    protected virtual void OnNodeReconnecting(string nodeAddress) => _logger.LogDebug("Reconnecting node: {Node}", nodeAddress);
+    protected virtual void OnNodeReconnecting(string nodeAddress) => Log.NodeReconnecting(_logger, nodeAddress);
 
     /// <summary>Called when a message is blocked by a partition.</summary>
-    protected virtual void OnMessageBlockedByPartition(string source, string target) => _logger.LogTrace("Message blocked by partition: {Source} -> {Target}", source, target);
+    protected virtual void OnMessageBlockedByPartition(string source, string target) => Log.MessageBlockedByPartition(_logger, source, target);
 
     /// <summary>Called when a message is randomly dropped.</summary>
-    protected virtual void OnMessageDroppedRandom(string source, string target) => _logger.LogTrace("Message randomly dropped: {Source} -> {Target}", source, target);
+    protected virtual void OnMessageDroppedRandom(string source, string target) => Log.MessageDroppedRandom(_logger, source, target);
 
     /// <summary>Called when a per-link latency override is set.</summary>
-    protected virtual void OnLinkLatencySet(string source, string target, TimeSpan baseDelay, TimeSpan maxJitter) => _logger.LogDebug("Link latency set: {Source} -> {Target} (base={BaseDelay}, jitter={MaxJitter})", source, target, baseDelay, maxJitter);
+    protected virtual void OnLinkLatencySet(string source, string target, TimeSpan baseDelay, TimeSpan maxJitter) => Log.LinkLatencySet(_logger, source, target, baseDelay, maxJitter);
 
     /// <summary>Called when a per-link latency override is cleared.</summary>
-    protected virtual void OnLinkLatencyCleared(string source, string target) => _logger.LogDebug("Link latency cleared: {Source} -> {Target}", source, target);
+    protected virtual void OnLinkLatencyCleared(string source, string target) => Log.LinkLatencyCleared(_logger, source, target);
 
     /// <summary>Called when all per-link latency overrides are cleared.</summary>
-    protected virtual void OnAllLinkLatenciesCleared(int count) => _logger.LogDebug("All link latencies cleared: {Count} overrides", count);
+    protected virtual void OnAllLinkLatenciesCleared(int count) => Log.AllLinkLatenciesCleared(_logger, count);
 
-#pragma warning restore CA1873, CA1848
 
     private string DebuggerDisplay => string.Create(CultureInfo.InvariantCulture, $"SimulationNetwork(Partitions={_partitions.Count}, LinkLatencies={_linkLatencies.Count}, DropRate={MessageDropRate:P0})");
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Partition created: {Source} -> {Target}")]
+        public static partial void PartitionCreated(ILogger logger, string source, string target);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Creating bidirectional partition: {Node1} <-> {Node2}")]
+        public static partial void BidirectionalPartitionCreating(ILogger logger, string node1, string node2);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Partition healed: {Source} -> {Target}")]
+        public static partial void PartitionHealed(ILogger logger, string source, string target);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Healing bidirectional partition: {Node1} <-> {Node2}")]
+        public static partial void BidirectionalPartitionHealing(ILogger logger, string node1, string node2);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "All partitions healed: {Count} partitions")]
+        public static partial void AllPartitionsHealed(ILogger logger, int count);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Isolating node: {Node}")]
+        public static partial void NodeIsolating(ILogger logger, string node);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Reconnecting node: {Node}")]
+        public static partial void NodeReconnecting(ILogger logger, string node);
+
+        [LoggerMessage(Level = LogLevel.Trace, Message = "Message blocked by partition: {Source} -> {Target}")]
+        public static partial void MessageBlockedByPartition(ILogger logger, string source, string target);
+
+        [LoggerMessage(Level = LogLevel.Trace, Message = "Message randomly dropped: {Source} -> {Target}")]
+        public static partial void MessageDroppedRandom(ILogger logger, string source, string target);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Link latency set: {Source} -> {Target} (base={BaseDelay}, jitter={MaxJitter})")]
+        public static partial void LinkLatencySet(ILogger logger, string source, string target, TimeSpan baseDelay, TimeSpan maxJitter);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Link latency cleared: {Source} -> {Target}")]
+        public static partial void LinkLatencyCleared(ILogger logger, string source, string target);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "All link latencies cleared: {Count} overrides")]
+        public static partial void AllLinkLatenciesCleared(ILogger logger, int count);
+    }
 }

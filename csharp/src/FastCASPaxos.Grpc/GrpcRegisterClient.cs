@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Server;
 using Grpc.Core;
 using Grpc.Net.Client;
@@ -19,7 +20,7 @@ public sealed class GrpcRegisterClientOptions
 /// </summary>
 public sealed class GrpcRegisterClient : IRegisterService, IDisposable
 {
-    private readonly CallInvoker[] _invokers;
+    private readonly ImmutableArray<CallInvoker> _invokers;
     private readonly List<GrpcChannel> _channels = [];
     private readonly GrpcRegisterClientOptions _options;
     private readonly TimeProvider _timeProvider;
@@ -27,11 +28,11 @@ public sealed class GrpcRegisterClient : IRegisterService, IDisposable
     private int _disposed;
 
     /// <summary>Creates and owns one channel per HTTP(S) origin, preserving its TLS authority.</summary>
-    public GrpcRegisterClient(IEnumerable<Uri> endpoints, GrpcRegisterClientOptions? options = null,
+    public GrpcRegisterClient(ImmutableArray<Uri> endpoints, GrpcRegisterClientOptions? options = null,
         TimeProvider? timeProvider = null) : this(options, timeProvider)
     {
-        ArgumentNullException.ThrowIfNull(endpoints);
-        var addresses = endpoints.ToArray();
+        if (endpoints.IsDefault) throw new ArgumentNullException(nameof(endpoints));
+        var addresses = endpoints;
         if (addresses.Length == 0) throw new ArgumentException("At least one endpoint is required.", nameof(endpoints));
         var unique = new HashSet<Uri>();
         foreach (var address in addresses)
@@ -56,7 +57,7 @@ public sealed class GrpcRegisterClient : IRegisterService, IDisposable
                     DisableResolverServiceConfig = true,
                 }));
             }
-            _invokers = _channels.Select(channel => channel.CreateCallInvoker()).ToArray();
+            _invokers = [.. _channels.Select(channel => channel.CreateCallInvoker())];
         }
         catch
         {
@@ -69,11 +70,11 @@ public sealed class GrpcRegisterClient : IRegisterService, IDisposable
     /// Uses caller-owned invokers (for example, authenticated channels). Configure them for
     /// transport deadline enforcement and application-controlled mutation retries.
     /// </summary>
-    public GrpcRegisterClient(IEnumerable<CallInvoker> invokers, GrpcRegisterClientOptions? options = null,
+    public GrpcRegisterClient(ImmutableArray<CallInvoker> invokers, GrpcRegisterClientOptions? options = null,
         TimeProvider? timeProvider = null) : this(options, timeProvider)
     {
-        ArgumentNullException.ThrowIfNull(invokers);
-        _invokers = invokers.ToArray();
+        if (invokers.IsDefault) throw new ArgumentNullException(nameof(invokers));
+        _invokers = invokers;
         if (_invokers.Length == 0 || _invokers.Any(invoker => invoker is null))
             throw new ArgumentException("At least one non-null invoker is required.", nameof(invokers));
     }

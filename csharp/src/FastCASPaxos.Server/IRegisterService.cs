@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Model;
 using FastCASPaxos.Protocol;
 
@@ -39,7 +40,7 @@ public enum CompareExchangeStatus { Applied, Mismatch, Unknown }
 public sealed record CompareExchangeResult(
     CompareExchangeStatus Status, RegisterValue? Current, Exception? Error = null);
 
-public sealed record RegisterKeyPage(IReadOnlyList<string> Keys, string? ContinuationKey);
+public sealed record RegisterKeyPage(ImmutableArray<string> Keys, string? ContinuationKey);
 
 /// <summary>
 /// Allocates strictly increasing positive rounds for a configured proposer. Reservations are durable

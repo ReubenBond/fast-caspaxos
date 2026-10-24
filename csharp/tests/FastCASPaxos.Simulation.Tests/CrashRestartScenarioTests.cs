@@ -8,7 +8,7 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class CrashRestartScenarioTests
 {
     [Fact]
-    public async Task AcceptorRestart_PreservesDurableStateAndAllowsNewCommits()
+    public async Task AcceptorRestartPreservesDurableStateAndAllowsNewCommits()
     {
         await using var cluster = CreateCluster();
         cluster.CreateConfiguration(proposerCount: 1, acceptorCount: 5);
@@ -24,7 +24,7 @@ public sealed class CrashRestartScenarioTests
     }
 
     [Fact]
-    public async Task ProposerRestart_LosesVolatileStateButClusterStillProgresses()
+    public async Task ProposerRestartLosesVolatileStateButClusterStillProgresses()
     {
         await using var cluster = CreateCluster();
         cluster.CreateConfiguration(proposerCount: 2, acceptorCount: 5);

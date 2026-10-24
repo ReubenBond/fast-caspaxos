@@ -7,8 +7,6 @@ namespace Clockwork;
 /// Provides common functionality for node lifecycle management
 /// independent of any specific application domain.
 /// </summary>
-[SuppressMessage("Naming", "CA1716:Identifiers should not match keywords",
-    Justification = "Resume is the natural name for this operation and this is an internal simulation library")]
 public abstract class SimulationNode
 {
     /// <summary>

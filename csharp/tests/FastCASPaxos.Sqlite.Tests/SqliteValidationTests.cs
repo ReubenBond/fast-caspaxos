@@ -13,7 +13,7 @@ public sealed class SqliteValidationTests
     [InlineData(int.MinValue, 0)]
     [InlineData(1, -1)]
     [InlineData(1, int.MinValue)]
-    public async Task InvalidBallots_AreRejectedWithoutWriting(int round, int proposer)
+    public async Task InvalidBallotsAreRejectedWithoutWriting(int round, int proposer)
     {
         using var database = new TestDatabase();
         await using var server = await database.OpenAsync();
@@ -36,7 +36,7 @@ public sealed class SqliteValidationTests
     }
 
     [Fact]
-    public async Task InvalidArguments_DoNotPoisonServer()
+    public async Task InvalidArgumentsDoNotPoisonServer()
     {
         using var database = new TestDatabase();
         await using var server = await database.OpenAsync();
@@ -62,7 +62,7 @@ public sealed class SqliteValidationTests
     [InlineData(-1, 1)]
     [InlineData(1, 0)]
     [InlineData(1, -1)]
-    public async Task InvalidOpenOptions_DoNotCreateDatabase(int capacity, int batchSize)
+    public async Task InvalidOpenOptionsDoNotCreateDatabase(int capacity, int batchSize)
     {
         using var database = new TestDatabase();
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
@@ -71,7 +71,7 @@ public sealed class SqliteValidationTests
     }
 
     [Fact]
-    public async Task InvalidPathAndCancelledOpen_DoNotCreateDatabase()
+    public async Task InvalidPathAndCancelledOpenDoNotCreateDatabase()
     {
         using var database = new TestDatabase();
         await Assert.ThrowsAsync<ArgumentNullException>(() => SqliteAcceptorServer.OpenAsync(null!).AsTask());
@@ -88,7 +88,7 @@ public sealed class SqliteValidationTests
     }
 
     [Fact]
-    public async Task NewDatabase_UsesVersionedSchemaAndWal()
+    public async Task NewDatabaseUsesVersionedSchemaAndWal()
     {
         using var database = new TestDatabase();
         await using var server = await database.OpenAsync();
@@ -110,7 +110,7 @@ public sealed class SqliteValidationTests
     [InlineData("ForeignApplication")]
     [InlineData("UnidentifiedVersion")]
     [InlineData("FutureVersion")]
-    public async Task UnsupportedDatabase_IsRejectedWithoutReplacingData(string scenario)
+    public async Task UnsupportedDatabaseIsRejectedWithoutReplacingData(string scenario)
     {
         using var database = new TestDatabase();
         if (scenario == "FutureVersion")

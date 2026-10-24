@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+using System.Runtime.InteropServices;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
 using FastCASPaxos.Protocol;
@@ -20,11 +22,11 @@ public static class SimulationScenarioRunner
         ArgumentNullException.ThrowIfNull(plannedWork);
 
         var workItems = plannedWork.ToList();
-        var driver = new ScenarioOperationDriver<TValue>(cluster, cluster.ClientAddress, workItems.Select(item => item.Key));
+        var driver = new ScenarioOperationDriver<TValue>(cluster, cluster.ClientAddress, [.. workItems.Select(item => item.Key)]);
         var reconciliationRounds = 0;
         foreach (var (proposer, operations) in workItems)
         {
-            driver.EnqueueRange(proposer, operations);
+            driver.EnqueueRange(proposer, CollectionsMarshal.AsSpan(operations));
         }
 
         var handledResponses = new HashSet<int>();
@@ -81,11 +83,9 @@ public static class SimulationScenarioRunner
     }
 
     public static Dictionary<FastCasAddress, List<IOperation<TValue>>> DistributeRoundRobin<TValue>(
-        IReadOnlyList<FastCasAddress> proposers,
-        IEnumerable<IOperation<TValue>> operations)
+        ReadOnlySpan<FastCasAddress> proposers,
+        ReadOnlySpan<IOperation<TValue>> operations)
     {
-        ArgumentNullException.ThrowIfNull(proposers);
-        ArgumentNullException.ThrowIfNull(operations);
 
         Dictionary<FastCasAddress, List<IOperation<TValue>>> plan = [];
         foreach (var proposer in proposers)
@@ -96,7 +96,7 @@ public static class SimulationScenarioRunner
         var index = 0;
         foreach (var operation in operations)
         {
-            plan[proposers[index % proposers.Count]].Add(operation);
+            plan[proposers[index % proposers.Length]].Add(operation);
             index++;
         }
 
@@ -104,12 +104,10 @@ public static class SimulationScenarioRunner
     }
 
     public static Dictionary<FastCasAddress, List<IOperation<TValue>>> DistributeRandom<TValue>(
-        IReadOnlyList<FastCasAddress> proposers,
-        IEnumerable<IOperation<TValue>> operations,
+        ReadOnlySpan<FastCasAddress> proposers,
+        ReadOnlySpan<IOperation<TValue>> operations,
         Random random)
     {
-        ArgumentNullException.ThrowIfNull(proposers);
-        ArgumentNullException.ThrowIfNull(operations);
         ArgumentNullException.ThrowIfNull(random);
 
         Dictionary<FastCasAddress, List<IOperation<TValue>>> plan = [];
@@ -120,7 +118,7 @@ public static class SimulationScenarioRunner
 
         foreach (var operation in operations)
         {
-            plan[proposers[random.Next(proposers.Count)]].Add(operation);
+            plan[proposers[random.Next(proposers.Length)]].Add(operation);
         }
 
         return plan;
@@ -146,7 +144,7 @@ public static class SimulationScenarioRunner
     private sealed class ScenarioOperationDriver<TValue>(
         FastCasSimulationCluster<TValue> cluster,
         FastCasAddress caller,
-        IEnumerable<FastCasAddress> proposers) : OperationDriver<TValue, FastCasAddress>(caller, proposers)
+        ImmutableArray<FastCasAddress> proposers) : OperationDriver<TValue, FastCasAddress>(caller, proposers)
         where TValue : IVersionedValue<TValue>
     {
         private readonly FastCasSimulationCluster<TValue> _cluster = cluster;

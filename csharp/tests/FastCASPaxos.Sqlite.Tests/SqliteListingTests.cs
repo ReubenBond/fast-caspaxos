@@ -7,7 +7,7 @@ namespace FastCASPaxos.Sqlite.Tests;
 public sealed class SqliteListingTests
 {
     [Fact]
-    public async Task Listing_OrdersEdgeKeysOrdinallyAcrossPages()
+    public async Task ListingOrdersEdgeKeysOrdinallyAcrossPages()
     {
         using var database = new TestDatabase();
         // Already in ordinal UTF16 code-unit order, independently of SQLite's ordering.
@@ -39,7 +39,7 @@ public sealed class SqliteListingTests
                 break;
             }
 
-            Assert.Equal(3, page.Entries.Count);
+            Assert.Equal(3, page.Entries.Length);
             Assert.Equal(page.Entries[^1].Key, page.ContinuationKey);
             Assert.NotEqual(cursor, page.ContinuationKey);
             cursor = page.ContinuationKey;
@@ -59,7 +59,7 @@ public sealed class SqliteListingTests
     }
 
     [Fact]
-    public async Task Listing_PrefixIsLiteralOrdinalAndCursorIsExclusive()
+    public async Task ListingPrefixIsLiteralOrdinalAndCursorIsExclusive()
     {
         using var database = new TestDatabase();
         await using var server = await database.OpenAsync();
@@ -73,23 +73,23 @@ public sealed class SqliteListingTests
         }
 
         var literal = await server.ListKeysAsync("%_", limit: 2);
-        Assert.Equal(new[] { "%_", "%_A" }, literal.Entries.Select(entry => entry.Key));
+        Assert.Equal(["%_", "%_A"], literal.Entries.Select(entry => entry.Key));
         Assert.Equal("%_A", literal.ContinuationKey);
         var remainder = await server.ListKeysAsync("%_", literal.ContinuationKey, limit: 2);
-        Assert.Equal(new[] { "%_a" }, remainder.Entries.Select(entry => entry.Key));
+        Assert.Equal(["%_a"], remainder.Entries.Select(entry => entry.Key));
         Assert.Null(remainder.ContinuationKey);
-        Assert.Equal(new[] { "A" }, (await server.ListKeysAsync("A")).Entries.Select(entry => entry.Key));
-        Assert.Equal(new[] { "a\0", "a\0x" },
+        Assert.Equal(["A"], (await server.ListKeysAsync("A")).Entries.Select(entry => entry.Key));
+        Assert.Equal(["a\0", "a\0x"],
             (await server.ListKeysAsync("a\0")).Entries.Select(entry => entry.Key));
-        Assert.Equal(new[] { "\ud800", "\ud800x", "\ud800y" },
+        Assert.Equal(["\ud800", "\ud800x", "\ud800y"],
             (await server.ListKeysAsync("\ud800")).Entries.Select(entry => entry.Key));
-        Assert.Equal(new[] { "a\uffff", "a\uffffx" },
+        Assert.Equal(["a\uffff", "a\uffffx"],
             (await server.ListKeysAsync("a\uffff")).Entries.Select(entry => entry.Key));
-        Assert.Equal(new[] { "\uffff", "\uffffx", "\uffff\uffff", "\uffff\uffffx" },
+        Assert.Equal(["\uffff", "\uffffx", "\uffff\uffff", "\uffff\uffffx"],
             (await server.ListKeysAsync("\uffff")).Entries.Select(entry => entry.Key));
-        Assert.Equal(new[] { "\uffff\uffff", "\uffff\uffffx" },
+        Assert.Equal(["\uffff\uffff", "\uffff\uffffx"],
             (await server.ListKeysAsync("\uffff\uffff")).Entries.Select(entry => entry.Key));
-        Assert.Equal(new[] { "%_a" },
+        Assert.Equal(["%_a"],
             (await server.ListKeysAsync("%_", "%_Z")).Entries.Select(entry => entry.Key));
         Assert.Empty((await server.ListKeysAsync("%_", "z")).Entries);
         Assert.Empty((await server.ListKeysAsync("a\uffff", "b")).Entries);
@@ -98,7 +98,7 @@ public sealed class SqliteListingTests
     }
 
     [Fact]
-    public async Task Listing_ContinuationDistinguishesMoreRowsFromExactLimit()
+    public async Task ListingContinuationDistinguishesMoreRowsFromExactLimit()
     {
         using var database = new TestDatabase();
         await using var server = await database.OpenAsync();
@@ -115,17 +115,17 @@ public sealed class SqliteListingTests
         Assert.Equal("", Assert.Single(singleton.Entries).Key);
         Assert.Equal("", singleton.ContinuationKey); // Empty key is not end-of-list.
         var first = await server.ListKeysAsync(limit: 2);
-        Assert.Equal(new[] { "", "b" }, first.Entries.Select(entry => entry.Key));
+        Assert.Equal(["", "b"], first.Entries.Select(entry => entry.Key));
         Assert.Equal("b", first.ContinuationKey);
         var exactRemainder = await server.ListKeysAsync(afterKey: first.ContinuationKey, limit: 2);
-        Assert.Equal(new[] { "c", "d" }, exactRemainder.Entries.Select(entry => entry.Key));
+        Assert.Equal(["c", "d"], exactRemainder.Entries.Select(entry => entry.Key));
         Assert.Null(exactRemainder.ContinuationKey);
         var exactAll = await server.ListKeysAsync(limit: 4);
-        Assert.Equal(4, exactAll.Entries.Count);
+        Assert.Equal(4, exactAll.Entries.Length);
         Assert.Null(exactAll.ContinuationKey);
         var beyond = await server.ListKeysAsync(afterKey: "d", limit: 1);
         Assert.Empty(beyond.Entries);
         Assert.Null(beyond.ContinuationKey);
-        Assert.Equal(4, (await server.ListKeysAsync(limit: int.MaxValue)).Entries.Count);
+        Assert.Equal(4, (await server.ListKeysAsync(limit: int.MaxValue)).Entries.Length);
     }
 }

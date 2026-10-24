@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
+using System.Collections.Immutable;
 using System.Threading.Channels;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
@@ -25,8 +26,8 @@ internal static class TestSupport
     public static ByteString Absent => new("FCR1\0"u8);
     public static ControlledPeer[] Peers(int count = 3) =>
         Enumerable.Range(0, count).Select(_ => new ControlledPeer()).ToArray();
-    public static AcceptorPeer[] Routes(ControlledPeer[] peers) =>
-        peers.Select((peer, index) => new AcceptorPeer($"peer-{index}", peer)).ToArray();
+    public static ImmutableArray<AcceptorPeer> Routes(ControlledPeer[] peers) =>
+        [.. peers.Select((peer, index) => new AcceptorPeer($"peer-{index}", peer))];
     // Recovery-specific tests must not depend on an optimistic read entering Prepare.
     public static void RequireRecovery(ControlledPeer[] peers)
     {
@@ -122,7 +123,7 @@ internal sealed class MemoryAcceptor : IKeyedAcceptor
                 .OrderBy(pair => pair.Key, StringComparer.Ordinal).Take(limit == int.MaxValue ? limit : limit + 1)
                 .Select(pair => new KeyedAcceptorState(pair.Key, pair.Value.PromisedBallot,
                     pair.Value.AcceptedBallot, pair.Value.AcceptedValue!.Value)).ToArray();
-            return ValueTask.FromResult(new KeyPage(entries.Take(limit).ToArray(),
+            return ValueTask.FromResult(new KeyPage([.. entries.Take(limit)],
                 entries.Length > limit ? entries[limit - 1].Key : null));
         }
     }
@@ -137,7 +138,7 @@ internal sealed class MemoryAcceptor : IKeyedAcceptor
         }
     }
     private AcceptorState<ByteString?> Get(string key) => _states.TryGetValue(key, out var state)
-        ? state : AcceptorState<ByteString?>.CreateInitial(null);
+        ? state : AcceptorState.CreateInitial<ByteString?>(null);
 }
 
 internal sealed class ControlledPeer : IKeyedAcceptor, IAsyncDisposable

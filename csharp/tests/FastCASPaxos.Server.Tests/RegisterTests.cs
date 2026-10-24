@@ -12,7 +12,7 @@ public sealed class RegisterTests
     [InlineData("classic")]
     [InlineData("fast")]
     [InlineData("leader")]
-    public async Task ReadAndCompareExchange_PreserveIdentityAndAdvanceEveryWrite(string mode)
+    public async Task ReadAndCompareExchangePreserveIdentityAndAdvanceEveryWrite(string mode)
     {
         var peers = Peers();
         await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(7), Options(mode));
@@ -50,7 +50,7 @@ public sealed class RegisterTests
     [InlineData("fast", false)]
     [InlineData("classic", true)]
     [InlineData("fast", true)]
-    public async Task ConcurrentSamePayload_OneExpectedVersionAppliesExactlyOnce(string mode, bool update)
+    public async Task ConcurrentSamePayloadOneExpectedVersionAppliesExactlyOnce(string mode, bool update)
     {
         var peers = Peers();
         await using var first = new ReplicatedRegisterService(Routes(peers), new TestBallots(1), Options(mode));
@@ -105,7 +105,7 @@ public sealed class RegisterTests
     [Theory]
     [InlineData("fast")]
     [InlineData("leader")]
-    public async Task QueuedRequests_SharePiggybackButReleasedKeyStartsFresh(string mode)
+    public async Task QueuedRequestsSharePiggybackButReleasedKeyStartsFresh(string mode)
     {
         var peers = Peers();
         using var gate = new Gate();
@@ -144,7 +144,7 @@ public sealed class RegisterTests
     [Theory]
     [InlineData("fast")]
     [InlineData("leader")]
-    public async Task QueuedRead_StalePiggybackRecoversCompetingWrite(string mode)
+    public async Task QueuedReadStalePiggybackRecoversCompetingWrite(string mode)
     {
         var peers = Peers();
         using var gate = new Gate();
@@ -173,7 +173,7 @@ public sealed class RegisterTests
     }
 
     [Fact]
-    public async Task SharedFastBallot_ConcurrentSameBytesCasAppliesExactlyOnce()
+    public async Task SharedFastBallotConcurrentSameBytesCasAppliesExactlyOnce()
     {
         var peers = Peers();
         RequireRecovery(peers); // This test deliberately retains shared fast-round protocol history.
@@ -234,7 +234,7 @@ public sealed class RegisterTests
     }
 
     [Fact]
-    public async Task Read_PartialAcceptRecoversHighestEnvelopeWithoutChangingVersion()
+    public async Task ReadPartialAcceptRecoversHighestEnvelopeWithoutChangingVersion()
     {
         var peers = Peers();
         RequireRecovery(peers); // Test identity recovery, not the legal matching old-quorum observation.
@@ -255,7 +255,7 @@ public sealed class RegisterTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Read_AcceptedBallotWithoutBytesIsInvalidEvenInRejection(bool rejected)
+    public async Task ReadAcceptedBallotWithoutBytesIsInvalidEvenInRejection(bool rejected)
     {
         var peers = Peers();
         RequireRecovery(peers);
@@ -274,7 +274,7 @@ public sealed class RegisterTests
     [InlineData("fast", true)]
     [InlineData("leader", false)]
     [InlineData("leader", true)]
-    public async Task Read_RepeatedStableOrMissingState_DoesNotAllocateOrMutate(string mode, bool present)
+    public async Task ReadRepeatedStableOrMissingStateDoesNotAllocateOrMutate(string mode, bool present)
     {
         var peers = Peers();
         var value = Envelope(Version(9, 2), Payload);
@@ -302,7 +302,7 @@ public sealed class RegisterTests
     }
 
     [Fact]
-    public async Task Read_ClassicMatchingMajority_IgnoresNewerMinorityAndDifferentPromises()
+    public async Task ReadClassicMatchingMajorityIgnoresNewerMinorityAndDifferentPromises()
     {
         var peers = Peers();
         var old = Envelope(Version(9, 1), ByteString.Empty);
@@ -327,7 +327,7 @@ public sealed class RegisterTests
     [InlineData(3, "different-payload")]
     [InlineData(4, "different-version")]
     [InlineData(4, "different-payload")]
-    public async Task Read_FastQuorum_RequiresFourOfFiveMatchingEnvelopes(int matching, string difference)
+    public async Task ReadFastQuorumRequiresFourOfFiveMatchingEnvelopes(int matching, string difference)
     {
         var peers = Peers(5);
         var chosen = Envelope(Version(9, 1), Payload);
@@ -362,7 +362,7 @@ public sealed class RegisterTests
     }
 
     [Fact]
-    public async Task Read_MatchingBytesAtDifferentBallots_RequiresRecovery()
+    public async Task ReadMatchingBytesAtDifferentBallotsRequiresRecovery()
     {
         var peers = Peers();
         var value = Envelope(Version(9, 1), Payload);
@@ -395,7 +395,7 @@ public sealed class RegisterTests
     [InlineData("negative-accepted-round")]
     [InlineData("negative-accepted-proposer")]
     [InlineData("default-bytes")]
-    public async Task Read_InvalidObservation_ThrowsWithoutMutation(string scenario)
+    public async Task ReadInvalidObservationThrowsWithoutMutation(string scenario)
     {
         var peers = Peers();
         AcceptorReadResult result = scenario switch
@@ -427,7 +427,7 @@ public sealed class RegisterTests
     [InlineData("short-version")]
     [InlineData("zero-owner")]
     [InlineData("negative-round")]
-    public async Task Read_MalformedEnvelope_ThrowsInvalidData(string kind)
+    public async Task ReadMalformedEnvelopeThrowsInvalidData(string kind)
     {
         var malformed = kind switch
         {

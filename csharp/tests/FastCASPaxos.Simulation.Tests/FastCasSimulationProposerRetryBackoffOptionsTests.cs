@@ -7,7 +7,7 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class FastCasSimulationProposerRetryBackoffOptionsTests
 {
     [Fact]
-    public void GetRetryDelay_DoesNotDelayBeforeThresholdIsExceeded()
+    public void GetRetryDelayDoesNotDelayBeforeThresholdIsExceeded()
     {
         var options = new FastCasSimulationProposerRetryBackoffOptions
         {
@@ -23,7 +23,7 @@ public sealed class FastCasSimulationProposerRetryBackoffOptionsTests
     }
 
     [Fact]
-    public void GetRetryDelay_UsesDeterministicJitterAndHonorsMaxDelay()
+    public void GetRetryDelayUsesDeterministicJitterAndHonorsMaxDelay()
     {
         var options = new FastCasSimulationProposerRetryBackoffOptions
         {

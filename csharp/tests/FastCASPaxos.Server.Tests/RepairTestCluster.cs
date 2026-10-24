@@ -24,7 +24,7 @@ internal sealed class RepairTestCluster(int count = 3)
             for (var index = 0; index < Peers.Length; index++)
                 Peers[index].Read = Digests[index].ReadAsync;
         }
-        return new($"peer-{local}", Peers.Select((peer, index) => new RepairPeer($"peer-{index}", peer, Digests[index])),
+        return new($"peer-{local}", [.. Peers.Select((peer, index) => new RepairPeer($"peer-{index}", peer, Digests[index]))],
             Ballots, new()
             {
                 TargetReplicas = target,
@@ -62,7 +62,7 @@ internal sealed class RepairTestCluster(int count = 3)
         Assert.All(Peers, peer => Assert.Equal(expected, peer.Inner.Snapshot(key)!.AcceptedValue));
 }
 
-internal sealed class RecordingRepairBallots : IProposerBallotSource
+internal sealed class RecordingRepairBallots : IProposerBallotSource, IDisposable
 {
     private readonly TestBallots _inner = new(11);
     public int ProposerId => _inner.ProposerId;
@@ -73,6 +73,8 @@ internal sealed class RecordingRepairBallots : IProposerBallotSource
         Reserved.Enqueue(ballot);
         return ballot;
     }
+
+    public void Dispose() => _inner.Dispose();
 }
 
 internal sealed class RepairDigestSource(MemoryAcceptor inner) : IAcceptorDigestSource
@@ -88,7 +90,7 @@ internal sealed class RepairDigestSource(MemoryAcceptor inner) : IAcceptorDigest
         Lists.Enqueue((prefix, afterKey, limit));
         if (List is not null) return await List(prefix, afterKey, limit, cancellationToken);
         var page = await inner.ListKeysAsync(prefix, afterKey, limit, cancellationToken);
-        return new(page.Entries.Select(state => new KeyDigest(state.Key, Digest(state))).ToArray(), page.ContinuationKey);
+        return new([.. page.Entries.Select(state => new KeyDigest(state.Key, Digest(state)))], page.ContinuationKey);
     }
 
     public ValueTask<AcceptorReadResult> ReadAsync(

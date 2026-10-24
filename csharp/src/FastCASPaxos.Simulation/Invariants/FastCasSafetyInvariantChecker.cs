@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Protocol;
 using FastCASPaxos.Simulation.Contracts;
@@ -13,7 +14,7 @@ public static class FastCasSafetyInvariantChecker
     /// and passed in as a per-proposer dictionary.
     /// </summary>
     public static void AssertSafety<TValue>(
-        IReadOnlyDictionary<FastCasAddress, IReadOnlyList<TValue>> commitHistories,
+        IReadOnlyDictionary<FastCasAddress, ImmutableArray<TValue>> commitHistories,
         IEnumerable<RoutedProposeResponse<TValue, FastCasAddress>> responses)
         where TValue : IVersionedValue<TValue>
     {
@@ -81,7 +82,7 @@ public static class FastCasSafetyInvariantChecker
 
     private static void ValidateLinearHistory<TValue>(
         FastCasAddress proposer,
-        IReadOnlyList<TValue> history)
+        ImmutableArray<TValue> history)
         where TValue : IVersionedValue<TValue>
     {
         var previous = default(TValue)!;

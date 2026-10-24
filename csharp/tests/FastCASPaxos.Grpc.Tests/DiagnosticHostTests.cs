@@ -50,7 +50,7 @@ public sealed class DiagnosticHostTests
     [InlineData(BadConfig.ZeroHeartbeat)]
     [InlineData(BadConfig.NegativeHeartbeat)]
     [InlineData(BadConfig.ExcessiveHeartbeat)]
-    public void Options_RejectInvalidAdvertisedOriginsAndDiagnosticBoundsBeforeStorage(BadConfig scenario)
+    public void OptionsRejectInvalidAdvertisedOriginsAndDiagnosticBoundsBeforeStorage(BadConfig scenario)
     {
         using var directory = new TestDirectory();
         var options = DiagnosticHost.Options(directory);
@@ -82,7 +82,7 @@ public sealed class DiagnosticHostTests
     }
 
     [Fact]
-    public void Options_DefaultsAndBoundaryValuesAreAccepted()
+    public void OptionsDefaultsAndBoundaryValuesAreAccepted()
     {
         var defaults = new NodeOptions();
         Assert.Equal(1024, defaults.EventHistoryCapacity);
@@ -103,7 +103,7 @@ public sealed class DiagnosticHostTests
     }
 
     [Fact]
-    public async Task Discovery_UsesOptionsSnapshotAndFreshOperationEventWithoutPeerProbes()
+    public async Task DiscoveryUsesOptionsSnapshotAndFreshOperationEventWithoutPeerProbes()
     {
         using var directory = new TestDirectory();
         var options = DiagnosticHost.Options(directory);
@@ -159,7 +159,7 @@ public sealed class DiagnosticHostTests
     }
 
     [Fact]
-    public async Task StateSnapshots_AreReadOnlyIncludePromiseAndSerializeCompleteMaximumBallots()
+    public async Task StateSnapshotsAreReadOnlyIncludePromiseAndSerializeCompleteMaximumBallots()
     {
         using var directory = new TestDirectory();
         await using var host = await DiagnosticHost.Start(DiagnosticHost.Options(directory));
@@ -193,7 +193,7 @@ public sealed class DiagnosticHostTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Snapshot_PreReadWatermarkReplaysBlockedWriteAndRefetchesCommittedState(bool list)
+    public async Task SnapshotPreReadWatermarkReplaysBlockedWriteAndRefetchesCommittedState(bool list)
     {
         using var directory = new TestDirectory();
         using var barrier = new SnapshotCommitBarrier();
@@ -281,7 +281,7 @@ public sealed class DiagnosticHostTests
     [InlineData("/v1/admin/states?prefix=a&prefix=b")]
     [InlineData("/v1/admin/events?unknown=1")]
     [InlineData("/v1/admin/events?after=a&after=b")]
-    public async Task Admin_InvalidQueryIsExplicitBadRequestBeforeInspection(string path)
+    public async Task AdminInvalidQueryIsExplicitBadRequestBeforeInspection(string path)
     {
         using var directory = new TestDirectory();
         await using var host = await DiagnosticHost.Start(DiagnosticHost.Options(directory));
@@ -302,7 +302,7 @@ public sealed class DiagnosticHostTests
     }
 
     [Fact]
-    public async Task States_DefaultPageIsCappedAtOneHundred()
+    public async Task StatesDefaultPageIsCappedAtOneHundred()
     {
         using var directory = new TestDirectory();
         await using var host = await DiagnosticHost.Start(DiagnosticHost.Options(directory));
@@ -320,7 +320,7 @@ public sealed class DiagnosticHostTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task InvalidProviderUtf16_RejectsStateConversionAndHttpInventoryWithoutAliasing(bool lowSurrogate)
+    public async Task InvalidProviderUtf16RejectsStateConversionAndHttpInventoryWithoutAliasing(bool lowSurrogate)
     {
         using var directory = new TestDirectory();
         await using var host = await DiagnosticHost.Start(DiagnosticHost.Options(directory));
@@ -348,7 +348,7 @@ public sealed class DiagnosticHostTests
     [InlineData("/v1/admin/states?prefix=%E2%82")]
     [InlineData("/v1/admin/states?after=%FF")]
     [InlineData("/v1/admin/events?after=%FF")]
-    public async Task StrictQuery_MalformedPercentUtf8AndEncodedDuplicatesReturn400BeforeInspection(string path)
+    public async Task StrictQueryMalformedPercentUtf8AndEncodedDuplicatesReturn400BeforeInspection(string path)
     {
         using var directory = new TestDirectory();
         await using var host = await DiagnosticHost.Start(DiagnosticHost.Options(directory));
@@ -367,7 +367,7 @@ public sealed class DiagnosticHostTests
     }
 
     [Fact]
-    public async Task Sse_InitialReplayGapAndHeartbeatUseExactFramesAndHeaders()
+    public async Task SseInitialReplayGapAndHeartbeatUseExactFramesAndHeaders()
     {
         using var directory = new TestDirectory();
         var clock = new DiagnosticClock();
@@ -405,7 +405,7 @@ public sealed class DiagnosticHostTests
     }
 
     [Fact]
-    public async Task Sse_StreamCapacityDisconnectAndShutdownReleaseResources()
+    public async Task SseStreamCapacityDisconnectAndShutdownReleaseResources()
     {
         using var directory = new TestDirectory();
         var options = DiagnosticHost.Options(directory);
@@ -432,7 +432,7 @@ public sealed class DiagnosticHostTests
     }
 
     [Fact]
-    public async Task FailedStorage_Returns503WithoutLosingDiscoveryLivenessOrEventStream()
+    public async Task FailedStorageReturns503WithoutLosingDiscoveryLivenessOrEventStream()
     {
         using var directory = new TestDirectory();
         var options = DiagnosticHost.Options(directory);
@@ -501,7 +501,7 @@ public sealed class DiagnosticHostTests
     [InlineData("/v1/registers/value?key=key", "https://untrusted.test", false)]
     [InlineData("/v1/admin/repair", "https://admin.test", true)]
     [InlineData("/v1/admin/repair", "https://untrusted.test", false)]
-    public async Task Cors_PreflightAndResponsesAllowOnlyConfiguredOrigins(string path, string origin, bool allowed)
+    public async Task CorsPreflightAndResponsesAllowOnlyConfiguredOrigins(string path, string origin, bool allowed)
     {
         using var directory = new TestDirectory();
         var options = DiagnosticHost.Options(directory);
@@ -522,7 +522,7 @@ public sealed class DiagnosticHostTests
         {
             Assert.Equal(origin, Assert.Single(response.Headers.GetValues("Access-Control-Allow-Origin")));
             Assert.Equal(["GET", "POST", "PUT"], Tokens(response, "Access-Control-Allow-Methods").Order());
-            Assert.Equal(new[] { "authorization", "content-type", "if-match", "if-none-match", "last-event-id" },
+            Assert.Equal(["authorization", "content-type", "if-match", "if-none-match", "last-event-id"],
                 Tokens(response, "Access-Control-Allow-Headers").Select(x => x.ToLowerInvariant()).Order());
         }
         Assert.False(response.Headers.Contains("Access-Control-Allow-Credentials"));

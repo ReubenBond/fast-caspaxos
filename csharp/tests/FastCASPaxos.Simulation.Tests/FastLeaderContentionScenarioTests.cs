@@ -7,7 +7,7 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class FastLeaderContentionScenarioTests
 {
     [Fact]
-    public async Task ConcurrentFastLeaderConflicts_ConvergeAndStillAllowSubsequentCommit()
+    public async Task ConcurrentFastLeaderConflictsConvergeAndStillAllowSubsequentCommit()
     {
         await using var cluster = new FastCasSimulationCluster<StringValue>(
             seed: 9831,
@@ -32,7 +32,7 @@ public sealed class FastLeaderContentionScenarioTests
         var firstValues = ProtocolOptionMatrix.ReadUntilStringValuesAgree(cluster);
         var initial = Assert.Single(firstValues.Distinct());
         Assert.Equal(1, initial.Version);
-        Assert.Contains(initial.Value, new[] { "A", "B", "C" });
+        Assert.Matches(@"^[ABC]\z", initial.Value);
 
         var response = cluster.RunProposal(FastCasAddress.Proposer(1), StringScenarioOperations.AppendAtVersion(2, "D"), maxIterations: 5000);
 

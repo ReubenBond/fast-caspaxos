@@ -116,9 +116,9 @@ internal static class WireConvert
         return new() { Ballot = ToWire(value.AcceptedBallot), Sha256 = ToWire(value.ValueHash) };
     }
 
-    public static void ValidatePage(IReadOnlyList<string> keys, string? continuation, Wire.ListKeysRequest request)
+    public static void ValidatePage(ReadOnlySpan<string> keys, string? continuation, Wire.ListKeysRequest request)
     {
-        Require(keys.Count <= request.Limit, "The page exceeds its requested limit.");
+        Require(keys.Length <= request.Limit, "The page exceeds its requested limit.");
         string? previous = request.HasAfterKey ? request.AfterKey : null;
         foreach (var key in keys)
         {
@@ -131,7 +131,7 @@ internal static class WireConvert
         if (continuation is not null)
         {
             Text(continuation);
-            Require(keys.Count > 0 && continuation == keys[^1],
+            Require(keys.Length > 0 && continuation == keys[^1],
                 "A continuation must identify the final returned key.");
         }
     }

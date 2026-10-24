@@ -261,7 +261,7 @@ public sealed class RegisterSimulationClusterTests
             await Assert.ThrowsAsync<RegisterUnavailableException>(() => client.ReadAsync("key").AsTask());
             Assert.Contains(simulation.Trace, entry =>
                 entry.Contains("kind=PrepareRequest status=Partitioned", StringComparison.Ordinal));
-            var beforeMajority = simulation.Trace.Count;
+            var beforeMajority = simulation.Trace.Length;
             var majority = await simulation.CreateClient(2).ReadAsync("key");
             Assert.Equal(created.Current, majority);
             Assert.Contains(simulation.Trace.Skip(beforeMajority), entry =>
@@ -293,13 +293,13 @@ public sealed class RegisterSimulationClusterTests
                 Assert.Equal(key == "key" ? updated.Current : values[key], await client.ReadAsync(key));
 
             var first = await client.ListKeysAsync(limit: 2);
-            Assert.Equal(new[] { "", "Key" }, first.Keys);
+            Assert.Equal<string>(["", "Key"], first.Keys);
             Assert.Equal("Key", first.ContinuationKey);
             var second = await client.ListKeysAsync(afterKey: first.ContinuationKey, limit: 2);
-            Assert.Equal(new[] { "key", "key\0" }, second.Keys);
+            Assert.Equal<string>(["key", "key\0"], second.Keys);
             Assert.Equal("key\0", second.ContinuationKey);
             var prefix = await client.ListKeysAsync("key", "key", 2);
-            Assert.Equal(new[] { "key\0", "key " }, prefix.Keys);
+            Assert.Equal<string>(["key\0", "key "], prefix.Keys);
             Assert.Null(prefix.ContinuationKey);
             Assert.Empty((await client.ListKeysAsync("missing")).Keys);
             Assert.Equal(keys.Order(StringComparer.Ordinal),
@@ -435,7 +435,7 @@ public sealed class RegisterSimulationClusterTests
         await using var cluster = new RegisterSimulationCluster(749);
         cluster.Run(async simulation =>
         {
-            foreach (var peer in new[] { 3, 4, 5 })
+            for (var peer = 3; peer <= 5; peer++)
                 simulation.SetLinkDelay(1, peer, TimeSpan.FromMilliseconds(20));
             simulation.SetReplyDelay(1, TimeSpan.Zero);
             var start = simulation.TimeProvider.GetUtcNow();
@@ -575,7 +575,7 @@ public sealed class RegisterSimulationClusterTests
             var page = await inventory;
             Assert.Empty(page.Keys);
             Assert.Null(page.ContinuationKey);
-            Assert.Equal(new[] { "canceled-reader:adapter-read", "inventory-reader:adapter-list" }, observed);
+            Assert.Equal(["canceled-reader:adapter-read", "inventory-reader:adapter-list"], observed);
             Assert.Equal("scenario", logicalContext.Value);
             Assert.Same(scenarioContext, SynchronizationContext.Current);
             Assert.Equal(simulationThread, Environment.CurrentManagedThreadId);

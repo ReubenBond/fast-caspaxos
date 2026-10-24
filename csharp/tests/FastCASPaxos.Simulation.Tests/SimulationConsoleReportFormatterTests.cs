@@ -7,7 +7,7 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class SimulationConsoleReportFormatterTests
 {
     [Fact]
-    public void FormatBatchReport_CollapsesSuccessfulRunsIntoSingleAggregateBlock()
+    public void FormatBatchReportCollapsesSuccessfulRunsIntoSingleAggregateBlock()
     {
         var batchResult = new SimulationBatchResult(
         [
@@ -43,7 +43,7 @@ public sealed class SimulationConsoleReportFormatterTests
     }
 
     [Fact]
-    public void FormatBatchReport_ExpandsFailuresAndIncludesIsolationCommands()
+    public void FormatBatchReportExpandsFailuresAndIncludesIsolationCommands()
     {
         var batchResult = new SimulationBatchResult(
         [
@@ -109,11 +109,11 @@ public sealed class SimulationConsoleReportFormatterTests
             Success: success,
             Summary: summary,
             ReproductionHint: $"{scenarioName} (seed: {seed})",
-            TraceLines: Array.Empty<string>(),
+            TraceLines: [],
             LogOutput: string.Empty,
             Statistics: new Dictionary<string, long>(StringComparer.Ordinal),
-            ProposalRoundTrips: Array.Empty<SimulationProposalRoundTripSample>(),
-            ProposalLatencySamples: Array.Empty<ProposalLatencySample>(),
+            ProposalRoundTrips: [],
+            ProposalLatencySamples: [],
             Details: new Dictionary<string, string>(StringComparer.Ordinal),
             AcceptorSafetyMonitor: null,
             PorcupineHistory: null,

@@ -68,8 +68,6 @@ public sealed class SingleThreadedGuard
     /// <remarks>
     /// This struct is only used as a disposable scope and is not intended for comparison.
     /// </remarks>
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1034:Nested types should not be visible", Justification = "Scope is intentionally public for using pattern")]
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1815:Override equals and operator equals on value types", Justification = "Struct is only used as disposable scope, not for comparison")]
     public readonly struct Scope(SingleThreadedGuard guard) : IDisposable
     {
         /// <inheritdoc />

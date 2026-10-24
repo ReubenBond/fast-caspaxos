@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Immutable;
 using System.Globalization;
 using System.Reflection;
 using System.Text;
@@ -22,7 +23,7 @@ public sealed class InMemoryLogBuffer(TimeProvider? timeProvider = null)
     /// <summary>
     /// Gets all log entries currently buffered.
     /// </summary>
-    public IReadOnlyList<LogEntry> AllEntries => [.. _entries];
+    public ImmutableArray<LogEntry> AllEntries => [.. _entries];
 
     /// <summary>
     /// Gets log entries filtered by minimum log level.

@@ -12,7 +12,7 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
     private readonly ITestOutputHelper _output = output;
 
     [Fact]
-    public async Task RunAsync_StringScenario_WritesArtifactsAndCapturesStatistics()
+    public async Task RunAsyncStringScenarioWritesArtifactsAndCapturesStatistics()
     {
         var outputDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -110,7 +110,7 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task RunAsync_SetScenario_WritesPorcupineHistoryArtifact()
+    public async Task RunAsyncSetScenarioWritesPorcupineHistoryArtifact()
     {
         var outputDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -155,7 +155,7 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void AvailableScenarios_ExposeCorpusAndSimulatorNativeCoverage()
+    public void AvailableScenariosExposeCorpusAndSimulatorNativeCoverage()
     {
         var names = SimulationBatchRunner.AvailableScenarios
             .Select(scenario => scenario.Name)
@@ -170,7 +170,7 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task RunAsync_MultipleRounds_AggregatesStatisticsAcrossAllRuns()
+    public async Task RunAsyncMultipleRoundsAggregatesStatisticsAcrossAllRuns()
     {
         var outputDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -219,7 +219,7 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task RunAsync_MultipleScenariosAndRounds_PreservesSerialOrdering()
+    public async Task RunAsyncMultipleScenariosAndRoundsPreservesSerialOrdering()
     {
         var outputDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -233,14 +233,14 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
             var batchResult = await SimulationBatchRunner.RunAsync(
                 new SimulationBatchOptions
                 {
-                    ScenarioNames = scenarioNames,
+                    ScenarioNames = [.. scenarioNames],
                     Seed = seed,
                     Rounds = rounds,
                     OutputDirectory = outputDirectory,
                 });
 
             Assert.All(batchResult.Runs, run => Assert.True(run.Success));
-            Assert.Equal(rounds * scenarioNames.Length, batchResult.Runs.Count);
+            Assert.Equal(rounds * scenarioNames.Length, batchResult.Runs.Length);
 
             var expectedRuns = (
                 from round in Enumerable.Range(1, rounds)
@@ -269,7 +269,7 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task RunAsync_ParameterizedAppendSequence_UsesDefaultSingleProposerHappyPath()
+    public async Task RunAsyncParameterizedAppendSequenceUsesDefaultSingleProposerHappyPath()
     {
         var outputDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -327,7 +327,7 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task RunAsync_ParameterizedAppendSequence_LeaderModeReportsAcceptorRttDistribution()
+    public async Task RunAsyncParameterizedAppendSequenceLeaderModeReportsAcceptorRttDistribution()
     {
         var outputDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -399,7 +399,7 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task RunAsync_ParameterizedAppendSequence_SupportsFastConflictParameters()
+    public async Task RunAsyncParameterizedAppendSequenceSupportsFastConflictParameters()
     {
         var outputDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -451,7 +451,7 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task RunAsync_ParameterizedAppendSequence_RejectsConflictRateWithoutMultipleProposers()
+    public async Task RunAsyncParameterizedAppendSequenceRejectsConflictRateWithoutMultipleProposers()
     {
         var outputDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -487,7 +487,7 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task RunAsync_JitteredHighContention_ProducesLongWriteTail()
+    public async Task RunAsyncJitteredHighContentionProducesLongWriteTail()
     {
         var outputDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -509,7 +509,7 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
 
             WriteSummaries(batchResult);
             Assert.All(batchResult.Runs, run => Assert.True(run.Success));
-            Assert.Equal(rounds, batchResult.Runs.Count);
+            Assert.Equal(rounds, batchResult.Runs.Length);
             Assert.Contains(
                 batchResult.Runs,
                 run => run.CreateStatisticsSummary().WriteAcceptorRoundTripsMax >= 4);
@@ -540,7 +540,7 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task RunAsync_JitteredHighContention_Seed9247_Completes()
+    public async Task RunAsyncJitteredHighContentionSeed9247Completes()
     {
         var outputDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -601,7 +601,7 @@ public sealed class SimulationBatchRunnerTests(ITestOutputHelper output)
 
     private static void AssertValidationRuns(SimulationBatchResult batchResult, int baseSeed)
     {
-        Assert.Equal(ValidationRounds, batchResult.Runs.Count);
+        Assert.Equal(ValidationRounds, batchResult.Runs.Length);
         Assert.Equal(
             Enumerable.Range(1, ValidationRounds),
             batchResult.Runs.Select(run => run.Round));

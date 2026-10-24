@@ -12,7 +12,7 @@ public sealed class RegisterContractTests
     [InlineData("classic")]
     [InlineData("fast")]
     [InlineData("leader")]
-    public async Task ReadAndCompareExchange_PreserveAbsenceEmptyAndFreshOpaqueVersions(string mode)
+    public async Task ReadAndCompareExchangePreserveAbsenceEmptyAndFreshOpaqueVersions(string mode)
     {
         using var directory = new TestDirectory();
         await using var cluster = await SqliteContractCluster.OpenAsync(directory);
@@ -51,7 +51,7 @@ public sealed class RegisterContractTests
     [InlineData("fast", false)]
     [InlineData("classic", true)]
     [InlineData("fast", true)]
-    public async Task ConcurrentIdenticalPayload_ExactlyOneExpectedVersionWins(string mode, bool update)
+    public async Task ConcurrentIdenticalPayloadExactlyOneExpectedVersionWins(string mode, bool update)
     {
         using var directory = new TestDirectory();
         await using var cluster = await SqliteContractCluster.OpenAsync(directory);
@@ -68,7 +68,7 @@ public sealed class RegisterContractTests
             foreach (var acceptor in cluster.Clients)
             {
                 var page = await acceptor.ListKeysAsync();
-                if (page.Entries.Count > 0) initialEnvelope = Assert.Single(page.Entries).AcceptedValue;
+                if (page.Entries.Length > 0) initialEnvelope = Assert.Single(page.Entries).AcceptedValue;
             }
             Assert.NotNull(initialEnvelope);
         }
@@ -116,7 +116,7 @@ public sealed class RegisterContractTests
     }
 
     [Fact]
-    public async Task Restart_PreservesStateAndRejectsDelayedOldRequests()
+    public async Task RestartPreservesStateAndRejectsDelayedOldRequests()
     {
         using var directory = new TestDirectory();
         RegisterValue original;
@@ -169,14 +169,14 @@ public sealed class RegisterContractTests
         }
         Assert.InRange(newerCopies, 2, 3);
         Assert.Equal(updated.Current, await client.ReadAsync("durable"));
-        Assert.Equal(new[] { "durable" }, (await client.ListKeysAsync()).Keys);
+        Assert.Equal<string>(["durable"], (await client.ListKeysAsync()).Keys);
     }
 
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
     [InlineData(2)]
-    public async Task OneUnavailablePeer_QuorumStillReadsWritesAndLists(int offlinePeer)
+    public async Task OneUnavailablePeerQuorumStillReadsWritesAndLists(int offlinePeer)
     {
         using var directory = new TestDirectory();
         await using var cluster = await SqliteContractCluster.OpenAsync(directory);
@@ -187,13 +187,13 @@ public sealed class RegisterContractTests
         Assert.Equal(Payload, created.Current!.Value);
         Assert.Equal(created.Current, await client.ReadAsync("key").AsTask().WaitAsync(Watchdog));
         var page = await client.ListKeysAsync().AsTask().WaitAsync(Watchdog);
-        Assert.Equal(new[] { "key" }, page.Keys);
+        Assert.Equal<string>(["key"], page.Keys);
         Assert.Null(page.ContinuationKey);
         Assert.Equal(0, cluster.Endpoints[offlinePeer].Calls);
     }
 
     [Fact]
-    public async Task Listing_PreservesOrdinalShapesAndExclusivePagination()
+    public async Task ListingPreservesOrdinalShapesAndExclusivePagination()
     {
         using var directory = new TestDirectory();
         await using var cluster = await SqliteContractCluster.OpenAsync(directory);
@@ -214,7 +214,7 @@ public sealed class RegisterContractTests
                 var page = await client.ListKeysAsync(afterKey: cursor, limit: limit).AsTask().WaitAsync(Watchdog);
                 all.AddRange(page.Keys);
                 if (page.ContinuationKey is null) break;
-                Assert.Equal(limit, page.Keys.Count);
+                Assert.Equal(limit, page.Keys.Length);
                 Assert.Equal(page.Keys[^1], page.ContinuationKey);
                 Assert.NotEqual(cursor, page.ContinuationKey);
                 cursor = page.ContinuationKey;
@@ -227,11 +227,11 @@ public sealed class RegisterContractTests
         var afterEmpty = await client.ListKeysAsync(afterKey: "", limit: 1);
         Assert.Equal("\0", Assert.Single(afterEmpty.Keys));
         Assert.Equal("\0", afterEmpty.ContinuationKey);
-        Assert.Equal(new[] { "%_", "%_a" }, (await client.ListKeysAsync("%_")).Keys);
-        Assert.Equal(new[] { "a\0", "a\0x" }, (await client.ListKeysAsync("a\0")).Keys);
-        Assert.Equal(new[] { "\U0001f600" }, (await client.ListKeysAsync("\U0001f600")).Keys);
-        Assert.Equal(new[] { "A" }, (await client.ListKeysAsync("A")).Keys);
-        Assert.Equal(new[] { "%_a" }, (await client.ListKeysAsync("%_", "%_Z")).Keys);
+        Assert.Equal<string>(["%_", "%_a"], (await client.ListKeysAsync("%_")).Keys);
+        Assert.Equal<string>(["a\0", "a\0x"], (await client.ListKeysAsync("a\0")).Keys);
+        Assert.Equal<string>(["\U0001f600"], (await client.ListKeysAsync("\U0001f600")).Keys);
+        Assert.Equal<string>(["A"], (await client.ListKeysAsync("A")).Keys);
+        Assert.Equal<string>(["%_a"], (await client.ListKeysAsync("%_", "%_Z")).Keys);
         Assert.Empty((await client.ListKeysAsync("a", "b")).Keys);
         Assert.Empty((await client.ListKeysAsync("missing")).Keys);
         var pastEnd = await client.ListKeysAsync(afterKey: "\uffff", limit: 1);
@@ -241,7 +241,7 @@ public sealed class RegisterContractTests
     }
 
     [Fact]
-    public async Task LocalStorage_RetainsFullUtf16CapacityWhileGrpcRejectsMalformedText()
+    public async Task LocalStorageRetainsFullUtf16CapacityWhileGrpcRejectsMalformedText()
     {
         using var directory = new TestDirectory();
         await using var sqlite = await SqliteAcceptorServer.OpenAsync(directory.Database("acceptor"));

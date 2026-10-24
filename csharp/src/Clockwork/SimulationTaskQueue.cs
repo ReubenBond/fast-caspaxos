@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Globalization;
 
@@ -21,7 +22,6 @@ namespace Clockwork;
 /// </summary>
 [DebuggerDisplay("{DebuggerDisplay,nq}")]
 [DebuggerTypeProxy(typeof(SimulationTaskQueueDebugView))]
-[System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1711:Identifiers should not have incorrect suffix", Justification = "TaskQueue accurately describes this component's purpose")]
 public sealed class SimulationTaskQueue
 {
     // Single queue ordered by due time, then sequence number
@@ -216,5 +216,5 @@ internal sealed class SimulationTaskQueueDebugView(SimulationTaskQueue queue)
     private readonly SimulationTaskQueue _queue = queue;
 
     [DebuggerBrowsable(DebuggerBrowsableState.RootHidden)]
-    public ScheduledItem[] Items => [.. _queue.ScheduledItems];
+    public ImmutableArray<ScheduledItem> Items => [.. _queue.ScheduledItems];
 }

@@ -1,3 +1,4 @@
+using System.Globalization;
 using FastCASPaxos.Model;
 using FastCASPaxos.Server;
 using Microsoft.Data.Sqlite;
@@ -46,7 +47,7 @@ public sealed class SqliteProposerBallotSource : IProposerBallotSource, IDisposa
             // journal_mode also returns a row, so read the identity in its own command.
             command.ExecuteNonQuery();
             command.CommandText = "SELECT proposer FROM proposer_round WHERE singleton = 1;";
-            if (Convert.ToInt32(command.ExecuteScalar()) != proposerId)
+            if (Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture) != proposerId)
             {
                 throw new InvalidOperationException("This allocator database belongs to a different proposer identity.");
             }
@@ -68,7 +69,7 @@ public sealed class SqliteProposerBallotSource : IProposerBallotSource, IDisposa
             using var command = _connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = "SELECT reserved FROM proposer_round WHERE singleton = 1;";
-            var previous = Convert.ToInt32(command.ExecuteScalar());
+            var previous = Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
             var round = Math.Max(checked(previous + 1), minimumRound);
             command.CommandText = "UPDATE proposer_round SET reserved = $round WHERE singleton = 1;";
             command.Parameters.AddWithValue("$round", round);

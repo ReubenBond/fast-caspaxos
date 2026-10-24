@@ -21,7 +21,7 @@ public sealed class FastCasSimulationOptions
         init
         {
             ArgumentNullException.ThrowIfNull(value);
-            value?.Validate();
+            value.Validate();
             _proposerModePolicy = value;
         }
     }

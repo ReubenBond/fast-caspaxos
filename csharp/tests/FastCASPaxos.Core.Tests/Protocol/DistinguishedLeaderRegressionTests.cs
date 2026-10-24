@@ -8,7 +8,7 @@ namespace FastCASPaxos.Core.Tests.Protocol;
 public sealed class DistinguishedLeaderRegressionTests
 {
     [Fact]
-    public void ClassicLeaderCommit_PiggybacksAndReusesPreparedNextBallot()
+    public void ClassicLeaderCommitPiggybacksAndReusesPreparedNextBallot()
     {
         var engine = CreateLeaderProposer();
         var firstProposal = AppendOperation(1, "A");
@@ -61,7 +61,7 @@ public sealed class DistinguishedLeaderRegressionTests
     }
 
     [Fact]
-    public void ClassicLeaderCommit_DoesNotCachePreparedNextBallotWithoutQuorum()
+    public void ClassicLeaderCommitDoesNotCachePreparedNextBallotWithoutQuorum()
     {
         var engine = CreateLeaderProposer();
         var firstProposal = AppendOperation(1, "A");
@@ -108,7 +108,7 @@ public sealed class DistinguishedLeaderRegressionTests
     }
 
     [Fact]
-    public void FastAndLeaderConflict_RecoversWithoutExtraClassicRetryWhenNoFastValueCanStillWin()
+    public void FastAndLeaderConflictRecoversWithoutExtraClassicRetryWhenNoFastValueCanStillWin()
     {
         var engine = CreateFastLeaderProposer();
         var initialFastBallot = Ballot.InitialFast();
@@ -168,7 +168,7 @@ public sealed class DistinguishedLeaderRegressionTests
     private static RecordingProposerEngine<TestValue, string> CreateFastLeaderProposer() =>
         new("p1", proposerId: 1, initialValue: default, acceptors: ["a1", "a2", "a3", "a4", "a5"], ProposerModePolicy.StaticFastLeader);
 
-    private static IOperation<TestValue> AppendOperation(int expectedVersion, string suffix) =>
+    private static Operation<TestValue, TestValue> AppendOperation(int expectedVersion, string suffix) =>
         new Operation<TestValue, TestValue>
         {
             Input = new TestValue(expectedVersion, suffix),

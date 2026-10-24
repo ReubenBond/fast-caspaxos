@@ -1,3 +1,4 @@
+using System.Globalization;
 using FastCASPaxos.Simulation;
 using FastCASPaxos.Simulation.Scenarios;
 using Xunit;
@@ -7,7 +8,7 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class ChaosScenarioTests
 {
     [Fact]
-    public async Task BoundedChaosSequence_PreservesSafetyAndCompletes()
+    public async Task BoundedChaosSequencePreservesSafetyAndCompletes()
     {
         await using var cluster = new FastCasSimulationCluster<StringValue>(
             seed: 777,
@@ -43,7 +44,7 @@ public sealed class ChaosScenarioTests
                     break;
             }
 
-            var response = cluster.RunProposal(proposer, StringScenarioOperations.AppendAtVersion(version, version.ToString()));
+            var response = cluster.RunProposal(proposer, StringScenarioOperations.AppendAtVersion(version, version.ToString(CultureInfo.InvariantCulture)));
             Assert.Equal(version, response.CommittedValue.Version);
 
             cluster.HealBidirectionalPartition(proposer, FastCasAddress.Acceptor(1));

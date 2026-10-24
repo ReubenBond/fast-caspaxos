@@ -18,7 +18,7 @@ public sealed class ResponseValidationTests
 
     [Theory]
     [MemberData(nameof(PrepareCases))]
-    public async Task MalformedPrepareResponses_RejectAsDataLoss(BadPrepare scenario)
+    public async Task MalformedPrepareResponsesRejectAsDataLoss(BadPrepare scenario)
     {
         var response = new Wire.PrepareResponse { Promised = Ballot(3) };
         switch (scenario)
@@ -55,7 +55,7 @@ public sealed class ResponseValidationTests
 
     [Theory]
     [MemberData(nameof(AcceptCases))]
-    public async Task MalformedAcceptResponses_RejectAsDataLoss(BadAccept scenario)
+    public async Task MalformedAcceptResponsesRejectAsDataLoss(BadAccept scenario)
     {
         var response = scenario switch
         {
@@ -76,7 +76,7 @@ public sealed class ResponseValidationTests
 
     [Theory]
     [MemberData(nameof(StateCases))]
-    public async Task MalformedReadResponses_RejectAsDataLoss(BadState scenario)
+    public async Task MalformedReadResponsesRejectAsDataLoss(BadState scenario)
     {
         var state = MalformedState(scenario);
         var client = new GrpcRegisterService(StubCallInvoker.Reply(state));
@@ -94,7 +94,7 @@ public sealed class ResponseValidationTests
 
     [Theory]
     [MemberData(nameof(CasCases))]
-    public async Task MalformedCasResponses_RemainUnknown(BadCas scenario)
+    public async Task MalformedCasResponsesRemainUnknown(BadCas scenario)
     {
         ByteString? expected = ContractTestSupport.Version;
         var response = scenario switch
@@ -129,7 +129,7 @@ public sealed class ResponseValidationTests
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public async Task UnknownOutcome_PreservesOptionalObservationAndDiagnostic(bool current, bool diagnostic)
+    public async Task UnknownOutcomePreservesOptionalObservationAndDiagnostic(bool current, bool diagnostic)
     {
         var observation = new RegisterValue(ByteString.Empty, ContractTestSupport.Version);
         var domain = new DelegateRegister
@@ -156,7 +156,7 @@ public sealed class ResponseValidationTests
     [InlineData(Wire.ErrorCode.Deadline, StatusCode.DeadlineExceeded)]
     [InlineData(Wire.ErrorCode.Unavailable, StatusCode.Unavailable)]
     [InlineData(Wire.ErrorCode.Internal, StatusCode.Internal)]
-    public async Task UnknownErrorCodes_PreserveRecognizedStatus(Wire.ErrorCode code, StatusCode status)
+    public async Task UnknownErrorCodesPreserveRecognizedStatus(Wire.ErrorCode code, StatusCode status)
     {
         Exception cause = code switch
         {
@@ -192,7 +192,7 @@ public sealed class ResponseValidationTests
 
     [Theory]
     [MemberData(nameof(PageCases))]
-    public async Task MalformedRegisterPages_RejectAsDataLoss(BadPage scenario)
+    public async Task MalformedRegisterPagesRejectAsDataLoss(BadPage scenario)
     {
         var (keys, cursor) = Page(scenario);
         var response = new Wire.RegisterKeyPage();
@@ -204,7 +204,7 @@ public sealed class ResponseValidationTests
 
     [Theory]
     [MemberData(nameof(PageCases))]
-    public async Task MalformedAcceptorPages_RejectAsDataLoss(BadPage scenario)
+    public async Task MalformedAcceptorPagesRejectAsDataLoss(BadPage scenario)
     {
         var (keys, cursor) = Page(scenario);
         var response = new Wire.AcceptorKeyPage();
@@ -223,7 +223,7 @@ public sealed class ResponseValidationTests
 
     [Theory]
     [MemberData(nameof(EntryCases))]
-    public async Task MalformedAcceptorEntry_RejectsAsDataLoss(BadEntry scenario)
+    public async Task MalformedAcceptorEntryRejectsAsDataLoss(BadEntry scenario)
     {
         var entry = Entry("ab");
         switch (scenario)
@@ -245,17 +245,17 @@ public sealed class ResponseValidationTests
 
     [Theory]
     [MemberData(nameof(PageCases))]
-    public async Task InvalidDomainPages_AreInternalNotDefinitiveFailures(BadPage scenario)
+    public async Task InvalidDomainPagesAreInternalNotDefinitiveFailures(BadPage scenario)
     {
         var (keys, cursor) = Page(scenario);
         var acceptor = new DelegateAcceptor
         {
             List = (_, _, _, _) => ValueTask.FromResult(new KeyPage(
-                keys.Select(key => new KeyedAcceptorState(key, new(3, 1), new(2, 1), Payload)).ToArray(), cursor)),
+                [.. keys.Select(key => new KeyedAcceptorState(key, new(3, 1), new(2, 1), Payload))], cursor)),
         };
         var register = new DelegateRegister
         {
-            List = (_, _, _, _) => ValueTask.FromResult(new RegisterKeyPage(keys, cursor)),
+            List = (_, _, _, _) => ValueTask.FromResult(new RegisterKeyPage([.. keys], cursor)),
         };
         var invoker = new ContractCallInvoker(Service(acceptor), Service(register));
         var request = new Wire.ListKeysRequest { Prefix = "a", AfterKey = "aa", Limit = 2 };
@@ -279,7 +279,7 @@ public sealed class ResponseValidationTests
 
     [Theory]
     [MemberData(nameof(DomainStateCases))]
-    public async Task InvalidDomainState_IsInternalWithoutDefinitiveFailureMarker(BadDomainState scenario)
+    public async Task InvalidDomainStateIsInternalWithoutDefinitiveFailureMarker(BadDomainState scenario)
     {
         var invalidRegister = scenario switch
         {

@@ -9,7 +9,7 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class StringScenarioTests
 {
     [Fact]
-    public async Task AppendSequence_ReachesExpectedValueAcrossMultipleProposers()
+    public async Task AppendSequenceReachesExpectedValueAcrossMultipleProposers()
     {
         await using var cluster = CreateCluster();
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
@@ -40,7 +40,7 @@ public sealed class StringScenarioTests
     }
 
     [Fact]
-    public async Task DuplicateAndReadOperations_RemainConsistent()
+    public async Task DuplicateAndReadOperationsRemainConsistent()
     {
         await using var cluster = CreateCluster();
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);

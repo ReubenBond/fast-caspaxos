@@ -6,7 +6,7 @@ namespace FastCASPaxos.Sqlite.Tests;
 public sealed class ByteStringTests
 {
     [Fact]
-    public void ConstructorAndToArray_OwnTheirBuffers()
+    public void ConstructorAndToArrayOwnTheirBuffers()
     {
         byte[] input = [0, 42, 255];
         var value = new ByteString(input);
@@ -24,7 +24,7 @@ public sealed class ByteStringTests
     }
 
     [Fact]
-    public void EqualityAndHashCode_UseByteContents()
+    public void EqualityAndHashCodeUseByteContents()
     {
         var left = new ByteString([0, 42, 255]);
         var right = new ByteString([0, 42, 255]);
@@ -44,7 +44,7 @@ public sealed class ByteStringTests
     }
 
     [Fact]
-    public void DefaultValue_RepresentsMissingBytes()
+    public void DefaultValueRepresentsMissingBytes()
     {
         ByteString[] missingValues = [default, new()];
         foreach (var value in missingValues)
@@ -73,7 +73,7 @@ public sealed class ByteStringTests
     }
 
     [Fact]
-    public void ConstructedEmptyValues_AreInitializedAndEqual()
+    public void ConstructedEmptyValuesAreInitializedAndEqual()
     {
         ByteString[] emptyValues = [ByteString.Empty, new([]), new(Array.Empty<byte>()), new(default(ReadOnlySpan<byte>))];
         foreach (var value in emptyValues)
@@ -102,7 +102,7 @@ public sealed class ByteStringTests
     [InlineData("different-order", false)]
     [InlineData("empty", false)]
     [InlineData("missing", false)]
-    public void EqualityOperators_UseByteContents(string caseId, bool equal)
+    public void EqualityOperatorsUseByteContents(string caseId, bool equal)
     {
         var left = new ByteString([0, 42, 255]);
         var right = caseId switch
@@ -125,7 +125,7 @@ public sealed class ByteStringTests
     }
 
     [Fact]
-    public void NullableEquality_DistinguishesNullDefaultAndEmptyBytes()
+    public void NullableEqualityDistinguishesNullDefaultAndEmptyBytes()
     {
         ByteString? absent = null;
         ByteString? alsoAbsent = null;
@@ -161,7 +161,7 @@ public sealed class ByteStringTests
     }
 
     [Fact]
-    public void StructCopies_PreserveOwnedImmutableBytes()
+    public void StructCopiesPreserveOwnedImmutableBytes()
     {
         byte[] input = [0, 42, 255];
         var original = new ByteString(input);

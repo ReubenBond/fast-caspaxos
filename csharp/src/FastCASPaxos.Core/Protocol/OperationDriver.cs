@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
 
@@ -10,16 +11,19 @@ public abstract class OperationDriver<TValue, TRoute>
     where TRoute : notnull
 {
     private readonly TRoute _caller;
-    private readonly List<TRoute> _proposerOrder;
+    private readonly ImmutableArray<TRoute> _proposerOrder;
     private readonly Dictionary<TRoute, ProposerWork> _proposers;
     private readonly Dictionary<TRoute, LatestResponse> _latestResponses = [];
 
-    public OperationDriver(TRoute caller, IEnumerable<TRoute> proposers)
+    public OperationDriver(TRoute caller, ImmutableArray<TRoute> proposers)
     {
-        ArgumentNullException.ThrowIfNull(proposers);
+        if (proposers.IsDefault)
+        {
+            throw new ArgumentNullException(nameof(proposers));
+        }
 
         _caller = caller;
-        _proposerOrder = [];
+        _proposerOrder = proposers;
         _proposers = [];
         foreach (var proposer in proposers)
         {
@@ -27,12 +31,10 @@ public abstract class OperationDriver<TValue, TRoute>
             {
                 throw new InvalidOperationException($"Duplicate proposer route '{proposer}' is not allowed.");
             }
-
-            _proposerOrder.Add(proposer);
         }
     }
 
-    public IReadOnlyList<TRoute> Proposers => _proposerOrder;
+    public ImmutableArray<TRoute> Proposers => _proposerOrder;
 
     public bool HasOutstandingWork => _proposers.Values.Any(state => state.Pending.Count > 0 || state.HasScheduledRequest);
 
@@ -42,16 +44,15 @@ public abstract class OperationDriver<TValue, TRoute>
         GetWork(proposer).Pending.Enqueue(operation);
     }
 
-    public void EnqueueRange(TRoute proposer, IEnumerable<IOperation<TValue>> operations)
+    public void EnqueueRange(TRoute proposer, ReadOnlySpan<IOperation<TValue>> operations)
     {
-        ArgumentNullException.ThrowIfNull(operations);
         foreach (var operation in operations)
         {
             Enqueue(proposer, operation);
         }
     }
 
-    public IReadOnlyList<IOperation<TValue>> GetPendingOperations(TRoute proposer) =>
+    public ImmutableArray<IOperation<TValue>> GetPendingOperations(TRoute proposer) =>
         [.. GetWork(proposer).Pending];
 
     /// <summary>

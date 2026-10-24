@@ -6,7 +6,7 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class SimulationNetworkLinkLatencyTests
 {
     [Fact]
-    public void GetMessageDelay_WithPerLinkOverride_UsesOverride()
+    public void GetMessageDelayWithPerLinkOverrideUsesOverride()
     {
         var network = CreateNetwork();
         network.EnableDelays = true;
@@ -20,7 +20,7 @@ public sealed class SimulationNetworkLinkLatencyTests
     }
 
     [Fact]
-    public void GetMessageDelay_WithoutPerLinkOverride_UsesGlobalDefault()
+    public void GetMessageDelayWithoutPerLinkOverrideUsesGlobalDefault()
     {
         var network = CreateNetwork();
         network.EnableDelays = true;
@@ -35,7 +35,7 @@ public sealed class SimulationNetworkLinkLatencyTests
     }
 
     [Fact]
-    public void GetMessageDelay_DirectionalOverride_OnlyAppliesToConfiguredDirection()
+    public void GetMessageDelayDirectionalOverrideOnlyAppliesToConfiguredDirection()
     {
         var network = CreateNetwork();
         network.EnableDelays = true;
@@ -52,7 +52,7 @@ public sealed class SimulationNetworkLinkLatencyTests
     }
 
     [Fact]
-    public void SetBidirectionalLinkLatency_SetsBothDirections()
+    public void SetBidirectionalLinkLatencySetsBothDirections()
     {
         var network = CreateNetwork();
         network.EnableDelays = true;
@@ -66,7 +66,7 @@ public sealed class SimulationNetworkLinkLatencyTests
     }
 
     [Fact]
-    public void ClearLinkLatency_RestoresGlobalDefault()
+    public void ClearLinkLatencyRestoresGlobalDefault()
     {
         var network = CreateNetwork();
         network.EnableDelays = true;
@@ -82,14 +82,14 @@ public sealed class SimulationNetworkLinkLatencyTests
     }
 
     [Fact]
-    public void ClearLinkLatency_ReturnsFalseWhenNoOverrideExists()
+    public void ClearLinkLatencyReturnsFalseWhenNoOverrideExists()
     {
         var network = CreateNetwork();
         Assert.False(network.ClearLinkLatency("X", "Y"));
     }
 
     [Fact]
-    public void ClearAllLinkLatencies_RemovesAllOverrides()
+    public void ClearAllLinkLatenciesRemovesAllOverrides()
     {
         var network = CreateNetwork();
         network.EnableDelays = true;
@@ -107,7 +107,7 @@ public sealed class SimulationNetworkLinkLatencyTests
     }
 
     [Fact]
-    public void GetMessageDelay_LoopbackAlwaysZero_EvenWithPerLinkOverride()
+    public void GetMessageDelayLoopbackAlwaysZeroEvenWithPerLinkOverride()
     {
         var network = CreateNetwork();
         network.EnableDelays = true;
@@ -119,7 +119,7 @@ public sealed class SimulationNetworkLinkLatencyTests
     }
 
     [Fact]
-    public void GetMessageDelay_DelaysDisabled_ReturnsZeroEvenWithOverride()
+    public void GetMessageDelayDelaysDisabledReturnsZeroEvenWithOverride()
     {
         var network = CreateNetwork();
         network.EnableDelays = false;
@@ -129,7 +129,7 @@ public sealed class SimulationNetworkLinkLatencyTests
     }
 
     [Fact]
-    public void GetMessageDelay_PerLinkJitter_IsBounded()
+    public void GetMessageDelayPerLinkJitterIsBounded()
     {
         var network = CreateNetwork();
         network.EnableDelays = true;
@@ -147,14 +147,14 @@ public sealed class SimulationNetworkLinkLatencyTests
     }
 
     [Fact]
-    public void GetLinkLatency_ReturnsNullForUnconfiguredLink()
+    public void GetLinkLatencyReturnsNullForUnconfiguredLink()
     {
         var network = CreateNetwork();
         Assert.Null(network.GetLinkLatency("A", "B"));
     }
 
     [Fact]
-    public void GetLinkLatency_ReturnsConfiguredLatency()
+    public void GetLinkLatencyReturnsConfiguredLatency()
     {
         var network = CreateNetwork();
         network.SetLinkLatency("A", "B", TimeSpan.FromMilliseconds(42), TimeSpan.FromMilliseconds(7));
@@ -166,7 +166,7 @@ public sealed class SimulationNetworkLinkLatencyTests
     }
 
     [Fact]
-    public void GetAllLinkLatencies_ReturnsSnapshot()
+    public void GetAllLinkLatenciesReturnsSnapshot()
     {
         var network = CreateNetwork();
         network.SetLinkLatency("A", "B", TimeSpan.FromMilliseconds(10), TimeSpan.Zero);
@@ -180,7 +180,7 @@ public sealed class SimulationNetworkLinkLatencyTests
     }
 
     [Fact]
-    public void SetLinkLatency_ThrowsOnNegativeBaseDelay()
+    public void SetLinkLatencyThrowsOnNegativeBaseDelay()
     {
         var network = CreateNetwork();
         Assert.Throws<ArgumentOutOfRangeException>(() =>
@@ -188,7 +188,7 @@ public sealed class SimulationNetworkLinkLatencyTests
     }
 
     [Fact]
-    public void SetLinkLatency_ThrowsOnNegativeMaxJitter()
+    public void SetLinkLatencyThrowsOnNegativeMaxJitter()
     {
         var network = CreateNetwork();
         Assert.Throws<ArgumentOutOfRangeException>(() =>

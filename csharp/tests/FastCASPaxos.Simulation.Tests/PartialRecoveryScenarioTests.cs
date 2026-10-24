@@ -8,7 +8,7 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class PartialRecoveryScenarioTests
 {
     [Fact]
-    public async Task StaggeredMultiAcceptorRestart_AllowsLinearProgressWithoutHistoryGaps()
+    public async Task StaggeredMultiAcceptorRestartAllowsLinearProgressWithoutHistoryGaps()
     {
         await using var cluster = new FastCasSimulationCluster<StringValue>(
             seed: 9841,

@@ -17,7 +17,7 @@ public sealed class RepairHostTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task RepairStatusApi_ReportsExactSchemaAndDistinguishesCompletedFromCancelledDrain(bool cancel)
+    public async Task RepairStatusApiReportsExactSchemaAndDistinguishesCompletedFromCancelledDrain(bool cancel)
     {
         using var directory = new TestDirectory();
         var clock = new RepairClock();
@@ -27,7 +27,7 @@ public sealed class RepairHostTests
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.True(response.Headers.CacheControl!.NoStore);
             var initial = await DiagnosticHost.Parse(response);
-            Assert.Equal(new[] { "bootId", "draining", "lastRepair", "nodeId", "schemaVersion", "shutdownComplete", "targetReplicas" },
+            Assert.Equal(["bootId", "draining", "lastRepair", "nodeId", "schemaVersion", "shutdownComplete", "targetReplicas"],
                 initial.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
             Assert.Equal(1, initial.GetProperty("schemaVersion").GetInt32());
             Assert.Equal("a", initial.GetProperty("nodeId").GetString());
@@ -78,7 +78,7 @@ public sealed class RepairHostTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task RepairWorkers_UnavailableLocalInventory_RetryAtConfiguredIntervalUntilCancelled(bool departing)
+    public async Task RepairWorkersUnavailableLocalInventoryRetryAtConfiguredIntervalUntilCancelled(bool departing)
     {
         using var directory = new TestDirectory();
         var options = DiagnosticHost.Options(directory);
@@ -134,7 +134,7 @@ public sealed class RepairHostTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task StopAsync_RemoteOnlyTarget_BarrierCompletesBeforeHostedTransportStops(bool hosted)
+    public async Task StopAsyncRemoteOnlyTargetBarrierCompletesBeforeHostedTransportStops(bool hosted)
     {
         using var directory = new TestDirectory();
         await using var cluster = await RepairHostCluster.OpenAsync(directory);
@@ -153,7 +153,7 @@ public sealed class RepairHostTests
         {
             arrived.TrySetResult();
             await release.Task;
-            return await cluster.Stores[1].AcceptAsync(key, request);
+            return await cluster.Stores[1].AcceptAsync(key, request, CancellationToken.None);
         };
         await using var endpoint = await RepairEndpoint.StartAsync(node.Acceptor, node.Digests, node, hosted ? node : null);
         using var watchdog = new CancellationTokenSource(Watchdog);
@@ -199,7 +199,7 @@ public sealed class RepairHostTests
     }
 
     [Fact]
-    public async Task StopAsync_InFlightDurableAdmission_DrainsBeforeFrozenInventory()
+    public async Task StopAsyncInFlightDurableAdmissionDrainsBeforeFrozenInventory()
     {
         using var directory = new TestDirectory();
         await using var cluster = await RepairHostCluster.OpenAsync(directory);
@@ -242,7 +242,7 @@ public sealed class RepairHostTests
     }
 
     [Fact]
-    public async Task StopAsync_CancellationDuringAdmissionDrain_ReturnedTaskCutsOffWithoutLosingAcceptedWrite()
+    public async Task StopAsyncCancellationDuringAdmissionDrainReturnedTaskCutsOffWithoutLosingAcceptedWrite()
     {
         using var directory = new TestDirectory();
         await using var cluster = await RepairHostCluster.OpenAsync(directory);
@@ -278,7 +278,7 @@ public sealed class RepairHostTests
     }
 
     [Fact]
-    public async Task StopAsync_CancellationDuringReplication_DoesNotWaitForRemoteAcknowledgement()
+    public async Task StopAsyncCancellationDuringReplicationDoesNotWaitForRemoteAcknowledgement()
     {
         using var directory = new TestDirectory();
         await using var cluster = await RepairHostCluster.OpenAsync(directory);
@@ -293,7 +293,7 @@ public sealed class RepairHostTests
             try
             {
                 await release.Task; // Lost reply / remote work can outlive StopAsync's token.
-                return await cluster.Stores[1].AcceptAsync(key, request);
+                return await cluster.Stores[1].AcceptAsync(key, request, CancellationToken.None);
             }
             finally { returned.TrySetResult(); }
         };
@@ -318,7 +318,7 @@ public sealed class RepairHostTests
     }
 
     [Fact]
-    public async Task PeriodicRepair_UsesStaggeredInitialTimerThenFullInterval()
+    public async Task PeriodicRepairUsesStaggeredInitialTimerThenFullInterval()
     {
         using var directory = new TestDirectory();
         await using var cluster = await RepairHostCluster.OpenAsync(directory);
@@ -345,7 +345,7 @@ public sealed class RepairHostTests
     }
 
     [Fact]
-    public async Task StageClusterRepair_CallsEveryRemoteAndCoalescesLocalRequestsBeforePeriodicStart()
+    public async Task StageClusterRepairCallsEveryRemoteAndCoalescesLocalRequestsBeforePeriodicStart()
     {
         using var directory = new TestDirectory();
         await using var cluster = await RepairHostCluster.OpenAsync(directory);
@@ -369,7 +369,7 @@ public sealed class RepairHostTests
     }
 
     [Fact]
-    public async Task Repair_AfterRuntimeRestart_ReservesHigherDurableBallot()
+    public async Task RepairAfterRuntimeRestartReservesHigherDurableBallot()
     {
         using var directory = new TestDirectory();
         await using var cluster = await RepairHostCluster.OpenAsync(directory);
@@ -392,7 +392,7 @@ public sealed class RepairHostTests
     }
 
     [Fact]
-    public async Task DisposeAsync_DoesNotInitiateReplication_AndReopenRetainsLocalBytes()
+    public async Task DisposeAsyncDoesNotInitiateReplicationAndReopenRetainsLocalBytes()
     {
         using var directory = new TestDirectory();
         await using var cluster = await RepairHostCluster.OpenAsync(directory);
@@ -416,7 +416,7 @@ public sealed class RepairHostTests
     [InlineData("excessive-interval")]
     [InlineData("zero-retry")]
     [InlineData("excessive-retry")]
-    public void RepairOptions_InvalidBounds_RejectBeforeStorage(string scenario)
+    public void RepairOptionsInvalidBoundsRejectBeforeStorage(string scenario)
     {
         using var directory = new TestDirectory();
         var options = DiagnosticHost.Options(directory);
@@ -436,7 +436,7 @@ public sealed class RepairHostTests
     }
 
     [Fact]
-    public async Task RepairOptions_DefaultsAndExplicitTarget_ReachRuntime()
+    public async Task RepairOptionsDefaultsAndExplicitTargetReachRuntime()
     {
         var defaults = new NodeOptions();
         Assert.Equal(0, defaults.TargetReplicationFactor);

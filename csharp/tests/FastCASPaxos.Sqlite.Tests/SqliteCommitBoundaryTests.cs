@@ -8,7 +8,7 @@ namespace FastCASPaxos.Sqlite.Tests;
 public sealed class SqliteCommitBoundaryTests
 {
     [Fact]
-    public async Task Read_QueuedBehindAccept_ReturnsOnlyCommittedStateAndHonorsQueuedCancellation()
+    public async Task ReadQueuedBehindAcceptReturnsOnlyCommittedStateAndHonorsQueuedCancellation()
     {
         using var database = new TestDatabase();
         using var gate = new CommitGate();
@@ -48,7 +48,7 @@ public sealed class SqliteCommitBoundaryTests
     }
 
     [Fact]
-    public async Task CancellationAfterSelection_AwaitsSuccessfulDurableCommit()
+    public async Task CancellationAfterSelectionAwaitsSuccessfulDurableCommit()
     {
         using var database = new TestDatabase();
         using var gate = new CommitGate();
@@ -94,7 +94,7 @@ public sealed class SqliteCommitBoundaryTests
     }
 
     [Fact]
-    public async Task MultiRequestCommitFailure_RollsBackEntireBatchDespiteCancellation()
+    public async Task MultiRequestCommitFailureRollsBackEntireBatchDespiteCancellation()
     {
         using var database = new TestDatabase();
         await using (var seed = await database.OpenAsync())
@@ -227,7 +227,7 @@ public sealed class SqliteCommitBoundaryTests
     }
 
     [Fact]
-    public async Task BeforeCommit_ObservesDedicatedWriterAndRequiredPragmas()
+    public async Task BeforeCommitObservesDedicatedWriterAndRequiredPragmas()
     {
         using var database = new TestDatabase();
         await using var server = await database.OpenAsync();

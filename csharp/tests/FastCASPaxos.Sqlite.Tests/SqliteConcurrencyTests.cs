@@ -7,7 +7,7 @@ namespace FastCASPaxos.Sqlite.Tests;
 public sealed class SqliteConcurrencyTests
 {
     [Fact]
-    public async Task ConcurrentDifferentKeys_PersistEveryAcknowledgedValue()
+    public async Task ConcurrentDifferentKeysPersistEveryAcknowledgedValue()
     {
         using var database = new TestDatabase();
         await using (var server = await database.OpenAsync(queueCapacity: 8, maxBatchSize: 4))
@@ -24,7 +24,7 @@ public sealed class SqliteConcurrencyTests
 
         await using var reopened = await database.OpenAsync();
         var page = await reopened.ListKeysAsync(limit: 100);
-        Assert.Equal(64, page.Entries.Count);
+        Assert.Equal(64, page.Entries.Length);
         Assert.Null(page.ContinuationKey);
         for (var index = 0; index < 64; index++)
         {
@@ -38,7 +38,7 @@ public sealed class SqliteConcurrencyTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task ConcurrentSameBallot_OnlyOneValueWins(bool separateServers)
+    public async Task ConcurrentSameBallotOnlyOneValueWins(bool separateServers)
     {
         using var database = new TestDatabase();
         await using var first = await database.OpenAsync(maxBatchSize: 4);
@@ -70,7 +70,7 @@ public sealed class SqliteConcurrencyTests
     }
 
     [Fact]
-    public async Task PreCancelledOperations_DoNotExecute()
+    public async Task PreCancelledOperationsDoNotExecute()
     {
         using var database = new TestDatabase();
         await using var server = await database.OpenAsync();
@@ -90,7 +90,7 @@ public sealed class SqliteConcurrencyTests
     }
 
     [Fact]
-    public async Task CancellationBeforeSelection_SkipsAdmittedBacklog()
+    public async Task CancellationBeforeSelectionSkipsAdmittedBacklog()
     {
         using var database = new TestDatabase();
         await using var server = await database.OpenAsync(queueCapacity: 16, maxBatchSize: 1);
@@ -119,7 +119,7 @@ public sealed class SqliteConcurrencyTests
     }
 
     [Fact]
-    public async Task CancellationDuringAdmission_DoesNotEnterFullQueue()
+    public async Task CancellationDuringAdmissionDoesNotEnterFullQueue()
     {
         using var database = new TestDatabase();
         await using var server = await database.OpenAsync(queueCapacity: 1, maxBatchSize: 1);
@@ -138,13 +138,13 @@ public sealed class SqliteConcurrencyTests
 
         Assert.True((await first.WaitAsync(TestDatabase.Timeout)).IsAccepted);
         Assert.True((await second.WaitAsync(TestDatabase.Timeout)).IsAccepted);
-        Assert.Equal(new[] { "first", "second" },
+        Assert.Equal(["first", "second"],
             (await server.ListKeysAsync()).Entries.Select(entry => entry.Key));
         Assert.True((await server.PrepareAsync("blocked", new(Ballot.InitialFast()))).IsPromised);
     }
 
     [Fact]
-    public async Task Dispose_DrainsAdmittedWorkAndRejectsLaterCalls()
+    public async Task DisposeDrainsAdmittedWorkAndRejectsLaterCalls()
     {
         using var database = new TestDatabase();
         var server = await database.OpenAsync(queueCapacity: 16, maxBatchSize: 1);
@@ -174,7 +174,7 @@ public sealed class SqliteConcurrencyTests
 
         await using var reopened = await database.OpenAsync();
         var entries = (await reopened.ListKeysAsync()).Entries;
-        Assert.Equal(8, entries.Count);
+        Assert.Equal(8, entries.Length);
         for (var index = 0; index < 8; index++)
         {
             Assert.Equal($"key-{index}", entries[index].Key);

@@ -8,7 +8,7 @@ namespace FastCASPaxos.Core.Tests.Protocol;
 public sealed class CoreProtocolEdgeCaseTests
 {
     [Fact]
-    public void AcceptorEngine_Prepare_RejectsBallotBelowAcceptedBallot_ReturnsAcceptedValue()
+    public void AcceptorEnginePrepareRejectsBallotBelowAcceptedBallotReturnsAcceptedValue()
     {
         var promisedBallot = new Ballot(2, 3);
         var acceptedBallot = new Ballot(1, 2);
@@ -31,7 +31,7 @@ public sealed class CoreProtocolEdgeCaseTests
     }
 
     [Fact]
-    public void AcceptorEngine_Prepare_Promise_ReportsZeroPromisedBallot()
+    public void AcceptorEnginePreparePromiseReportsZeroPromisedBallot()
     {
         var engine = new RecordingAcceptorEngine<TestValue, string>(
             "a1",
@@ -48,7 +48,7 @@ public sealed class CoreProtocolEdgeCaseTests
     }
 
     [Fact]
-    public void AcceptorEngine_Accept_RejectsBelowPromisedBallot_ReportsPromisedConflictBallot()
+    public void AcceptorEngineAcceptRejectsBelowPromisedBallotReportsPromisedConflictBallot()
     {
         var promisedBallot = new Ballot(3, 2);
         var acceptedBallot = new Ballot(2, 1);
@@ -74,7 +74,7 @@ public sealed class CoreProtocolEdgeCaseTests
     }
 
     [Fact]
-    public void AcceptorEngine_Accept_Success_ReportsZeroConflictingBallot()
+    public void AcceptorEngineAcceptSuccessReportsZeroConflictingBallot()
     {
         var engine = new RecordingAcceptorEngine<TestValue, string>(
             "a1",
@@ -94,7 +94,7 @@ public sealed class CoreProtocolEdgeCaseTests
     }
 
     [Fact]
-    public void ProposerEngine_PrepareRecovery_AdoptsPluralityFastValueAndDirectlyCommitsNextValue()
+    public void ProposerEnginePrepareRecoveryAdoptsPluralityFastValueAndDirectlyCommitsNextValue()
     {
         var engine = CreateFastProposer();
         var firstProposal = AppendOperation(1, "A");
@@ -188,7 +188,7 @@ public sealed class CoreProtocolEdgeCaseTests
     }
 
     [Fact]
-    public void ProposerEngine_InitialFastRead_FallsBackToPrepare()
+    public void ProposerEngineInitialFastReadFallsBackToPrepare()
     {
         var engine = CreateFastProposer();
         var proposal = ReadOperation();
@@ -201,7 +201,7 @@ public sealed class CoreProtocolEdgeCaseTests
     }
 
     [Fact]
-    public void ProposerEngine_HandlePrepareResponse_IgnoresStaleResponsesFromEarlierRequest()
+    public void ProposerEngineHandlePrepareResponseIgnoresStaleResponsesFromEarlierRequest()
     {
         var engine = CreateClassicProposer();
         var proposal = AppendOperation(1, "A");
@@ -244,7 +244,7 @@ public sealed class CoreProtocolEdgeCaseTests
     }
 
     [Fact]
-    public void ProposerEngine_HandlePrepareResponse_UsesHighestConflictBallotButCachesHighestAcceptedValue()
+    public void ProposerEngineHandlePrepareResponseUsesHighestConflictBallotButCachesHighestAcceptedValue()
     {
         var engine = CreateClassicProposer();
         var proposal = AppendOperation(6, "F");
@@ -308,7 +308,7 @@ public sealed class CoreProtocolEdgeCaseTests
     }
 
     [Fact]
-    public void ProposerEngine_HandlePrepareResponse_RefreshesCachedValueBeforePrepareQuorum()
+    public void ProposerEngineHandlePrepareResponseRefreshesCachedValueBeforePrepareQuorum()
     {
         var engine = CreateClassicProposer();
         var proposal = AppendOperation(3, "C");
@@ -338,7 +338,7 @@ public sealed class CoreProtocolEdgeCaseTests
     }
 
     [Fact]
-    public void ProposerEngine_HandlePrepareResponse_RecoversFromHighestAcceptedValueAcrossPrepareResponses()
+    public void ProposerEngineHandlePrepareResponseRecoversFromHighestAcceptedValueAcrossPrepareResponses()
     {
         var engine = CreateClassicProposer();
         var proposal = AppendOperation(2, "B");
@@ -388,7 +388,7 @@ public sealed class CoreProtocolEdgeCaseTests
     }
 
     [Fact]
-    public void ProposerEngine_HandlePrepareResponse_RecoversWhenNoFastValueCanStillReachQuorum()
+    public void ProposerEngineHandlePrepareResponseRecoversWhenNoFastValueCanStillReachQuorum()
     {
         var engine = CreateClassicProposer();
         var proposal = AppendOperation(3, "C");
@@ -425,7 +425,7 @@ public sealed class CoreProtocolEdgeCaseTests
     }
 
     [Fact]
-    public void ProposerEngine_HandlePrepareResponse_RecoversFromThreeWayFastSplitWhenNoFastValueCanStillReachQuorum()
+    public void ProposerEngineHandlePrepareResponseRecoversFromThreeWayFastSplitWhenNoFastValueCanStillReachQuorum()
     {
         var engine = CreateClassicProposer();
         var proposal = AppendOperation(2, "Z");
@@ -452,7 +452,7 @@ public sealed class CoreProtocolEdgeCaseTests
     }
 
     [Fact]
-    public void ProposerEngine_HandleAcceptResponse_IgnoresStaleResponsesFromEarlierRequest()
+    public void ProposerEngineHandleAcceptResponseIgnoresStaleResponsesFromEarlierRequest()
     {
         var engine = CreateClassicProposer();
         var proposal = AppendOperation(1, "A");
@@ -504,7 +504,7 @@ public sealed class CoreProtocolEdgeCaseTests
     }
 
     [Fact]
-    public void ProposerEngine_HandlePrepareResponse_IgnoresLateResponsesAfterProposalCompletion()
+    public void ProposerEngineHandlePrepareResponseIgnoresLateResponsesAfterProposalCompletion()
     {
         var engine = CreateLeaderProposer();
         var recovered = new TestValue(24, "BASE");
@@ -563,7 +563,7 @@ public sealed class CoreProtocolEdgeCaseTests
     }
 
     [Fact]
-    public void ProposerEngine_PrepareRecovery_ReadReturnsRecoveredHistoryAfterIdentityAcceptQuorum()
+    public void ProposerEnginePrepareRecoveryReadReturnsRecoveredHistoryAfterIdentityAcceptQuorum()
     {
         var engine = CreateClassicProposer();
 
@@ -635,7 +635,7 @@ public sealed class CoreProtocolEdgeCaseTests
     private static RecordingProposerEngine<TestValue, string> CreateFastProposer() =>
         new("p1", proposerId: 1, initialValue: default, acceptors: ["a1", "a2", "a3", "a4", "a5"], ProposerModePolicy.StaticFast);
 
-    private static IOperation<TestValue> AppendOperation(int expectedVersion, string suffix) =>
+    private static Operation<TestValue, TestValue> AppendOperation(int expectedVersion, string suffix) =>
         new Operation<TestValue, TestValue>
         {
             Input = new TestValue(expectedVersion, suffix),
@@ -657,7 +657,7 @@ public sealed class CoreProtocolEdgeCaseTests
             },
         };
 
-    private static IOperation<TestValue> BlindAppendOperation(string suffix) =>
+    private static Operation<string, TestValue> BlindAppendOperation(string suffix) =>
         new Operation<string, TestValue>
         {
             Input = suffix,

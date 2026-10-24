@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Security.Cryptography;
 using FastCASPaxos.Model;
 
@@ -29,7 +30,7 @@ public sealed record AcceptedDigest(Ballot AcceptedBallot, ByteString ValueHash)
 }
 
 public sealed record KeyDigest(string Key, AcceptedDigest Digest);
-public sealed record AcceptorDigestPage(IReadOnlyList<KeyDigest> Entries, string? ContinuationKey);
+public sealed record AcceptorDigestPage(ImmutableArray<KeyDigest> Entries, string? ContinuationKey);
 
 public sealed record RepairPeer(string Id, IKeyedAcceptor Acceptor, IAcceptorDigestSource Digests);
 
@@ -39,7 +40,7 @@ public interface IRepairScheduler
     void StageRepair();
 }
 
-public sealed record RepairPassResult(long Examined, long Repaired, long Pending, IReadOnlyList<Exception> Errors);
+public sealed record RepairPassResult(long Examined, long Repaired, long Pending, ImmutableArray<Exception> Errors);
 
 public sealed class DurabilityRepairOptions
 {

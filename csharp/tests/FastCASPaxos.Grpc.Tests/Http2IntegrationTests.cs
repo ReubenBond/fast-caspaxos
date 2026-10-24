@@ -23,7 +23,7 @@ namespace FastCASPaxos.Grpc.Tests;
 public sealed class Http2IntegrationTests
 {
     [Fact]
-    public async Task MultiEndpointClientOverHttp2_HealthyFastContentionHasOneWinner()
+    public async Task MultiEndpointClientOverHttp2HealthyFastContentionHasOneWinner()
     {
         using var directory = new TestDirectory();
         var acceptors = new List<SqliteAcceptorServer>();
@@ -41,7 +41,7 @@ public sealed class Http2IntegrationTests
                 var allocator = new SqliteProposerBallotSource(directory.Database($"proposer-{index}"), index + 1);
                 ballots.Add(allocator);
                 var service = new ReplicatedRegisterService(
-                    acceptors.Select((acceptor, id) => new AcceptorPeer($"member-{id}", acceptor)), allocator,
+                    [.. acceptors.Select((acceptor, id) => new AcceptorPeer($"member-{id}", acceptor))], allocator,
                     new() { Mode = ProposerModePolicy.Parse("fast"), Capacity = 64 });
                 registers.Add(service);
                 var delayed = new DelegateRegister
@@ -51,13 +51,13 @@ public sealed class Http2IntegrationTests
                     CompareExchange = async (key, expected, value, token) =>
                     {
                         if (Interlocked.Increment(ref entered) == 32) release.TrySetResult();
-                        await release.Task.WaitAsync(Watchdog);
+                        await release.Task.WaitAsync(Watchdog, token);
                         return await service.CompareExchangeAsync(key, expected, value, token);
                     },
                 };
                 endpoints.Add(await Http2Endpoint.StartAsync(acceptors[0], delayed));
             }
-            using var client = new GrpcRegisterClient(endpoints.Select(endpoint => new Uri(endpoint.Address)),
+            using var client = new GrpcRegisterClient([.. endpoints.Select(endpoint => new Uri(endpoint.Address))],
                 new() { CallTimeout = Watchdog, AttemptTimeout = Watchdog });
             ByteString? version = null;
             for (var round = 0; round < 2; round++)
@@ -85,7 +85,7 @@ public sealed class Http2IntegrationTests
     }
 
     [Fact]
-    public async Task MultiEndpointClientOverHttp2_ReadsSurvivorAndWritesThroughServerProposer()
+    public async Task MultiEndpointClientOverHttp2ReadsSurvivorAndWritesThroughServerProposer()
     {
         using var directory = new TestDirectory();
         await using var node = await RunningNode.StartAsync(directory);
@@ -101,12 +101,12 @@ public sealed class Http2IntegrationTests
         Assert.Equal(CompareExchangeStatus.Applied, update.Status);
         Assert.NotEqual(created.Current.Version, update.Current!.Version);
         Assert.Equal(ByteString.Empty, update.Current.Value);
-        Assert.Equal(["multi"], (await client.ListKeysAsync()).Keys);
+        Assert.Equal<string>(["multi"], (await client.ListKeysAsync()).Keys);
         Assert.Equal(update.Current, await surviving.Register.ReadAsync("multi"));
     }
 
     [Fact]
-    public async Task MultiEndpointClientOverHttp2_EnforcesConfiguredMessageBounds()
+    public async Task MultiEndpointClientOverHttp2EnforcesConfiguredMessageBounds()
     {
         using var directory = new TestDirectory();
         await using var node = await RunningNode.StartAsync(directory);
@@ -128,7 +128,7 @@ public sealed class Http2IntegrationTests
     }
 
     [Fact]
-    public async Task ProtocolOverHttp2_PreservesBallotsRetriesAndAbsentEmpty()
+    public async Task ProtocolOverHttp2PreservesBallotsRetriesAndAbsentEmpty()
     {
         using var directory = new TestDirectory();
         await using var node = await RunningNode.StartAsync(directory);
@@ -170,7 +170,7 @@ public sealed class Http2IntegrationTests
     }
 
     [Fact]
-    public async Task RegisterOverHttp2_ConcurrentCasHasOneWinnerAndIdenticalBytesGetFreshVersion()
+    public async Task RegisterOverHttp2ConcurrentCasHasOneWinnerAndIdenticalBytesGetFreshVersion()
     {
         using var directory = new TestDirectory();
         await using var node = await RunningNode.StartAsync(directory);
@@ -200,7 +200,7 @@ public sealed class Http2IntegrationTests
     }
 
     [Fact]
-    public async Task ListingOverHttp2_RoundTripsUnicodeNulEmptyAndExclusiveOrdinalPages()
+    public async Task ListingOverHttp2RoundTripsUnicodeNulEmptyAndExclusiveOrdinalPages()
     {
         using var directory = new TestDirectory();
         await using var node = await RunningNode.StartAsync(directory);
@@ -210,7 +210,7 @@ public sealed class Http2IntegrationTests
                 (await node.Endpoint.Register.CompareExchangeAsync(key, null, ByteString.Empty)).Status);
 
         var first = await node.Endpoint.Register.ListKeysAsync(limit: 1);
-        Assert.Equal([""], first.Keys);
+        Assert.Equal<string>([""], first.Keys);
         Assert.Equal("", first.ContinuationKey);
         var found = new List<string>();
         string? cursor = null;
@@ -238,7 +238,7 @@ public sealed class Http2IntegrationTests
     }
 
     [Fact]
-    public async Task RestartOverHttp2_RetainsValuesVersionsAndDurablePromises()
+    public async Task RestartOverHttp2RetainsValuesVersionsAndDurablePromises()
     {
         using var directory = new TestDirectory();
         RegisterValue retained;
@@ -264,7 +264,7 @@ public sealed class Http2IntegrationTests
     }
 
     [Fact]
-    public async Task RemotePeerQuorumOverHttp2_ContinuesWithOneOfThreeEndpointsStopped()
+    public async Task RemotePeerQuorumOverHttp2ContinuesWithOneOfThreeEndpointsStopped()
     {
         using var directory = new TestDirectory();
         await using var a = await RunningNode.StartAsync(directory, "a", 1);
@@ -283,13 +283,13 @@ public sealed class Http2IntegrationTests
             (await frontend.Register.CompareExchangeAsync("degraded", null, ByteString.Empty)).Status);
         Assert.Equal(ByteString.Empty, (await frontend.Register.ReadAsync("degraded")).Value);
         var page = await frontend.Register.ListKeysAsync();
-        Assert.Equal(["before", "degraded"], page.Keys);
+        Assert.Equal<string>(["before", "degraded"], page.Keys);
         Assert.Null(page.ContinuationKey);
         Assert.Single((await b.Endpoint.Acceptor.ListKeysAsync("degraded")).Entries);
     }
 
     [Fact]
-    public async Task ValidationOverHttp2_RejectsMalformedMessagesAndPreservesTypedFailures()
+    public async Task ValidationOverHttp2RejectsMalformedMessagesAndPreservesTypedFailures()
     {
         using var directory = new TestDirectory();
         await using var node = await RunningNode.StartAsync(directory);
@@ -333,7 +333,7 @@ public sealed class Http2IntegrationTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task LostReplyOverHttp2_AfterDurableCommitReturnsUnknown(bool deadline)
+    public async Task LostReplyOverHttp2AfterDurableCommitReturnsUnknown(bool deadline)
     {
         using var directory = new TestDirectory();
         var committed = new TaskCompletionSource<CompareExchangeResult>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -374,7 +374,7 @@ public sealed class Http2IntegrationTests
     }
 
     [Fact]
-    public async Task UnknownOverHttp2_PreservesLaterObservationAndTypedDiagnostic()
+    public async Task UnknownOverHttp2PreservesLaterObservationAndTypedDiagnostic()
     {
         using var directory = new TestDirectory();
         await using var node = await RunningNode.StartAsync(directory, decorate: service => new DelegateRegister

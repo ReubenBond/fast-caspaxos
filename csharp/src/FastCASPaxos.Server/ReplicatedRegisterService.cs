@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
 using FastCASPaxos.Protocol;
@@ -10,7 +11,8 @@ namespace FastCASPaxos.Server;
 /// </summary>
 public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposable
 {
-    private readonly AcceptorPeer[] _peers;
+    private readonly ImmutableArray<AcceptorPeer> _peers;
+    private readonly ImmutableArray<string> _peerIds;
     private readonly SemaphoreSlim[] _peerSlots;
     private readonly IProposerBallotSource _ballots;
     private readonly RegisterServiceOptions _options;
@@ -22,12 +24,12 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
     private int _active;
 
     public ReplicatedRegisterService(
-        IEnumerable<AcceptorPeer> peers, IProposerBallotSource ballots, RegisterServiceOptions? options = null)
+        ImmutableArray<AcceptorPeer> peers, IProposerBallotSource ballots, RegisterServiceOptions? options = null)
     {
-        ArgumentNullException.ThrowIfNull(peers);
+        if (peers.IsDefault) throw new ArgumentNullException(nameof(peers));
         ArgumentNullException.ThrowIfNull(ballots);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(ballots.ProposerId);
-        _peers = peers.ToArray();
+        _peers = peers;
         if (_peers.Length == 0) throw new ArgumentException("Membership must contain acceptors.", nameof(peers));
         var ids = new HashSet<string>(StringComparer.Ordinal);
         foreach (var peer in _peers)
@@ -37,6 +39,8 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
             ArgumentNullException.ThrowIfNull(peer.Acceptor);
             if (!ids.Add(peer.Id)) throw new ArgumentException("Acceptor identities must be unique.", nameof(peers));
         }
+
+        _peerIds = [.. _peers.Select(peer => peer.Id)];
 
         _ballots = ballots;
         _options = options ?? new RegisterServiceOptions();
@@ -89,7 +93,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
         ArgumentNullException.ThrowIfNull(prefix);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
         using var call = Enter(cancellationToken);
-        var keys = new List<string>();
+        var keys = ImmutableArray.CreateBuilder<string>();
         var cursor = afterKey;
         while (true)
         {
@@ -121,11 +125,15 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
             {
                 var current = await ExecuteAsync(key, new RegisterOperation(), call).ConfigureAwait(false);
                 if (!current.IsPresent) continue;
-                if (keys.Count == limit) return new RegisterKeyPage(keys.AsReadOnly(), keys[^1]);
+                if (keys.Count == limit)
+                {
+                    var last = keys[^1];
+                    return new RegisterKeyPage(keys.DrainToImmutable(), last);
+                }
                 keys.Add(key);
             }
 
-            if (frontier is null) return new RegisterKeyPage(keys.AsReadOnly(), null);
+            if (frontier is null) return new RegisterKeyPage(keys.DrainToImmutable(), null);
             cursor = frontier;
         }
     }
@@ -192,7 +200,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
                 if (--state.Users == 0)
                 {
                     _keys.Remove(key);
-                    state.Gate.Dispose();
+                    state.Dispose();
                 }
             }
         }
@@ -372,7 +380,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
         int index, Func<IKeyedAcceptor, CancellationToken, ValueTask<T>> operation, CancellationToken token)
     {
         // Even a transport which ignores cancellation can hold only a bounded number of slots.
-        if (!_peerSlots[index].Wait(0))
+        if (!_peerSlots[index].Wait(0, CancellationToken.None))
             return new PeerResult<T>(index, default, new RegisterBusyException());
         try
         {
@@ -392,7 +400,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
         return Task.Delay(TimeSpan.FromTicks(_options.RetryBackoff.Ticks * factor), _options.TimeProvider, token);
     }
 
-    private Engine NewEngine() => new(_ballots, _peers.Select(peer => peer.Id), _options.Mode);
+    private Engine NewEngine() => new(_ballots, _peerIds, _options.Mode);
 
     private Call Enter(CancellationToken cancellationToken)
     {
@@ -466,11 +474,13 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
         }
     }
 
-    private sealed class KeyState(Engine engine)
+    private sealed class KeyState(Engine engine) : IDisposable
     {
         public Engine Engine = engine;
         public readonly SemaphoreSlim Gate = new(1);
         public int Users;
+
+        public void Dispose() => Gate.Dispose();
     }
 
     private sealed record PeerResult<T>(int Peer, T? Value, Exception? Error);
@@ -516,7 +526,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
         public override int ProposerId => _source.ProposerId;
         public Outbound? Outgoing { get; private set; }
         public ByteString? Result { get; private set; }
-        public Engine(IProposerBallotSource source, IEnumerable<string> peers, ProposerModePolicy mode)
+        public Engine(IProposerBallotSource source, ImmutableArray<string> peers, ProposerModePolicy mode)
             : base(new ProposerRuntime(), RegisterEncoding.Absent, peers, mode) => _source = source;
         public void Start(RegisterOperation operation)
         {

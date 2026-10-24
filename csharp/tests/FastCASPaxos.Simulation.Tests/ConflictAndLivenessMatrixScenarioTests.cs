@@ -8,7 +8,7 @@ public sealed class ConflictAndLivenessMatrixScenarioTests
 {
     [Theory]
     [MemberData(nameof(ProtocolOptionMatrix.LeaderModes), MemberType = typeof(ProtocolOptionMatrix))]
-    public async Task LeaderModes_AnotherProposerCommitsAfterLeaderCrash(ProtocolModeCase mode)
+    public async Task LeaderModesAnotherProposerCommitsAfterLeaderCrash(ProtocolModeCase mode)
     {
         await using var cluster = ProtocolOptionMatrix.CreateStringCluster(mode, seed: 9201);
         cluster.CreateConfiguration(proposerCount: 2, acceptorCount: 5);
@@ -28,7 +28,7 @@ public sealed class ConflictAndLivenessMatrixScenarioTests
 
     [Theory]
     [MemberData(nameof(ProtocolOptionMatrix.FastModes), MemberType = typeof(ProtocolOptionMatrix))]
-    public async Task FastModes_ThreeWayConcurrentConflicts_ConvergeOnSingleCommittedValue(ProtocolModeCase mode)
+    public async Task FastModesThreeWayConcurrentConflictsConvergeOnSingleCommittedValue(ProtocolModeCase mode)
     {
         await using var cluster = ProtocolOptionMatrix.CreateStringCluster(mode, seed: 9202);
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
@@ -46,13 +46,13 @@ public sealed class ConflictAndLivenessMatrixScenarioTests
         var first = Assert.Single(values.Distinct());
 
         Assert.Equal(1, first.Version);
-        Assert.Contains(first.Value, new[] { "A", "B", "C" });
+        Assert.Matches(@"^[ABC]\z", first.Value);
         cluster.AssertSafetyInvariants();
     }
 
     [Theory]
     [MemberData(nameof(ProtocolOptionMatrix.AllModes), MemberType = typeof(ProtocolOptionMatrix))]
-    public async Task QuorumLoss_ThrowsDiagnosticsAcrossAllModes(ProtocolModeCase mode)
+    public async Task QuorumLossThrowsDiagnosticsAcrossAllModes(ProtocolModeCase mode)
     {
         const int seed = 9203;
         await using var cluster = ProtocolOptionMatrix.CreateStringCluster(mode, seed);

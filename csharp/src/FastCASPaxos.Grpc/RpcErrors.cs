@@ -22,7 +22,7 @@ internal static class RpcErrors
         catch (RegisterBusyException error) { throw Definite(StatusCode.ResourceExhausted, "busy", error.Message); }
         catch (RegisterUnavailableException error)
         {
-            logger.LogWarning(error, "Register operation reached its deadline before mutation.");
+            logger.RegisterUnavailable(error);
             throw Definite(StatusCode.Unavailable, "unavailable", error.Message);
         }
         catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
@@ -31,7 +31,7 @@ internal static class RpcErrors
         }
         catch (Exception error)
         {
-            logger.LogError(error, "gRPC operation failed.");
+            logger.OperationFailed(error);
             throw new RpcException(new Status(StatusCode.Internal, "The operation failed; consult the server log."));
         }
     }

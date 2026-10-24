@@ -21,7 +21,7 @@ public sealed class RequestValidationTests
 
     [Theory]
     [MemberData(nameof(Preconditions))]
-    public async Task Put_InvalidPreconditionsNeverDispatch(Precondition scenario)
+    public async Task PutInvalidPreconditionsNeverDispatch(Precondition scenario)
     {
         await using var harness = new EndpointHarness();
         var context = harness.Request("PUT");
@@ -75,7 +75,7 @@ public sealed class RequestValidationTests
 
     [Theory]
     [MemberData(nameof(ReadConditions))]
-    public async Task Get_ConditionalHeadersNeverDispatch(ApiOperation operation, Conditional header)
+    public async Task GetConditionalHeadersNeverDispatch(ApiOperation operation, Conditional header)
     {
         await using var harness = new EndpointHarness();
         var context = harness.RequestFor(operation);
@@ -146,7 +146,7 @@ public sealed class RequestValidationTests
     [Theory]
     [InlineData(ApiOperation.Read)]
     [InlineData(ApiOperation.Write)]
-    public async Task Value_MissingKeyNeverDispatches(ApiOperation operation)
+    public async Task ValueMissingKeyNeverDispatches(ApiOperation operation)
     {
         await using var harness = new EndpointHarness();
         var context = harness.RequestFor(operation);
@@ -164,7 +164,7 @@ public sealed class RequestValidationTests
 
     [Theory]
     [MemberData(nameof(Keys))]
-    public async Task Keys_AreDecodedExactlyOnceWithoutPathNormalization(ApiOperation operation, KeyCase scenario)
+    public async Task KeysAreDecodedExactlyOnceWithoutPathNormalization(ApiOperation operation, KeyCase scenario)
     {
         var (encoded, expected) = scenario switch
         {
@@ -197,7 +197,7 @@ public sealed class RequestValidationTests
 
     [Theory]
     [MemberData(nameof(BadLimits))]
-    public async Task List_InvalidLimitsNeverDispatch(BadLimit scenario)
+    public async Task ListInvalidLimitsNeverDispatch(BadLimit scenario)
     {
         var limit = scenario switch
         {
@@ -226,7 +226,7 @@ public sealed class RequestValidationTests
     [InlineData(ListQuery.DuplicateLimit)]
     [InlineData(ListQuery.InvalidAfterEncoding)]
     [InlineData(ListQuery.InvalidPrefixEncoding)]
-    public async Task List_RejectsInvalidCursorAndDuplicatePagingFields(ListQuery scenario)
+    public async Task ListRejectsInvalidCursorAndDuplicatePagingFields(ListQuery scenario)
     {
         var query = scenario switch
         {
@@ -248,7 +248,7 @@ public sealed class RequestValidationTests
 
     [Theory]
     [MemberData(nameof(Representations))]
-    public async Task Put_InvalidRepresentationNeverDispatch(Representation scenario)
+    public async Task PutInvalidRepresentationNeverDispatch(Representation scenario)
     {
         await using var harness = new EndpointHarness();
         var context = harness.Request("PUT");

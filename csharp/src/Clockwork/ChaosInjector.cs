@@ -265,12 +265,12 @@ public abstract class ChaosInjector<TNode, TCluster>(TCluster cluster)
     private bool TryCrashRandomNode()
     {
         var nodes = Cluster.Nodes;
-        if (nodes.Count <= MinimumAliveNodes)
+        if (nodes.Length <= MinimumAliveNodes)
         {
             return false;
         }
 
-        var node = Random.Choose(nodes.ToList());
+        var node = Random.Choose(nodes.AsSpan());
         CrashNode(node);
         return true;
     }
@@ -278,15 +278,13 @@ public abstract class ChaosInjector<TNode, TCluster>(TCluster cluster)
     private bool TryCreateRandomPartition()
     {
         var nodes = Cluster.Nodes;
-        if (nodes.Count < 2)
+        if (nodes.Length < 2)
         {
             return false;
         }
 
-        var nodeList = nodes.ToList();
-        var node1 = Random.Choose(nodeList);
-        nodeList.Remove(node1);
-        var node2 = Random.Choose(nodeList);
+        var node1 = Random.Choose(nodes.AsSpan());
+        var node2 = Random.Choose(nodes.Remove(node1).AsSpan());
 
         PartitionNodes(node1, node2);
         return true;

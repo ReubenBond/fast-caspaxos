@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace Clockwork;
 
 /// <summary>
@@ -108,7 +110,7 @@ public sealed class SimulationTimer(SimulationTaskQueue taskQueue, TimerCallback
     /// </summary>
     /// <param name="taskQueue">The task queue to query.</param>
     /// <returns>A list of timer info for all pending timers.</returns>
-    public static IReadOnlyList<(DateTimeOffset DueTime, TimeSpan Period)> GetTimers(SimulationTaskQueue taskQueue)
+    public static ImmutableArray<(DateTimeOffset DueTime, TimeSpan Period)> GetTimers(SimulationTaskQueue taskQueue)
     {
         ArgumentNullException.ThrowIfNull(taskQueue);
         return taskQueue.GetItemsOfType<ScheduledTimerItem, (DateTimeOffset, TimeSpan)>(timer => (timer.DueTime, timer.Timer.Period));

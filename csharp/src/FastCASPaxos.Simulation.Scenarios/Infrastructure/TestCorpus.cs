@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Model;
 
 namespace FastCASPaxos.Simulation.Scenarios;
@@ -8,18 +9,19 @@ public static class TestCorpus
 
     public static string StringExpectedValue => "Hello, World!";
 
-    public static IReadOnlyList<IOperation<StringValue>> BuildStringOperations() =>
-        StringExpectedValue
-            .Select((character, index) => StringScenarioOperations.AppendAtVersion(index + 1, character.ToString()))
-            .ToList();
+    public static ImmutableArray<IOperation<StringValue>> BuildStringOperations() =>
+    [
+        .. StringExpectedValue
+            .Select((character, index) => StringScenarioOperations.AppendAtVersion(index + 1, character.ToString())),
+    ];
 
-    public static (IReadOnlyList<IOperation<SetValue>> Operations, HashSet<string> ExpectedValue) BuildSetOperations(
+    public static (ImmutableArray<IOperation<SetValue>> Operations, HashSet<string> ExpectedValue) BuildSetOperations(
         int seed = 1234,
         int count = 20)
     {
         var random = new Random(seed);
         var expected = new HashSet<string>(StringComparer.Ordinal);
-        List<IOperation<SetValue>> operations = [];
+        var operations = ImmutableArray.CreateBuilder<IOperation<SetValue>>(count);
 
         for (var index = 0; index < count; index++)
         {
@@ -28,16 +30,16 @@ public static class TestCorpus
             expected.Add(value);
         }
 
-        return (operations, expected);
+        return (operations.MoveToImmutable(), expected);
     }
 
-    public static (IReadOnlyList<IOperation<StringValue>> Operations, string ExpectedValue) BuildRandomStringOperations(
+    public static (ImmutableArray<IOperation<StringValue>> Operations, string ExpectedValue) BuildRandomStringOperations(
         int seed = 2345,
         int versions = 5,
         int operationsPerVersion = 3)
     {
         var random = new Random(seed);
-        List<IOperation<StringValue>> operations = [];
+        var operations = ImmutableArray.CreateBuilder<IOperation<StringValue>>(versions * operationsPerVersion);
         List<char> expected = [];
 
         foreach (var _ in Enumerable.Range(0, versions))
@@ -50,16 +52,16 @@ public static class TestCorpus
             }
         }
 
-        return (operations, new string([.. expected]));
+        return (operations.MoveToImmutable(), new string([.. expected]));
     }
 
-    public static (IReadOnlyList<IOperation<StringValue>> Operations, string ExpectedValue) BuildForkingStringOperations(
+    public static (ImmutableArray<IOperation<StringValue>> Operations, string ExpectedValue) BuildForkingStringOperations(
         int seed = 3456,
         int versions = 5,
         int operationsPerVersion = 3)
     {
         var random = new Random(seed);
-        List<IOperation<StringValue>> operations = [];
+        var operations = ImmutableArray.CreateBuilder<IOperation<StringValue>>(versions * operationsPerVersion);
         List<char> expected = [];
 
         for (var version = 0; version < versions; version++)
@@ -75,6 +77,6 @@ public static class TestCorpus
             }
         }
 
-        return (operations, new string([.. expected]));
+        return (operations.MoveToImmutable(), new string([.. expected]));
     }
 }

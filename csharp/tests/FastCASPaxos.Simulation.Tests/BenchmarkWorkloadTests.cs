@@ -6,7 +6,7 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class BenchmarkWorkloadTests
 {
     [Fact]
-    public async Task RunAsync_BenchmarkWorkload_ProducesLatencySamples()
+    public async Task RunAsyncBenchmarkWorkloadProducesLatencySamples()
     {
         var outputDir = Path.Combine(Path.GetTempPath(), $"benchmark-test-{Guid.NewGuid():N}");
         try
@@ -33,8 +33,8 @@ public sealed class BenchmarkWorkloadTests
             Assert.Equal(0, result.FailedCount);
 
             var run = result.Runs[0];
-            Assert.True(run.ProposalLatencySamples.Count >= 10,
-                $"Expected at least 10 latency samples, got {run.ProposalLatencySamples.Count}");
+            Assert.True(run.ProposalLatencySamples.Length >= 10,
+                $"Expected at least 10 latency samples, got {run.ProposalLatencySamples.Length}");
 
             foreach (var sample in run.ProposalLatencySamples)
             {
@@ -50,7 +50,7 @@ public sealed class BenchmarkWorkloadTests
     }
 
     [Fact]
-    public async Task RunAsync_BenchmarkWorkload_WritesLatencyCsv()
+    public async Task RunAsyncBenchmarkWorkloadWritesLatencyCsv()
     {
         var outputDir = Path.Combine(Path.GetTempPath(), $"benchmark-csv-test-{Guid.NewGuid():N}");
         try
@@ -111,7 +111,7 @@ public sealed class BenchmarkWorkloadTests
     }
 
     [Fact]
-    public async Task RunAsync_BenchmarkWorkload_WithTooFewAcceptors_Fails()
+    public async Task RunAsyncBenchmarkWorkloadWithTooFewAcceptorsFails()
     {
         var outputDir = Path.Combine(Path.GetTempPath(), $"benchmark-too-few-acceptors-{Guid.NewGuid():N}");
         try
@@ -147,7 +147,7 @@ public sealed class BenchmarkWorkloadTests
     [Theory]
     [InlineData("uscrossregion", "us3region")]
     [InlineData("geo3region", "geo5region")]
-    public async Task RunAsync_BenchmarkWorkload_TopologyAliases_MapToRenamedProfiles(
+    public async Task RunAsyncBenchmarkWorkloadTopologyAliasesMapToRenamedProfiles(
         string configuredTopology,
         string effectiveTopology)
     {
@@ -184,7 +184,7 @@ public sealed class BenchmarkWorkloadTests
     }
 
     [Fact]
-    public async Task RunAsync_BenchmarkWorkload_GeoTopology_ProducesHigherLatency()
+    public async Task RunAsyncBenchmarkWorkloadGeoTopologyProducesHigherLatency()
     {
         var lanDir = Path.Combine(Path.GetTempPath(), $"benchmark-lan-{Guid.NewGuid():N}");
         var geoDir = Path.Combine(Path.GetTempPath(), $"benchmark-geo-{Guid.NewGuid():N}");
@@ -241,7 +241,7 @@ public sealed class BenchmarkWorkloadTests
     }
 
     [Fact]
-    public async Task RunAsync_BenchmarkWorkload_ExplicitClientOrdinal_RoutesLocallyUnlessLeaderMode()
+    public async Task RunAsyncBenchmarkWorkloadExplicitClientOrdinalRoutesLocallyUnlessLeaderMode()
     {
         var localDir = Path.Combine(Path.GetTempPath(), $"benchmark-explicit-local-{Guid.NewGuid():N}");
         var leaderDir = Path.Combine(Path.GetTempPath(), $"benchmark-explicit-leader-{Guid.NewGuid():N}");
@@ -323,7 +323,7 @@ public sealed class BenchmarkWorkloadTests
     }
 
     [Fact]
-    public async Task RunAsync_BenchmarkWorkload_ExplicitClientOrdinal_BroadcastsCommittedValueToPeers()
+    public async Task RunAsyncBenchmarkWorkloadExplicitClientOrdinalBroadcastsCommittedValueToPeers()
     {
         const string learnMetricName = "fast_caspaxos.simulation.transport.delivered_learn_committed_value";
         var outputDir = Path.Combine(Path.GetTempPath(), $"benchmark-explicit-learn-{Guid.NewGuid():N}");
@@ -363,7 +363,7 @@ public sealed class BenchmarkWorkloadTests
     }
 
     [Fact]
-    public async Task RunAsync_BenchmarkWorkload_WithFaultSchedule_Succeeds()
+    public async Task RunAsyncBenchmarkWorkloadWithFaultScheduleSucceeds()
     {
         var outputDir = Path.Combine(Path.GetTempPath(), $"benchmark-fault-{Guid.NewGuid():N}");
         try
@@ -389,7 +389,7 @@ public sealed class BenchmarkWorkloadTests
 
             Assert.Equal(1, result.SucceededCount);
             Assert.Equal(0, result.FailedCount);
-            Assert.True(result.Runs[0].ProposalLatencySamples.Count >= 20);
+            Assert.True(result.Runs[0].ProposalLatencySamples.Length >= 20);
         }
         finally
         {
@@ -399,7 +399,7 @@ public sealed class BenchmarkWorkloadTests
     }
 
     [Fact]
-    public async Task RunAsync_BenchmarkWorkload_WithCrashFailover_Completes()
+    public async Task RunAsyncBenchmarkWorkloadWithCrashFailoverCompletes()
     {
         var outputDir = Path.Combine(Path.GetTempPath(), $"benchmark-crash-failover-{Guid.NewGuid():N}");
         try
@@ -439,7 +439,7 @@ public sealed class BenchmarkWorkloadTests
     }
 
     [Fact]
-    public async Task RunAsync_BenchmarkWorkload_WithExplicitProposerTimingOverrides_RecordsEffectiveTiming()
+    public async Task RunAsyncBenchmarkWorkloadWithExplicitProposerTimingOverridesRecordsEffectiveTiming()
     {
         var outputDir = Path.Combine(Path.GetTempPath(), $"benchmark-timing-overrides-{Guid.NewGuid():N}");
         try
@@ -486,7 +486,7 @@ public sealed class BenchmarkWorkloadTests
     }
 
     [Fact]
-    public async Task RunAsync_BenchmarkWorkload_AgreementMode_UsesGeoAwareClassicClients()
+    public async Task RunAsyncBenchmarkWorkloadAgreementModeUsesGeoAwareClassicClients()
     {
         var outputDir = Path.Combine(Path.GetTempPath(), $"benchmark-agreement-classic-{Guid.NewGuid():N}");
         try
@@ -538,7 +538,7 @@ public sealed class BenchmarkWorkloadTests
     }
 
     [Fact]
-    public async Task RunAsync_BenchmarkWorkload_AgreementMode_WithConcurrentProposers_SendsAllProposersEachRound()
+    public async Task RunAsyncBenchmarkWorkloadAgreementModeWithConcurrentProposersSendsAllProposersEachRound()
     {
         var outputDir = Path.Combine(Path.GetTempPath(), $"benchmark-agreement-concurrent-{Guid.NewGuid():N}");
         try
@@ -592,7 +592,7 @@ public sealed class BenchmarkWorkloadTests
     }
 
     [Fact]
-    public async Task RunAsync_BenchmarkWorkload_AgreementMode_LeaderClientsFailOverAndLearn()
+    public async Task RunAsyncBenchmarkWorkloadAgreementModeLeaderClientsFailOverAndLearn()
     {
         var outputDir = Path.Combine(Path.GetTempPath(), $"benchmark-agreement-leader-{Guid.NewGuid():N}");
         try

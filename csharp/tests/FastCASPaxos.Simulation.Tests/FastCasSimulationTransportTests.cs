@@ -10,7 +10,7 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class FastCasSimulationTransportTests
 {
     [Fact]
-    public void Send_EnqueuesMessageOnDestinationQueue()
+    public void SendEnqueuesMessageOnDestinationQueue()
     {
         var transport = CreateTransport(out var targetEndpoint);
         var source = FastCasAddress.Proposer(1);
@@ -28,7 +28,7 @@ public sealed class FastCasSimulationTransportTests
     }
 
     [Fact]
-    public void Send_RespectsPartitionsAndHealing()
+    public void SendRespectsPartitionsAndHealing()
     {
         var transport = CreateTransport(out var targetEndpoint);
         var source = FastCasAddress.Proposer(1);
@@ -48,7 +48,7 @@ public sealed class FastCasSimulationTransportTests
     }
 
     [Fact]
-    public void Send_ReturnsDroppedWhenNetworkDropsMessage()
+    public void SendReturnsDroppedWhenNetworkDropsMessage()
     {
         var transport = CreateTransport(out var targetEndpoint);
         var source = FastCasAddress.Proposer(1);
@@ -65,7 +65,7 @@ public sealed class FastCasSimulationTransportTests
     }
 
     [Fact]
-    public void Send_UsesPerLinkLatencyOverrideForDelay()
+    public void SendUsesPerLinkLatencyOverrideForDelay()
     {
         var clock = new SimulationClock(DateTimeOffset.UnixEpoch);
         var guard = new SingleThreadedGuard();

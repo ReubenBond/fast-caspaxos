@@ -7,7 +7,7 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class NetworkFaultScenarioTests
 {
     [Fact]
-    public async Task PartitionHeal_AllowsSubsequentProposalToSucceed()
+    public async Task PartitionHealAllowsSubsequentProposalToSucceed()
     {
         await using var cluster = CreateCluster();
         cluster.CreateConfiguration(proposerCount: 1, acceptorCount: 5);
@@ -29,7 +29,7 @@ public sealed class NetworkFaultScenarioTests
     }
 
     [Fact]
-    public async Task MessageDelays_AdvanceSimulationTimeButStillComplete()
+    public async Task MessageDelaysAdvanceSimulationTimeButStillComplete()
     {
         await using var cluster = CreateCluster();
         cluster.CreateConfiguration(proposerCount: 1, acceptorCount: 5);
@@ -43,7 +43,7 @@ public sealed class NetworkFaultScenarioTests
     }
 
     [Fact]
-    public async Task DroppedMessages_CanBeRetriedSafelyAfterDropRateClears()
+    public async Task DroppedMessagesCanBeRetriedSafelyAfterDropRateClears()
     {
         await using var cluster = CreateCluster();
         cluster.CreateConfiguration(proposerCount: 1, acceptorCount: 5);

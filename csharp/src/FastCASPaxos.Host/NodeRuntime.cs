@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Grpc;
 using FastCASPaxos.Server;
 using FastCASPaxos.Server.Diagnostics;
@@ -48,11 +49,11 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
         _initialDelay = TimeSpan.FromTicks(Math.Max(1, options.RepairInterval.Ticks / options.Peers.Count * (ordinal + 1)));
         Diagnostics = new(options.AcceptorId, options.EventHistoryCapacity, timeProvider);
         ProposerId = options.ProposerId;
-        Peers = Array.AsReadOnly(options.Peers.Select(peer =>
+        Peers = [.. options.Peers.Select(peer =>
         {
             var origin = new Uri(peer.HttpEndpoint).GetLeftPart(UriPartial.Authority);
             return new AdminPeer(peer.Id, peer.Endpoint, origin, origin + "/v1/admin/events");
-        }).ToArray());
+        })];
         HeartbeatInterval = options.HeartbeatInterval;
         MaxEventStreams = options.MaxEventStreams;
     }
@@ -68,12 +69,12 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
     public bool IsShutdownComplete => Volatile.Read(ref _shutdown)?.IsCompletedSuccessfully == true;
     public NodeEventJournal Diagnostics { get; }
     public int ProposerId { get; }
-    public IReadOnlyList<AdminPeer> Peers { get; }
+    public ImmutableArray<AdminPeer> Peers { get; }
     public TimeSpan HeartbeatInterval { get; }
     public int MaxEventStreams { get; }
 
     public static async Task<NodeRuntime> OpenAsync(
-        NodeOptions options, CancellationToken cancellationToken = default, TimeProvider? timeProvider = null)
+        NodeOptions options, TimeProvider? timeProvider = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(options);
         options.Validate();
@@ -85,12 +86,12 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(options.AcceptorDatabase))!);
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(options.ProposerDatabase))!);
             runtime._acceptor = await SqliteAcceptorServer.OpenAsync(options.AcceptorDatabase,
-                options.QueueCapacity, options.MaxBatchSize, cancellationToken, runtime.Diagnostics).ConfigureAwait(false);
+                options.QueueCapacity, options.MaxBatchSize, runtime.Diagnostics, cancellationToken).ConfigureAwait(false);
             runtime._admission = new QuiescingAcceptor(runtime._acceptor);
             runtime._observedAcceptor = new ObservedAcceptor(runtime._admission, runtime.Diagnostics, "inbound", null);
             runtime._ballots = new SqliteProposerBallotSource(options.ProposerDatabase, options.ProposerId);
-            var peers = new List<AcceptorPeer>();
-            var repairPeers = new List<RepairPeer>();
+            var peers = ImmutableArray.CreateBuilder<AcceptorPeer>(options.Peers.Count);
+            var repairPeers = ImmutableArray.CreateBuilder<RepairPeer>(options.Peers.Count);
             foreach (var peer in options.Peers)
             {
                 IKeyedAcceptor acceptor;
@@ -119,9 +120,9 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
                     ? new ObservedAcceptor(runtime._acceptor, runtime.Diagnostics, "local", peer.Id)
                     : peers[^1].Acceptor, digests));
             }
-            runtime._registers = new ReplicatedRegisterService(peers, runtime._ballots, options.RegisterOptions(clock));
+            runtime._registers = new ReplicatedRegisterService(peers.MoveToImmutable(), runtime._ballots, options.RegisterOptions(clock));
             runtime._observedRegisters = new ObservedRegisterService(runtime._registers, runtime.Diagnostics);
-            runtime._repair = new DurabilityRepair(options.AcceptorId, repairPeers, runtime._ballots, new()
+            runtime._repair = new DurabilityRepair(options.AcceptorId, repairPeers.MoveToImmutable(), runtime._ballots, new()
             {
                 TargetReplicas = options.TargetReplicationFactor,
                 PageSize = options.RepairPageSize,
@@ -193,11 +194,11 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
                 {
                     var result = await Repair.RunPassAsync(cancellationToken: token).ConfigureAwait(false);
                     ReportRepair(result, false);
-                    foreach (var error in result.Errors) logger.LogWarning(error, "Durability repair observed an unavailable peer or key.");
+                    foreach (var error in result.Errors) logger.RepairPeerUnavailable(error);
                 }
                 catch (RegisterUnavailableException error)
                 {
-                    logger.LogWarning(error, "Durability repair inventory is unavailable; another pass is scheduled.");
+                    logger.RepairInventoryUnavailable(error);
                     PublishRepair(new("failed", false, Repair.TargetReplicas, Error: error.Message));
                 }
                 delay = _repairInterval;
@@ -260,7 +261,7 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
     private void ReportRepair(RepairPassResult result, bool departing) =>
         PublishRepair(new(result.Pending == 0 ? "complete" : "pending",
             departing, Repair.TargetReplicas, result.Examined, result.Repaired, result.Pending,
-            result.Errors.Count == 0 ? null : string.Join("; ", result.Errors.Select(error => error.Message))));
+            result.Errors.Length == 0 ? null : string.Join("; ", result.Errors.Select(error => error.Message))));
 
     private void PublishRepair(RepairObservation observation)
     {
@@ -295,6 +296,7 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
             try { await _registers.DisposeAsync().ConfigureAwait(false); }
             catch (Exception error) { errors.Add(error); }
         }
+        _repair?.Dispose();
         foreach (var channel in _channels)
         {
             try { channel.Dispose(); }

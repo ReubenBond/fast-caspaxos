@@ -16,11 +16,7 @@ public sealed class SimulationSynchronizationContext(SimulationTaskQueue taskQue
     public override void Send(SendOrPostCallback d, object? state)
     {
         ArgumentNullException.ThrowIfNull(d);
-#pragma warning disable EPC20 // Avoid using default ToString implementation
-#pragma warning disable MA0150 // Do not call the default object.ToString explicitly
         throw new InvalidOperationException($"Cannot synchronously execute callback {d} with state {state}. Current ctx is {Current}");
-#pragma warning restore MA0150 // Do not call the default object.ToString explicitly
-#pragma warning restore EPC20 // Avoid using default ToString implementation
     }
 
     /// <inheritdoc />

@@ -23,7 +23,7 @@ public sealed class AdaptiveProposerPolicy
 
     public int ConflictDebtDecay { get; init; } = 1;
 
-    public int FastReopenThreshold { get; init; } = 0;
+    public int FastReopenThreshold { get; init; }
 
     public int LeaderMissThreshold { get; init; } = 1;
 

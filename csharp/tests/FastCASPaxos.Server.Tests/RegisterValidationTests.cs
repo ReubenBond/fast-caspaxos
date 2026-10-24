@@ -6,7 +6,7 @@ namespace FastCASPaxos.Server.Tests;
 public sealed class RegisterValidationTests
 {
     [Fact]
-    public async Task NativeVersionShape_UsesTheSameRuleAsRegisterAdmission()
+    public async Task NativeVersionShapeUsesTheSameRuleAsRegisterAdmission()
     {
         Assert.False(RegisterVersion.IsValid(default));
         var peers = Peers();
@@ -33,12 +33,12 @@ public sealed class RegisterValidationTests
     }
 
     [Fact]
-    public void Constructor_RejectsInvalidMembershipWithoutContactingPeers()
+    public void ConstructorRejectsInvalidMembershipWithoutContactingPeers()
     {
         var peers = Peers();
         var routes = Routes(peers);
         var ballots = new TestBallots(1);
-        Assert.Throws<ArgumentNullException>(() => new ReplicatedRegisterService(null!, ballots));
+        Assert.Throws<ArgumentNullException>(() => new ReplicatedRegisterService(default, ballots));
         Assert.Throws<ArgumentNullException>(() => new ReplicatedRegisterService(routes, null!));
         Assert.Throws<ArgumentException>(() => new ReplicatedRegisterService([], ballots));
         Assert.Throws<ArgumentException>(() => new ReplicatedRegisterService([routes[0], routes[0]], ballots));
@@ -50,7 +50,7 @@ public sealed class RegisterValidationTests
     }
 
     [Fact]
-    public void Constructor_RejectsInvalidOptions()
+    public void ConstructorRejectsInvalidOptions()
     {
         var routes = Routes(Peers());
         var ballots = new TestBallots(1);
@@ -71,7 +71,7 @@ public sealed class RegisterValidationTests
     }
 
     [Fact]
-    public async Task InvalidCalls_FailBeforeNetworkOrAdmission()
+    public async Task InvalidCallsFailBeforeNetworkOrAdmission()
     {
         var peers = Peers();
         await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(1), Options());

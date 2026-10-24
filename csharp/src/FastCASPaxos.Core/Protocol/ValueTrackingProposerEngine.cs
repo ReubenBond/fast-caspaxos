@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace FastCASPaxos.Protocol;
 
 /// <summary>
@@ -10,7 +12,7 @@ public abstract class ValueTrackingProposerEngine<TValue, TRoute> : ProposerEngi
     protected ValueTrackingProposerEngine(
         ProposerRuntime runtime,
         TValue initialValue,
-        IEnumerable<TRoute> acceptors,
+        ImmutableArray<TRoute> acceptors,
         ProposerModePolicy modePolicy)
         : base(runtime, initialValue, acceptors, modePolicy)
     {

@@ -112,7 +112,7 @@ public sealed class FastCasAcceptorHost<TValue> : IFastCasAcceptorNodeHost<TValu
     public void ReinitializeAsFreshRegister()
     {
         _stateStore.Clear(NodeId);
-        _state = AcceptorState<TValue>.CreateInitial(_initialValue);
+        _state = AcceptorState.CreateInitial<TValue>(_initialValue);
         IsRunning = true;
     }
 
@@ -128,7 +128,7 @@ public sealed class FastCasAcceptorHost<TValue> : IFastCasAcceptorNodeHost<TValu
             };
         }
 
-        return AcceptorState<TValue>.CreateInitial(_initialValue);
+        return AcceptorState.CreateInitial<TValue>(_initialValue);
     }
 
     private void SaveState()

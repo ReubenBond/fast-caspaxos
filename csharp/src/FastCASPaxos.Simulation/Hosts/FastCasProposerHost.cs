@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Clockwork;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
@@ -51,7 +52,7 @@ public sealed class FastCasProposerHost<TValue> : IFastCasProposerNodeHost<TValu
     }
 
     private readonly FastCasSimulationTransport<TValue> _transport;
-    private readonly List<FastCasAddress> _acceptors;
+    private readonly ImmutableArray<FastCasAddress> _acceptors;
     private readonly FastCasSimulationOptions _options;
     private readonly ProposerModePolicy _modePolicy;
     private readonly TValue _initialValue;
@@ -67,7 +68,7 @@ public sealed class FastCasProposerHost<TValue> : IFastCasProposerNodeHost<TValu
 
     public FastCasProposerHost(
         FastCasNodeId nodeId,
-        IEnumerable<FastCasAddress> acceptors,
+        ImmutableArray<FastCasAddress> acceptors,
         FastCasSimulationTransport<TValue> transport,
         TValue initialValue,
         FastCasSimulationOptions? options = null)
@@ -77,11 +78,11 @@ public sealed class FastCasProposerHost<TValue> : IFastCasProposerNodeHost<TValu
             throw new ArgumentException("FastCasProposerHost requires a proposer node id.", nameof(nodeId));
         }
 
-        ArgumentNullException.ThrowIfNull(acceptors);
+        if (acceptors.IsDefault) throw new ArgumentNullException(nameof(acceptors));
 
         NodeId = nodeId;
         Address = nodeId.Address;
-        _acceptors = [.. acceptors];
+        _acceptors = acceptors;
         _transport = transport ?? throw new ArgumentNullException(nameof(transport));
         _initialValue = initialValue;
         _options = options ?? new FastCasSimulationOptions();
@@ -614,7 +615,7 @@ public sealed class FastCasProposerHost<TValue> : IFastCasProposerNodeHost<TValu
             FastCasAddress proposer,
             int proposerId,
             TValue initialValue,
-            IEnumerable<FastCasAddress> acceptors,
+            ImmutableArray<FastCasAddress> acceptors,
             ProposerModePolicy modePolicy)
             : base(
                 new ProposerRuntime(host._options.CreateProposerDiagnostics?.Invoke(host.NodeId)),

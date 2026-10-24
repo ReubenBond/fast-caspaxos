@@ -7,7 +7,7 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class FastCasSimulationLatencyAwareTimingTests
 {
     [Fact]
-    public async Task CreateConfiguration_WithoutConfiguredLatency_PreservesFixedFallbackTiming()
+    public async Task CreateConfigurationWithoutConfiguredLatencyPreservesFixedFallbackTiming()
     {
         await using var cluster = CreateCluster();
         cluster.CreateConfiguration(proposerCount: 1, acceptorCount: 5);
@@ -26,7 +26,7 @@ public sealed class FastCasSimulationLatencyAwareTimingTests
     }
 
     [Fact]
-    public async Task ConfigureMessageDelays_PreservesFixedTimingWhenLatencyAwareDisabled()
+    public async Task ConfigureMessageDelaysPreservesFixedTimingWhenLatencyAwareDisabled()
     {
         await using var cluster = CreateCluster();
         cluster.CreateConfiguration(proposerCount: 1, acceptorCount: 5);
@@ -46,7 +46,7 @@ public sealed class FastCasSimulationLatencyAwareTimingTests
     }
 
     [Fact]
-    public async Task ConfigureMessageDelays_PreservesExplicitProposerTimingOverrides()
+    public async Task ConfigureMessageDelaysPreservesExplicitProposerTimingOverrides()
     {
         await using var cluster = new FastCasSimulationCluster<StringValue>(
             seed: 777,

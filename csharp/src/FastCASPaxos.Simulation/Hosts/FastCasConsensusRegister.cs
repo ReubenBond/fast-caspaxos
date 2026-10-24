@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Clockwork;
 using FastCASPaxos.Model;
 using FastCASPaxos.Protocol;
@@ -17,14 +18,14 @@ public sealed class FastCasConsensusRegister<TValue>
 
     public FastCasConsensusRegister(
         int ordinal,
-        IEnumerable<FastCasAddress> acceptors,
+        ImmutableArray<FastCasAddress> acceptors,
         FastCasSimulationTransport<TValue> transport,
         TValue initialValue,
         IFastCasAcceptorStateStore<TValue>? stateStore = null,
         Action<FastCasAddress>? onAcceptorStateSaved = null,
         FastCasSimulationOptions? options = null)
     {
-        ArgumentNullException.ThrowIfNull(acceptors);
+        if (acceptors.IsDefault) throw new ArgumentNullException(nameof(acceptors));
 
         ProposerHost = new FastCasProposerHost<TValue>(
             new FastCasNodeId(FastCasParticipantRole.Proposer, ordinal),

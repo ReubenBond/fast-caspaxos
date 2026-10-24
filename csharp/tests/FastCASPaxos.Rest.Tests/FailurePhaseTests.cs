@@ -16,7 +16,7 @@ public sealed class FailurePhaseTests
 
     [Theory]
     [MemberData(nameof(ServiceFailures))]
-    public async Task ServiceFailures_HaveSanitizedDefinitiveProblems(ApiOperation operation, Failure failure)
+    public async Task ServiceFailuresHaveSanitizedDefinitiveProblems(ApiOperation operation, Failure failure)
     {
         using var cancellation = new CancellationTokenSource();
         Exception error = failure switch
@@ -61,7 +61,7 @@ public sealed class FailurePhaseTests
 
     [Theory]
     [MemberData(nameof(UnexpectedFailures))]
-    public async Task UnexpectedServiceFailure_IsLoggedAndHasPhaseAwareOutcome(ApiOperation operation, Unexpected failure)
+    public async Task UnexpectedServiceFailureIsLoggedAndHasPhaseAwareOutcome(ApiOperation operation, Unexpected failure)
     {
         Exception error = failure switch
         {
@@ -94,7 +94,7 @@ public sealed class FailurePhaseTests
 
     [Theory]
     [MemberData(nameof(Unknowns))]
-    public async Task Put_UnknownDoesNotClaimLaterObservationAsResponseEtag(Observation observation, Cause cause)
+    public async Task PutUnknownDoesNotClaimLaterObservationAsResponseEtag(Observation observation, Cause cause)
     {
         RegisterValue? current = observation switch
         {
@@ -140,7 +140,7 @@ public sealed class FailurePhaseTests
     }
 
     [Fact]
-    public async Task Put_InvalidServiceStatusIsLoggedAsUnknownFailure()
+    public async Task PutInvalidServiceStatusIsLoggedAsUnknownFailure()
     {
         var service = new ControlledService
         {
@@ -162,7 +162,7 @@ public sealed class FailurePhaseTests
     [InlineData(BodyFailure.BadRequest)]
     [InlineData(BodyFailure.TooLarge)]
     [InlineData(BodyFailure.Unexpected)]
-    public async Task Put_BodyReadFailureNeverDispatches(BodyFailure failure)
+    public async Task PutBodyReadFailureNeverDispatches(BodyFailure failure)
     {
         Exception error = failure switch
         {
@@ -185,7 +185,7 @@ public sealed class FailurePhaseTests
     }
 
     [Fact]
-    public async Task Put_WaitsForCompleteBodyBeforeDispatch()
+    public async Task PutWaitsForCompleteBodyBeforeDispatch()
     {
         using var cancellation = new CancellationTokenSource();
         var atTail = Barrier<CancellationToken>();
@@ -259,7 +259,7 @@ public sealed class FailurePhaseTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Put_CancellationDuringBodyReadNeverDispatches(bool streamThrowsCancellation)
+    public async Task PutCancellationDuringBodyReadNeverDispatches(bool streamThrowsCancellation)
     {
         using var cancellation = new CancellationTokenSource();
         var reading = Barrier<CancellationToken>();
@@ -292,7 +292,7 @@ public sealed class FailurePhaseTests
     [InlineData(CompareExchangeStatus.Applied, true)]
     [InlineData(CompareExchangeStatus.Unknown, false)]
     [InlineData(CompareExchangeStatus.Mismatch, false)]
-    public async Task Put_KnownResultAfterCancellationIsPreserved(CompareExchangeStatus status, bool update)
+    public async Task PutKnownResultAfterCancellationIsPreserved(CompareExchangeStatus status, bool update)
     {
         using var cancellation = new CancellationTokenSource();
         var entered = Barrier<CancellationToken>();
@@ -344,7 +344,7 @@ public sealed class FailurePhaseTests
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public async Task List_InvalidUtf16InventoryFailsInsteadOfReplacingCharacters(bool cursor, bool lowSurrogate)
+    public async Task ListInvalidUtf16InventoryFailsInsteadOfReplacingCharacters(bool cursor, bool lowSurrogate)
     {
         var invalid = lowSurrogate ? "\uDC00" : "\uD800";
         var service = new ControlledService

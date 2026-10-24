@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Clockwork;
 using Xunit;
 
@@ -6,21 +7,19 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class ClockworkSmokeTests
 {
     [Fact]
-    public void SimulationRandom_WithSameSeed_ProducesSameSequence()
+    public void SimulationRandomWithSameSeedProducesSameSequence()
     {
         var left = new SimulationRandom(seed: 12345);
         var right = new SimulationRandom(seed: 12345);
 
-#pragma warning disable CA5394
         var leftValues = Enumerable.Range(0, 8).Select(_ => left.Next()).ToArray();
         var rightValues = Enumerable.Range(0, 8).Select(_ => right.Next()).ToArray();
-#pragma warning restore CA5394
 
         Assert.Equal(leftValues, rightValues);
     }
 
     [Fact]
-    public void SimulationTaskQueue_ExecutesDelayedWorkAfterClockAdvance()
+    public void SimulationTaskQueueExecutesDelayedWorkAfterClockAdvance()
     {
         var clock = new SimulationClock(DateTimeOffset.UnixEpoch);
         var queue = new SimulationTaskQueue(clock, new SingleThreadedGuard());
@@ -39,12 +38,12 @@ public sealed class ClockworkSmokeTests
     }
 
     [Fact]
-    public async Task SimulationNetwork_BlocksAndHealsBidirectionalPartitions()
+    public async Task SimulationNetworkBlocksAndHealsBidirectionalPartitions()
     {
         await using var cluster = new TestSimulationCluster(seed: 777);
         _ = cluster.AddNode("node-1");
         _ = cluster.AddNode("node-2");
-        var network = new SimulationNetwork(() => cluster.Nodes, cluster.Random.Fork());
+        var network = new SimulationNetwork(() => ImmutableArray<SimulationNode>.CastUp(cluster.Nodes), cluster.Random.Fork());
 
         Assert.True(network.CanDeliver("node-1", "node-2"));
         Assert.True(network.CanDeliver("node-2", "node-1"));
@@ -61,7 +60,7 @@ public sealed class ClockworkSmokeTests
     }
 
     [Fact]
-    public async Task SimulationCluster_RunUntil_CompletesScheduledTask()
+    public async Task SimulationClusterRunUntilCompletesScheduledTask()
     {
         await using var cluster = new TestSimulationCluster(seed: 9001);
         var executed = false;
@@ -76,7 +75,7 @@ public sealed class ClockworkSmokeTests
     }
 
     [Fact]
-    public async Task SimulationCluster_RunUntilIdle_AdvancesTimeForNodeWork()
+    public async Task SimulationClusterRunUntilIdleAdvancesTimeForNodeWork()
     {
         await using var cluster = new TestSimulationCluster(seed: 42);
         var node = cluster.AddNode("node-1");

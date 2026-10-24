@@ -9,7 +9,7 @@ namespace FastCASPaxos.Sqlite.Tests;
 public sealed class DiagnosticSqliteTests
 {
     [Fact]
-    public async Task Inspection_IncludesPromisesAndOrdinalExclusivePagesWithoutMutation()
+    public async Task InspectionIncludesPromisesAndOrdinalExclusivePagesWithoutMutation()
     {
         using var database = new TestDatabase();
         using var journal = new NodeEventJournal("a");
@@ -53,7 +53,7 @@ public sealed class DiagnosticSqliteTests
     }
 
     [Fact]
-    public async Task PostCommitPublication_PrecedesResponseButNeverPrecedesDurability()
+    public async Task PostCommitPublicationPrecedesResponseButNeverPrecedesDurability()
     {
         using var database = new TestDatabase();
         using var journal = new NodeEventJournal("a");
@@ -108,7 +108,7 @@ public sealed class DiagnosticSqliteTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task SelectedInspection_CancellationWaitsForCommit(bool list)
+    public async Task SelectedInspectionCancellationWaitsForCommit(bool list)
     {
         using var database = new TestDatabase();
         await using var server = await database.OpenAsync();
@@ -135,7 +135,7 @@ public sealed class DiagnosticSqliteTests
     }
 
     [Fact]
-    public async Task RolledBackBatch_PublishesOnlyStorageFailureAndFailsSelectedInspection()
+    public async Task RolledBackBatchPublishesOnlyStorageFailureAndFailsSelectedInspection()
     {
         using var database = new TestDatabase();
         await using (var seed = await database.OpenAsync())
@@ -205,7 +205,7 @@ public sealed class DiagnosticSqliteTests
     }
 
     [Fact]
-    public async Task Inspection_ValidationAndPreCancellationDoNotPublishOrMutate()
+    public async Task InspectionValidationAndPreCancellationDoNotPublishOrMutate()
     {
         using var database = new TestDatabase();
         using var journal = new NodeEventJournal("a");

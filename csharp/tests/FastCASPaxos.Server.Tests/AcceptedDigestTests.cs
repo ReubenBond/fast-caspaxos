@@ -8,7 +8,7 @@ public sealed class AcceptedDigestTests
     [Theory]
     [InlineData("empty")]
     [InlineData("abc")]
-    public void Hash_KnownVector_ReturnsSha256(string caseId)
+    public void HashKnownVectorReturnsSha256(string caseId)
     {
         var value = caseId switch
         {
@@ -24,31 +24,31 @@ public sealed class AcceptedDigestTests
     }
 
     [Fact]
-    public void Hash_DefaultValue_Throws() =>
+    public void HashDefaultValueThrows() =>
         Assert.Throws<ArgumentException>(() => AcceptedDigest.Hash(default));
 
     [Theory]
     [InlineData(0, 1)]
     [InlineData(-1, 1)]
     [InlineData(1, -1)]
-    public void Validate_InvalidAcceptedBallot_Throws(int round, int proposer) =>
+    public void ValidateInvalidAcceptedBallotThrows(int round, int proposer) =>
         Assert.Throws<ArgumentException>(() => new AcceptedDigest(new(round, proposer), new(new byte[32])).Validate());
 
     [Theory]
     [InlineData(0)]
     [InlineData(31)]
     [InlineData(33)]
-    public void Validate_InvalidHashLength_Throws(int length) =>
+    public void ValidateInvalidHashLengthThrows(int length) =>
         Assert.Throws<ArgumentException>(() => new AcceptedDigest(new(1, 1), new(new byte[length])).Validate());
 
     [Fact]
-    public void Validate_DefaultHash_Throws() =>
+    public void ValidateDefaultHashThrows() =>
         Assert.Throws<ArgumentException>(() => new AcceptedDigest(new(1, 1), default).Validate());
 
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
-    public void Validate_FastOrClassicDigest_AcceptsAndComparesBothFields(int proposer)
+    public void ValidateFastOrClassicDigestAcceptsAndComparesBothFields(int proposer)
     {
         var digest = new AcceptedDigest(new(1, proposer), new(new byte[32]));
         digest.Validate();

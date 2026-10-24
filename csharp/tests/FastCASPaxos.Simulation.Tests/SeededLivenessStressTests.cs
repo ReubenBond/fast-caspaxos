@@ -8,7 +8,7 @@ public sealed class SeededLivenessStressTests
 {
     [Theory]
     [MemberData(nameof(ProtocolOptionMatrix.ModeSeedMatrix), MemberType = typeof(ProtocolOptionMatrix))]
-    public async Task SeededTransientFaultMix_ConvergesWithReplayableOutcome(ProtocolModeCase mode, int seed)
+    public async Task SeededTransientFaultMixConvergesWithReplayableOutcome(ProtocolModeCase mode, int seed)
     {
         await using var cluster = ProtocolOptionMatrix.CreateStringCluster(mode, seed);
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);

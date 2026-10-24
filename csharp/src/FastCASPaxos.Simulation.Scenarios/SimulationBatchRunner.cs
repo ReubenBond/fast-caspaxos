@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Globalization;
@@ -15,7 +16,7 @@ namespace FastCASPaxos.Simulation.Scenarios;
 
 public sealed class SimulationBatchOptions
 {
-    public IReadOnlyList<string> ScenarioNames { get; init; } = ["all"];
+    public ImmutableArray<string> ScenarioNames { get; init; } = ["all"];
 
     public IReadOnlyDictionary<string, string> ScenarioParameters { get; init; } =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -68,11 +69,11 @@ public sealed record SimulationRunResult(
     bool Success,
     string Summary,
     string ReproductionHint,
-    IReadOnlyList<string> TraceLines,
+    ImmutableArray<string> TraceLines,
     string LogOutput,
     IReadOnlyDictionary<string, long> Statistics,
-    IReadOnlyList<SimulationProposalRoundTripSample> ProposalRoundTrips,
-    IReadOnlyList<ProposalLatencySample> ProposalLatencySamples,
+    ImmutableArray<SimulationProposalRoundTripSample> ProposalRoundTrips,
+    ImmutableArray<ProposalLatencySample> ProposalLatencySamples,
     IReadOnlyDictionary<string, string> Details,
     AcceptorSafetyMonitorArtifact? AcceptorSafetyMonitor,
     PorcupineHistoryArtifact? PorcupineHistory,
@@ -83,7 +84,7 @@ public sealed record SimulationRunResult(
         SimulationStatisticsSummary.FromRun(this);
 }
 
-public sealed record SimulationBatchResult(IReadOnlyList<SimulationRunResult> Runs)
+public sealed record SimulationBatchResult(ImmutableArray<SimulationRunResult> Runs)
 {
     public int SucceededCount => Runs.Count(run => run.Success);
 
@@ -128,7 +129,7 @@ public sealed class SimulationRunRecorder : IFastCasSimulationHistoryObserver
     private readonly Dictionary<string, string> _details = new(StringComparer.Ordinal);
     private readonly PorcupineHistoryBuilder _porcupineHistory = new();
 
-    public IReadOnlyList<string> TraceLines => _traceLines;
+    public ImmutableArray<string> TraceLines => [.. _traceLines];
 
     public IReadOnlyDictionary<string, long> Statistics => _statistics;
 
@@ -358,10 +359,10 @@ public sealed class SimulationObservabilitySession :
     public IReadOnlyDictionary<string, long> GetMeasurements() =>
         new Dictionary<string, long>(_measurements, StringComparer.Ordinal);
 
-    public IReadOnlyList<SimulationProposalRoundTripSample> GetProposalRoundTrips() =>
+    public ImmutableArray<SimulationProposalRoundTripSample> GetProposalRoundTrips() =>
         [.. _completedProposalRoundTrips];
 
-    public IReadOnlyList<ProposalLatencySample> GetProposalLatencySamples() =>
+    public ImmutableArray<ProposalLatencySample> GetProposalLatencySamples() =>
         [.. _completedProposalLatencySamples];
 
     public AcceptorSafetyMonitorArtifact? GetAcceptorSafetyMonitorArtifact() =>
@@ -723,12 +724,9 @@ public sealed class SimulationObservabilitySession :
 
 public static class SimulationScenarioCatalog
 {
-    private static readonly IReadOnlyList<SimulationScenarioDefinition> Definitions =
-        CreateDefinitions();
+    public static ImmutableArray<SimulationScenarioDefinition> All { get; } = CreateDefinitions();
 
-    public static IReadOnlyList<SimulationScenarioDefinition> All => Definitions;
-
-    private static IReadOnlyList<SimulationScenarioDefinition> CreateDefinitions()
+    private static ImmutableArray<SimulationScenarioDefinition> CreateDefinitions()
     {
         List<SimulationScenarioDefinition> definitions =
         [
@@ -837,7 +835,7 @@ public static class SimulationScenarioCatalog
                             cancellationToken)));
         }
 
-        return definitions;
+        return [.. definitions];
     }
 
     private static async ValueTask<SimulationScenarioCompletion> RunStringCorpusAsync(
@@ -852,11 +850,11 @@ public static class SimulationScenarioCatalog
         await using var cluster = CreateStringCluster(seed, options, cancellationToken);
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
 
-        var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
+        ImmutableArray<FastCasAddress> proposers = [.. cluster.ProposerNodes.Select(node => node.Host.Address)];
         var operations = TestCorpus.BuildStringOperations();
         var expected = TestCorpus.StringExpectedValue;
 
-        for (var index = 0; index < operations.Count; index++)
+        for (var index = 0; index < operations.Length; index++)
         {
             var response = cluster.RunProposal(proposers[index % proposers.Length], operations[index]);
             recorder.RecordProposal(cluster, proposers[index % proposers.Length], operations[index], response);
@@ -885,10 +883,10 @@ public static class SimulationScenarioCatalog
         await using var cluster = CreateSetCluster(seed, options, cancellationToken);
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
 
-        var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
+        ImmutableArray<FastCasAddress> proposers = [.. cluster.ProposerNodes.Select(node => node.Host.Address)];
         var (operations, expected) = TestCorpus.BuildSetOperations();
         var expectedVersion = 0;
-        for (var index = 0; index < operations.Count; index++)
+        for (var index = 0; index < operations.Length; index++)
         {
             var response = cluster.RunProposal(proposers[index % proposers.Length], operations[index]);
             recorder.RecordProposal(cluster, proposers[index % proposers.Length], operations[index], response);
@@ -919,10 +917,10 @@ public static class SimulationScenarioCatalog
         await using var cluster = CreateStringCluster(seed, options, cancellationToken);
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
 
-        var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
+        ImmutableArray<FastCasAddress> proposers = [.. cluster.ProposerNodes.Select(node => node.Host.Address)];
         var proposerRandom = new Random(seed + 500);
         var (operations, expected) = TestCorpus.BuildRandomStringOperations();
-        for (var index = 0; index < operations.Count; index++)
+        for (var index = 0; index < operations.Length; index++)
         {
             var proposer = proposers[proposerRandom.Next(proposers.Length)];
             var response = cluster.RunProposal(proposer, operations[index]);
@@ -954,9 +952,9 @@ public static class SimulationScenarioCatalog
         await using var cluster = CreateStringCluster(seed, options, cancellationToken);
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
 
-        var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
+        ImmutableArray<FastCasAddress> proposers = [.. cluster.ProposerNodes.Select(node => node.Host.Address)];
         var (operations, expected) = TestCorpus.BuildForkingStringOperations();
-        for (var index = 0; index < operations.Count; index++)
+        for (var index = 0; index < operations.Length; index++)
         {
             var proposer = proposers[index % proposers.Length];
             var response = cluster.RunProposal(proposer, operations[index]);
@@ -990,7 +988,7 @@ public static class SimulationScenarioCatalog
         const string charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         var operationRandom = new Random(seed + 100);
         var proposerRandom = new Random(seed + 200);
-        var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
+        ImmutableArray<FastCasAddress> proposers = [.. cluster.ProposerNodes.Select(node => node.Host.Address)];
         List<char> expected = [];
         foreach (var _ in Enumerable.Range(0, 12))
         {
@@ -1039,7 +1037,7 @@ public static class SimulationScenarioCatalog
             proposerCount: scenarioOptions.ProposerCount,
             acceptorCount: scenarioOptions.AcceptorCount);
 
-        var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
+        ImmutableArray<FastCasAddress> proposers = [.. cluster.ProposerNodes.Select(node => node.Host.Address)];
         var conflictRandom = new Random(seed + 600);
         var requestId = 1_000;
         var conflictSteps = 0;
@@ -1051,7 +1049,7 @@ public static class SimulationScenarioCatalog
             {
                 conflictSteps++;
                 var contenders = SelectContendingProposers(
-                    proposers,
+                    proposers.AsSpan(),
                     conflictFanout: scenarioOptions.ConflictFanout,
                     logicalStep: version);
                 List<(FastCasAddress Proposer, IOperation<StringValue> Operation, int RequestId)> submissions = [];
@@ -1105,7 +1103,7 @@ public static class SimulationScenarioCatalog
                 $"Expected committed version {version} after logical step {version}.");
         }
 
-        IReadOnlyList<StringValue> values = proposers.Length == 1
+        List<StringValue> values = proposers.Length == 1
             ? [lastCommittedValue]
             : RecordStringReads(cluster, recorder);
         Ensure(values.Distinct().Count() == 1, "Expected all proposers to converge on a single committed value.");
@@ -1374,7 +1372,7 @@ public static class SimulationScenarioCatalog
         var followUpResponse = cluster.RunProposal(FastCasAddress.Proposer(1), followUp, maxIterations: 5000);
         recorder.RecordProposal(cluster, FastCasAddress.Proposer(1), followUp, followUpResponse);
         Ensure(followUpResponse.CommittedValue.Version == 2, "Expected the follow-up proposal to commit version 2.");
-        Ensure(followUpResponse.CommittedValue.Value.EndsWith("D", StringComparison.Ordinal), "Expected the follow-up proposal to append 'D'.");
+        Ensure(followUpResponse.CommittedValue.Value.EndsWith('D'), "Expected the follow-up proposal to append 'D'.");
 
         var converged = ProtocolOptionMatrix.ReadUntilStringValuesAgree(cluster).Distinct().Single();
         Ensure(EqualityComparer<StringValue>.Default.Equals(converged, followUpResponse.CommittedValue), "Expected all proposers to converge on the follow-up committed value.");
@@ -1411,7 +1409,7 @@ public static class SimulationScenarioCatalog
         RecordProposerTimingDetails(recorder, cluster.Options.GetProposerTimingSnapshot());
 
         const string charset = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-        var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
+        ImmutableArray<FastCasAddress> proposers = [.. cluster.ProposerNodes.Select(node => node.Host.Address)];
         var requestId = 50_000;
 
         for (var step = 0; step < logicalSteps; step++)
@@ -1485,7 +1483,7 @@ public static class SimulationScenarioCatalog
         cluster.CreateConfiguration(proposerCount: 2, acceptorCount: 5);
 
         var random = new Random(seed + 300);
-        var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
+        ImmutableArray<FastCasAddress> proposers = [.. cluster.ProposerNodes.Select(node => node.Host.Address)];
         for (var version = 1; version <= 8; version++)
         {
             var proposer = proposers[version % proposers.Length];
@@ -1568,7 +1566,7 @@ public static class SimulationScenarioCatalog
             var proposerTiming = cluster.Options.GetProposerTimingSnapshot();
             RecordProposerTimingDetails(recorder, proposerTiming);
 
-            var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
+            ImmutableArray<FastCasAddress> proposers = [.. cluster.ProposerNodes.Select(node => node.Host.Address)];
             var proposerNodesByAddress = cluster.ProposerNodes.ToDictionary(node => node.Host.Address);
             if (benchmarkOptions.AgreementMode)
             {
@@ -1650,8 +1648,8 @@ public static class SimulationScenarioCatalog
                         proposerCount: benchmarkOptions.ProposerCount,
                         acceptorCount: benchmarkOptions.AcceptorCount);
                     benchmarkOptions.ApplyTopology(cluster);
-                    proposers = cluster.ProposerNodes
-                        .Select(node => node.Host.Address).ToArray();
+                    proposers = [.. cluster.ProposerNodes
+                        .Select(node => node.Host.Address)];
                     clientRoutes = proposers.ToArray();
                     collocatedClients = proposers
                         .Select(p => cluster.GetCollocatedClient(p)
@@ -1769,7 +1767,7 @@ public static class SimulationScenarioCatalog
                             if (submission.FailoverCount >= benchmarkOptions.ClientMaxRetries)
                             {
                                 if ((!proposerNodesByAddress[submission.Proposer].IsRunning || proposerNodesByAddress[submission.Proposer].IsSuspended)
-                                    && FindNextHealthyProposer(proposers, proposerNodesByAddress, submission.Proposer) is { } fallbackProposer)
+                                    && FindNextHealthyProposer(proposers.AsSpan(), proposerNodesByAddress, submission.Proposer) is { } fallbackProposer)
                                 {
                                     clientRoutes[submission.ClientSlot] = fallbackProposer;
                                 }
@@ -1790,7 +1788,7 @@ public static class SimulationScenarioCatalog
                             }
 
                             var nextProposer = FindNextHealthyProposer(
-                                proposers,
+                                proposers.AsSpan(),
                                 proposerNodesByAddress,
                                 submission.Proposer,
                                 excludeOccupied: occupiedProposers,
@@ -1847,7 +1845,7 @@ public static class SimulationScenarioCatalog
                     }
                 }
 
-                if (batchResponded == 0 && benchmarkOptions.FaultSchedule.Count == 0)
+                if (batchResponded == 0 && benchmarkOptions.FaultSchedule.Length == 0)
                 {
                     Ensure(false,
                         $"Expected benchmark proposals {completedProposals + 1}-{completedProposals + submissions.Count} to complete. " +
@@ -1909,7 +1907,7 @@ public static class SimulationScenarioCatalog
         FastCasSimulationCluster<StringValue> cluster,
         SimulationRunRecorder recorder,
         FastCasSimulationProposerTimingSnapshot proposerTiming,
-        IReadOnlyList<FastCasAddress> proposers,
+        ImmutableArray<FastCasAddress> proposers,
         IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
         FastCasAddress client)
     {
@@ -1921,7 +1919,7 @@ public static class SimulationScenarioCatalog
 
         var version = 0;
         var completedProposals = 0;
-        var currentLeader = benchmarkOptions.GetInitialLeader(proposers);
+        var currentLeader = benchmarkOptions.GetInitialLeader(proposers.AsSpan());
         while (completedProposals < proposalCount)
         {
             benchmarkOptions.ApplyFaultAtProposal(cluster, completedProposals, recorder);
@@ -1981,7 +1979,7 @@ public static class SimulationScenarioCatalog
         BenchmarkWorkloadOptions benchmarkOptions,
         FastCasSimulationCluster<StringValue> cluster,
         SimulationRunRecorder recorder,
-        IReadOnlyList<FastCasAddress> proposers,
+        ImmutableArray<FastCasAddress> proposers,
         IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
         FastCasAddress client,
         IOperation<StringValue> operation,
@@ -1990,7 +1988,7 @@ public static class SimulationScenarioCatalog
         TimeSpan clientTimeout,
         FastCasAddress currentLeader)
     {
-        var maxIterations = 50_000 * Math.Max(1, proposers.Count);
+        var maxIterations = 50_000 * Math.Max(1, proposers.Length);
         var failoverCount = 0;
         var target = GetExplicitClientInitialTarget(
             benchmarkOptions,
@@ -2083,7 +2081,7 @@ public static class SimulationScenarioCatalog
     private static FastCasAddress? GetExplicitClientInitialTarget(
         BenchmarkWorkloadOptions benchmarkOptions,
         FastCasAddress client,
-        IReadOnlyList<FastCasAddress> proposers,
+        ImmutableArray<FastCasAddress> proposers,
         IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
         FastCasAddress currentLeader) =>
         SelectSingleRoutingTarget(
@@ -2092,7 +2090,7 @@ public static class SimulationScenarioCatalog
     private static FastCasAddress? GetExplicitClientRetryTarget(
         BenchmarkWorkloadOptions benchmarkOptions,
         FastCasAddress client,
-        IReadOnlyList<FastCasAddress> proposers,
+        ImmutableArray<FastCasAddress> proposers,
         IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
         FastCasAddress currentLeader,
         FastCasAddress currentTarget) =>
@@ -2101,7 +2099,7 @@ public static class SimulationScenarioCatalog
             excluded: new HashSet<FastCasAddress> { currentTarget },
             preferCurrentLeader: false);
 
-    private static FastCasAddress[] RegisterAgreementClients(
+    private static ImmutableArray<FastCasAddress> RegisterAgreementClients(
         FastCasSimulationCluster<StringValue> cluster,
         BenchmarkWorkloadOptions benchmarkOptions)
     {
@@ -2114,7 +2112,7 @@ public static class SimulationScenarioCatalog
         return [.. clients];
     }
 
-    private static FastCasAddress[] RegisterSerialRandomProposerClients(
+    private static ImmutableArray<FastCasAddress> RegisterSerialRandomProposerClients(
         FastCasSimulationCluster<StringValue> cluster,
         BenchmarkWorkloadOptions benchmarkOptions)
     {
@@ -2137,14 +2135,14 @@ public static class SimulationScenarioCatalog
         FastCasSimulationCluster<StringValue> cluster,
         SimulationRunRecorder recorder,
         FastCasSimulationProposerTimingSnapshot proposerTiming,
-        IReadOnlyList<FastCasAddress> proposers,
-        IReadOnlyList<FastCasAddress> clients)
+        ImmutableArray<FastCasAddress> proposers,
+        ImmutableArray<FastCasAddress> clients)
     {
         recorder.SetDetail("parameter.serial-random-proposer-model", "collocated-clients");
         var proposalCount = benchmarkOptions.ProposalCount;
         var nextRequestId = 100_000;
         var writeInterval = TimeSpan.FromMilliseconds(benchmarkOptions.WriteIntervalMs);
-        var leader = benchmarkOptions.GetInitialLeader(proposers);
+        var leader = benchmarkOptions.GetInitialLeader(proposers.AsSpan());
         var clientRandom = new Random(seed + 300);
 
         var version = 0;
@@ -2153,7 +2151,7 @@ public static class SimulationScenarioCatalog
         {
             benchmarkOptions.ApplyFaultAtProposal(cluster, completedProposals, recorder);
 
-            var clientIndex = clientRandom.Next(clients.Count);
+            var clientIndex = clientRandom.Next(clients.Length);
             var client = clients[clientIndex];
 
             // Non-leader modes send to the collocated proposer.
@@ -2220,9 +2218,9 @@ public static class SimulationScenarioCatalog
         FastCasSimulationCluster<StringValue> cluster,
         SimulationRunRecorder recorder,
         FastCasSimulationProposerTimingSnapshot proposerTiming,
-        IReadOnlyList<FastCasAddress> proposers,
-        IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
-        IReadOnlyList<FastCasAddress> clients)
+        ImmutableArray<FastCasAddress> proposers,
+        Dictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
+        ImmutableArray<FastCasAddress> clients)
     {
         var proposalCount = benchmarkOptions.ProposalCount;
         var nextRequestId = 100_000;
@@ -2233,7 +2231,7 @@ public static class SimulationScenarioCatalog
         // Per-client "current proposer" routing: each client tracks which proposer
         // it sends requests to, and fails over on timeout.
         var clientCurrentProposers = InitializeClientProposers(
-            benchmarkOptions, clients, proposers, proposerNodesByAddress);
+            benchmarkOptions, clients.AsSpan(), proposers, proposerNodesByAddress);
 
         var completedProposals = 0;
         var agreementRound = 0;
@@ -2244,7 +2242,7 @@ public static class SimulationScenarioCatalog
             agreementRound++;
             var roundSegment = ((char)('A' + ((agreementRound - 1) % 26))).ToString();
             var roundOperation = StringScenarioOperations.AppendAtVersion(agreementRound, roundSegment);
-            var roundSize = Math.Min(clients.Count, proposalCount - completedProposals);
+            var roundSize = Math.Min(clients.Length, proposalCount - completedProposals);
 
             // Submit from each client to its current proposer. Multiple clients may
             // target the same proposer (e.g. all in leader mode); the proposer's
@@ -2255,7 +2253,7 @@ public static class SimulationScenarioCatalog
                 var proposer = clientCurrentProposers[clientIndex];
                 if (!IsHealthyProposer(proposerNodesByAddress[proposer]))
                 {
-                    proposer = FindNextHealthyProposer(proposers, proposerNodesByAddress, proposer)
+                    proposer = FindNextHealthyProposer(proposers.AsSpan(), proposerNodesByAddress, proposer)
                                ?? proposer;
                     clientCurrentProposers[clientIndex] = proposer;
                 }
@@ -2312,7 +2310,7 @@ public static class SimulationScenarioCatalog
 
                         if (submission.FailoverCount >= benchmarkOptions.ClientMaxRetries)
                         {
-                            if (FindNextHealthyProposer(proposers, proposerNodesByAddress, submission.Proposer) is { } fallbackProposer)
+                            if (FindNextHealthyProposer(proposers.AsSpan(), proposerNodesByAddress, submission.Proposer) is { } fallbackProposer)
                             {
                                 clientCurrentProposers[submission.ClientIndex] = fallbackProposer;
                             }
@@ -2335,7 +2333,7 @@ public static class SimulationScenarioCatalog
 
                         // Proposer is down — fail over to next healthy proposer
                         var nextProposer = FindNextHealthyProposer(
-                            proposers, proposerNodesByAddress, submission.Proposer);
+                            proposers.AsSpan(), proposerNodesByAddress, submission.Proposer);
                         if (nextProposer is not { } failoverProposer)
                         {
                             updatedSubmissions.Add(submission);
@@ -2359,7 +2357,7 @@ public static class SimulationScenarioCatalog
                     }
 
                     consecutiveTimeoutsWithoutProgress++;
-                    if (consecutiveTimeoutsWithoutProgress > benchmarkOptions.ClientMaxRetries + proposers.Count)
+                    if (consecutiveTimeoutsWithoutProgress > benchmarkOptions.ClientMaxRetries + proposers.Length)
                     {
                         Ensure(
                             false,
@@ -2409,7 +2407,7 @@ public static class SimulationScenarioCatalog
                 batchResponded++;
             }
 
-            if (batchResponded == 0 && benchmarkOptions.FaultSchedule.Count == 0)
+            if (batchResponded == 0 && benchmarkOptions.FaultSchedule.Length == 0)
             {
                 Ensure(false,
                     $"Expected simultaneous agreement round {agreementRound} to have at least one response. " +
@@ -2452,14 +2450,14 @@ public static class SimulationScenarioCatalog
 
     private static FastCasAddress[] InitializeClientProposers(
         BenchmarkWorkloadOptions benchmarkOptions,
-        IReadOnlyList<FastCasAddress> clients,
-        IReadOnlyList<FastCasAddress> proposers,
+        ReadOnlySpan<FastCasAddress> clients,
+        ImmutableArray<FastCasAddress> proposers,
         IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress)
     {
-        var result = new FastCasAddress[clients.Count];
+        var result = new FastCasAddress[clients.Length];
         if (benchmarkOptions.ModePolicy.StaticLeaderEnabled)
         {
-            var leader = benchmarkOptions.GetInitialLeader(proposers);
+            var leader = benchmarkOptions.GetInitialLeader(proposers.AsSpan());
             Array.Fill(result, leader);
             return result;
         }
@@ -2467,15 +2465,15 @@ public static class SimulationScenarioCatalog
         var healthyProposers = GetHealthyAgreementProposers(proposers, proposerNodesByAddress);
         if (healthyProposers.Length == 0)
         {
-            for (var i = 0; i < clients.Count; i++)
+            for (var i = 0; i < clients.Length; i++)
             {
-                result[i] = proposers[i % proposers.Count];
+                result[i] = proposers[i % proposers.Length];
             }
 
             return result;
         }
 
-        for (var i = 0; i < clients.Count; i++)
+        for (var i = 0; i < clients.Length; i++)
         {
             result[i] = healthyProposers[i % healthyProposers.Length];
         }
@@ -2488,9 +2486,9 @@ public static class SimulationScenarioCatalog
         FastCasSimulationCluster<StringValue> cluster,
         SimulationRunRecorder recorder,
         FastCasSimulationProposerTimingSnapshot proposerTiming,
-        IReadOnlyList<FastCasAddress> proposers,
+        ImmutableArray<FastCasAddress> proposers,
         IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
-        IReadOnlyList<FastCasAddress> clients)
+        ImmutableArray<FastCasAddress> clients)
     {
         var proposalCount = benchmarkOptions.ProposalCount;
         var nextRequestId = 100_000;
@@ -2500,7 +2498,7 @@ public static class SimulationScenarioCatalog
 
         var completedProposals = 0;
         var agreementRound = 0;
-        var currentLeader = benchmarkOptions.GetInitialLeader(proposers);
+        var currentLeader = benchmarkOptions.GetInitialLeader(proposers.AsSpan());
         while (completedProposals < proposalCount)
         {
             benchmarkOptions.ApplyFaultAtProposal(cluster, completedProposals, recorder);
@@ -2508,7 +2506,7 @@ public static class SimulationScenarioCatalog
             agreementRound++;
             var roundSegment = ((char)('A' + ((agreementRound - 1) % 26))).ToString();
             var roundOperation = StringScenarioOperations.AppendAtVersion(agreementRound, roundSegment);
-            var roundSize = Math.Min(clients.Count, proposalCount - completedProposals);
+            var roundSize = Math.Min(clients.Length, proposalCount - completedProposals);
             var roundCommittedValue = default(StringValue);
             var observedCommittedValue = false;
 
@@ -2584,7 +2582,7 @@ public static class SimulationScenarioCatalog
         BenchmarkWorkloadOptions benchmarkOptions,
         FastCasSimulationCluster<StringValue> cluster,
         SimulationRunRecorder recorder,
-        IReadOnlyList<FastCasAddress> proposers,
+        ImmutableArray<FastCasAddress> proposers,
         IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
         FastCasAddress client,
         IOperation<StringValue> operation,
@@ -2593,7 +2591,7 @@ public static class SimulationScenarioCatalog
         TimeSpan clientTimeout,
         FastCasAddress currentLeader)
     {
-        var maxIterations = 50_000 * Math.Max(1, proposers.Count);
+        var maxIterations = 50_000 * Math.Max(1, proposers.Length);
         HashSet<FastCasAddress> contactedProposers = [];
         var failoverCount = 0;
         var targets = GetAgreementInitialTargets(
@@ -2603,10 +2601,10 @@ public static class SimulationScenarioCatalog
             proposerNodesByAddress,
             currentLeader);
         Ensure(
-            targets.Count > 0,
+            targets.Length > 0,
             $"Expected at least one healthy proposer target for agreement client '{client}'.");
 
-        SendAgreementRequestAttempt(cluster, recorder, client, targets, operation, requestId);
+        SendAgreementRequestAttempt(cluster, recorder, client, targets.AsSpan(), operation, requestId);
         foreach (var target in targets)
         {
             contactedProposers.Add(target);
@@ -2668,15 +2666,15 @@ public static class SimulationScenarioCatalog
                 currentLeader,
                 contactedProposers);
             Ensure(
-                targets.Count > 0,
+                targets.Length > 0,
                 $"Expected a failover target for agreement request {requestId} from {client}.");
 
-            if (benchmarkOptions.ModePolicy.StaticLeaderEnabled && targets.Count == 1)
+            if (benchmarkOptions.ModePolicy.StaticLeaderEnabled && targets.Length == 1)
             {
                 currentLeader = targets[0];
             }
 
-            SendAgreementRequestAttempt(cluster, recorder, client, targets, operation, requestId);
+            SendAgreementRequestAttempt(cluster, recorder, client, targets.AsSpan(), operation, requestId);
             foreach (var target in targets)
             {
                 contactedProposers.Add(target);
@@ -2688,7 +2686,7 @@ public static class SimulationScenarioCatalog
         FastCasSimulationCluster<StringValue> cluster,
         SimulationRunRecorder recorder,
         FastCasAddress client,
-        IReadOnlyList<FastCasAddress> targets,
+        ReadOnlySpan<FastCasAddress> targets,
         IOperation<StringValue> operation,
         int requestId)
     {
@@ -2699,10 +2697,10 @@ public static class SimulationScenarioCatalog
         }
     }
 
-    private static IReadOnlyList<FastCasAddress> GetAgreementInitialTargets(
+    private static ImmutableArray<FastCasAddress> GetAgreementInitialTargets(
         BenchmarkWorkloadOptions benchmarkOptions,
         FastCasAddress client,
-        IReadOnlyList<FastCasAddress> proposers,
+        ImmutableArray<FastCasAddress> proposers,
         IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
         FastCasAddress currentLeader)
     {
@@ -2731,13 +2729,13 @@ public static class SimulationScenarioCatalog
         return [];
     }
 
-    private static IReadOnlyList<FastCasAddress> GetAgreementRetryTargets(
+    private static ImmutableArray<FastCasAddress> GetAgreementRetryTargets(
         BenchmarkWorkloadOptions benchmarkOptions,
         FastCasAddress client,
-        IReadOnlyList<FastCasAddress> proposers,
+        ImmutableArray<FastCasAddress> proposers,
         IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
         FastCasAddress currentLeader,
-        IReadOnlySet<FastCasAddress> contactedProposers)
+        HashSet<FastCasAddress> contactedProposers)
     {
         if (benchmarkOptions.ModePolicy.StaticFastCommitEnabled)
         {
@@ -2782,7 +2780,7 @@ public static class SimulationScenarioCatalog
     private static FastCasAddress? SelectSingleRoutingTarget(
         BenchmarkWorkloadOptions benchmarkOptions,
         FastCasAddress client,
-        IReadOnlyList<FastCasAddress> proposers,
+        ImmutableArray<FastCasAddress> proposers,
         IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
         FastCasAddress currentLeader,
         IReadOnlySet<FastCasAddress>? excluded = null,
@@ -2795,7 +2793,7 @@ public static class SimulationScenarioCatalog
                 return currentLeader;
             }
 
-            return FindNextHealthyProposer(proposers, proposerNodesByAddress, currentLeader);
+            return FindNextHealthyProposer(proposers.AsSpan(), proposerNodesByAddress, currentLeader);
         }
 
         return FindNearestHealthyClientProposer(
@@ -2805,7 +2803,7 @@ public static class SimulationScenarioCatalog
     private static FastCasAddress? FindNearestHealthyClientProposer(
         BenchmarkWorkloadOptions benchmarkOptions,
         FastCasAddress client,
-        IReadOnlyList<FastCasAddress> proposers,
+        ImmutableArray<FastCasAddress> proposers,
         IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
         IReadOnlySet<FastCasAddress>? excluded)
     {
@@ -2830,8 +2828,8 @@ public static class SimulationScenarioCatalog
         return null;
     }
 
-    private static FastCasAddress[] GetHealthyAgreementProposers(
-        IReadOnlyList<FastCasAddress> proposers,
+    private static ImmutableArray<FastCasAddress> GetHealthyAgreementProposers(
+        ImmutableArray<FastCasAddress> proposers,
         IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress) =>
         [.. proposers.Where(proposer => IsHealthyProposer(proposerNodesByAddress[proposer]))];
 
@@ -2884,7 +2882,7 @@ public static class SimulationScenarioCatalog
         }
     }
 
-    private static IReadOnlyList<KeyValuePair<string, string>> DescribeProposerTimingParameters(
+    private static ImmutableArray<KeyValuePair<string, string>> DescribeProposerTimingParameters(
         FastCasSimulationProposerTimingSnapshot timing) =>
     [
         new("retry-backoff", timing.PolicyName),
@@ -2900,14 +2898,14 @@ public static class SimulationScenarioCatalog
     ];
 
     private static FastCasAddress? FindNextHealthyProposer(
-        IReadOnlyList<FastCasAddress> proposers,
+        ReadOnlySpan<FastCasAddress> proposers,
         IReadOnlyDictionary<FastCasAddress, FastCasSimulationNode<StringValue>> proposerNodesByAddress,
         FastCasAddress currentProposer,
-        IReadOnlySet<FastCasAddress>? excludeOccupied = null,
-        IReadOnlySet<FastCasAddress>? excludeReserved = null)
+        HashSet<FastCasAddress>? excludeOccupied = null,
+        HashSet<FastCasAddress>? excludeReserved = null)
     {
         var currentIndex = -1;
-        for (var i = 0; i < proposers.Count; i++)
+        for (var i = 0; i < proposers.Length; i++)
         {
             if (proposers[i] == currentProposer)
             {
@@ -2921,9 +2919,9 @@ public static class SimulationScenarioCatalog
             return null;
         }
 
-        for (var offset = 1; offset < proposers.Count; offset++)
+        for (var offset = 1; offset < proposers.Length; offset++)
         {
-            var candidate = proposers[(currentIndex + offset) % proposers.Count];
+            var candidate = proposers[(currentIndex + offset) % proposers.Length];
             if (excludeOccupied is not null && excludeOccupied.Contains(candidate))
             {
                 continue;
@@ -2963,7 +2961,7 @@ public static class SimulationScenarioCatalog
         var operationRandom = new Random(seed + 100);
         var proposerRandom = new Random(seed + 200);
         var faultRandom = new Random(seed + 300);
-        var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
+        ImmutableArray<FastCasAddress> proposers = [.. cluster.ProposerNodes.Select(node => node.Host.Address)];
         // This scenario models replayable CAS-style appends, so each request carries the version it
         // intends to extend instead of behaving like a blind append against a stale local cache.
         List<char> expected = [];
@@ -3060,7 +3058,7 @@ public static class SimulationScenarioCatalog
         CancellationToken cancellationToken) =>
         new(seed, default, options, DateTimeOffset.UnixEpoch, cancellationToken);
 
-    private static IReadOnlyList<StringValue> RecordStringReads(
+    private static List<StringValue> RecordStringReads(
         FastCasSimulationCluster<StringValue> cluster,
         SimulationRunRecorder recorder)
     {
@@ -3077,7 +3075,7 @@ public static class SimulationScenarioCatalog
         return values;
     }
 
-    private static IReadOnlyList<SetValue> RecordSetReads(
+    private static List<SetValue> RecordSetReads(
         FastCasSimulationCluster<SetValue> cluster,
         SimulationRunRecorder recorder)
     {
@@ -3100,16 +3098,16 @@ public static class SimulationScenarioCatalog
         options.ConflictRate > 0
         && conflictRandom.NextDouble() < options.ConflictRate;
 
-    private static IReadOnlyList<FastCasAddress> SelectContendingProposers(
-        IReadOnlyList<FastCasAddress> proposers,
+    private static List<FastCasAddress> SelectContendingProposers(
+        ReadOnlySpan<FastCasAddress> proposers,
         int conflictFanout,
         int logicalStep)
     {
         List<FastCasAddress> selected = [];
-        var start = (logicalStep - 1) % proposers.Count;
+        var start = (logicalStep - 1) % proposers.Length;
         for (var index = 0; index < conflictFanout; index++)
         {
-            selected.Add(proposers[(start + index) % proposers.Count]);
+            selected.Add(proposers[(start + index) % proposers.Length]);
         }
 
         return selected;
@@ -3171,7 +3169,7 @@ public static class SimulationScenarioCatalog
 
 public static class SimulationBatchRunner
 {
-    public static IReadOnlyList<SimulationScenarioDefinition> AvailableScenarios =>
+    public static ImmutableArray<SimulationScenarioDefinition> AvailableScenarios =>
         SimulationScenarioCatalog.All;
 
     public static async Task<SimulationBatchResult> RunAsync(
@@ -3181,13 +3179,17 @@ public static class SimulationBatchRunner
         ArgumentNullException.ThrowIfNull(options);
         ArgumentException.ThrowIfNullOrWhiteSpace(options.OutputDirectory);
         ArgumentOutOfRangeException.ThrowIfLessThan(options.Rounds, 1);
+        if (options.ScenarioNames.IsDefault)
+        {
+            throw new ArgumentException("Scenario names must be initialized.", nameof(options));
+        }
 
         var outputDirectory = Path.GetFullPath(options.OutputDirectory);
         Directory.CreateDirectory(outputDirectory);
 
         var selectedScenarios = ResolveScenarios(options.ScenarioNames);
         var scenarioParameters = options.ScenarioParameters;
-        var plannedRuns = CreatePlannedRuns(selectedScenarios, options);
+        var plannedRuns = CreatePlannedRuns(selectedScenarios.AsSpan(), options);
         var results = new SimulationRunResult?[plannedRuns.Count];
 
         CancellationTokenSource? stopOnFailureCancellation = null;
@@ -3232,7 +3234,7 @@ public static class SimulationBatchRunner
             stopOnFailureCancellation?.Dispose();
         }
 
-        List<SimulationRunResult> completedResults = [];
+        var completedResults = ImmutableArray.CreateBuilder<SimulationRunResult>(results.Length);
         foreach (var result in results)
         {
             if (result is not null)
@@ -3241,7 +3243,7 @@ public static class SimulationBatchRunner
             }
         }
 
-        return await FinalizeBatchAsync(completedResults, outputDirectory, cancellationToken);
+        return await FinalizeBatchAsync(completedResults.DrainToImmutable(), outputDirectory, cancellationToken);
     }
 
     private static async Task<SimulationRunResult> RunScenarioAsync(
@@ -3275,7 +3277,7 @@ public static class SimulationBatchRunner
             recorder.SetDetail("acceptor-safety-monitor", acceptorSafetyMonitor is not null ? "available" : "unavailable");
             if (acceptorSafetyMonitor is not null)
             {
-                recorder.SetDetail("acceptor-safety-monitor-commits", acceptorSafetyMonitor.Commits.Count);
+                recorder.SetDetail("acceptor-safety-monitor-commits", acceptorSafetyMonitor.Commits.Length);
             }
             var result = new SimulationRunResult(
                 scenario.Name,
@@ -3287,8 +3289,8 @@ public static class SimulationBatchRunner
                 recorder.TraceLines,
                 observability.GetLogOutput(),
                 new Dictionary<string, long>(recorder.Statistics, StringComparer.Ordinal),
-                new List<SimulationProposalRoundTripSample>(observability.GetProposalRoundTrips()),
-                new List<ProposalLatencySample>(observability.GetProposalLatencySamples()),
+                observability.GetProposalRoundTrips(),
+                observability.GetProposalLatencySamples(),
                 new Dictionary<string, string>(recorder.Details, StringComparer.Ordinal),
                 acceptorSafetyMonitor,
                 porcupineHistory,
@@ -3309,7 +3311,7 @@ public static class SimulationBatchRunner
             recorder.SetDetail("acceptor-safety-monitor", acceptorSafetyMonitor is not null ? "available" : "unavailable");
             if (acceptorSafetyMonitor is not null)
             {
-                recorder.SetDetail("acceptor-safety-monitor-commits", acceptorSafetyMonitor.Commits.Count);
+                recorder.SetDetail("acceptor-safety-monitor-commits", acceptorSafetyMonitor.Commits.Length);
             }
             var result = new SimulationRunResult(
                 scenario.Name,
@@ -3321,8 +3323,8 @@ public static class SimulationBatchRunner
                 recorder.TraceLines,
                 observability.GetLogOutput(),
                 new Dictionary<string, long>(recorder.Statistics, StringComparer.Ordinal),
-                new List<SimulationProposalRoundTripSample>(observability.GetProposalRoundTrips()),
-                new List<ProposalLatencySample>(observability.GetProposalLatencySamples()),
+                observability.GetProposalRoundTrips(),
+                observability.GetProposalLatencySamples(),
                 new Dictionary<string, string>(recorder.Details, StringComparer.Ordinal),
                 acceptorSafetyMonitor,
                 porcupineHistory,
@@ -3333,11 +3335,11 @@ public static class SimulationBatchRunner
         }
     }
 
-    private static IReadOnlyList<PlannedSimulationRun> CreatePlannedRuns(
-        IReadOnlyList<SimulationScenarioDefinition> selectedScenarios,
+    private static List<PlannedSimulationRun> CreatePlannedRuns(
+        ReadOnlySpan<SimulationScenarioDefinition> selectedScenarios,
         SimulationBatchOptions options)
     {
-        var plannedRuns = new List<PlannedSimulationRun>(checked(options.Rounds * selectedScenarios.Count));
+        var plannedRuns = new List<PlannedSimulationRun>(checked(options.Rounds * selectedScenarios.Length));
         var index = 0;
         for (var round = 1; round <= options.Rounds; round++)
         {
@@ -3351,9 +3353,9 @@ public static class SimulationBatchRunner
         return plannedRuns;
     }
 
-    private static IReadOnlyList<SimulationScenarioDefinition> ResolveScenarios(IReadOnlyList<string> requestedNames)
+    private static ImmutableArray<SimulationScenarioDefinition> ResolveScenarios(ImmutableArray<string> requestedNames)
     {
-        if (requestedNames.Count == 0 || requestedNames.Any(name => string.Equals(name, "all", StringComparison.OrdinalIgnoreCase)))
+        if (requestedNames.Length == 0 || requestedNames.Any(name => string.Equals(name, "all", StringComparison.OrdinalIgnoreCase)))
         {
             return AvailableScenarios;
         }
@@ -3362,7 +3364,7 @@ public static class SimulationBatchRunner
             scenario => scenario.Name,
             scenario => scenario,
             StringComparer.OrdinalIgnoreCase);
-        List<SimulationScenarioDefinition> selected = [];
+        var selected = ImmutableArray.CreateBuilder<SimulationScenarioDefinition>(requestedNames.Length);
         foreach (var requestedName in requestedNames)
         {
             if (!lookup.TryGetValue(requestedName, out var scenario))
@@ -3373,7 +3375,7 @@ public static class SimulationBatchRunner
             selected.Add(scenario);
         }
 
-        return selected;
+        return selected.MoveToImmutable();
     }
 
     private static async Task WriteArtifactsAsync(
@@ -3417,7 +3419,7 @@ public static class SimulationBatchRunner
                 result.PorcupineHistory,
                 cancellationToken);
         }
-        if (result.ProposalLatencySamples.Count > 0)
+        if (result.ProposalLatencySamples.Length > 0)
         {
             await WriteLatencyCsvAsync(
                 Path.Combine(scenarioDirectory, "benchmark-latency.csv"),
@@ -3429,7 +3431,7 @@ public static class SimulationBatchRunner
 
     private static async Task WriteLatencyCsvAsync(
         string path,
-        IReadOnlyList<ProposalLatencySample> samples,
+        ImmutableArray<ProposalLatencySample> samples,
         IReadOnlyDictionary<string, string> details,
         CancellationToken cancellationToken)
     {
@@ -3491,7 +3493,7 @@ public static class SimulationBatchRunner
             ? proposerResponseTimeoutMsValue
             : "";
 
-        var lines = new List<string>(samples.Count + 1)
+        var lines = new List<string>(samples.Length + 1)
         {
             "request_id,proposer,kind,sent_ms,completed_ms,latency_ms,round_trips,mode,topology,fault_label,failover_count,proposer_count,acceptor_count,agreement_mode,register_init_mode,write_interval_ms,serial_random_proposer,client_timeout_ms,client_max_retries,proposer_timing_source,proposer_expected_one_way_latency_ms,proposer_expected_rtt_ms,proposer_retry_backoff_policy,proposer_retry_backoff_enabled,proposer_retry_backoff_start_after_failures,proposer_retry_backoff_base_ms,proposer_retry_backoff_max_ms,proposer_retry_backoff_jitter_ratio,proposer_response_timeout_ms",
         };
@@ -3507,7 +3509,7 @@ public static class SimulationBatchRunner
     }
 
     private static async Task<SimulationBatchResult> FinalizeBatchAsync(
-        IReadOnlyList<SimulationRunResult> results,
+        ImmutableArray<SimulationRunResult> results,
         string outputDirectory,
         CancellationToken cancellationToken)
     {
@@ -3533,7 +3535,7 @@ public static class SimulationBatchRunner
 
         if (result.AcceptorSafetyMonitor is not null)
         {
-            lines.Add($"acceptor-safety-monitor: commits={result.AcceptorSafetyMonitor.Commits.Count}");
+            lines.Add($"acceptor-safety-monitor: commits={result.AcceptorSafetyMonitor.Commits.Length}");
         }
 
         if (!string.IsNullOrWhiteSpace(result.FailureMessage))

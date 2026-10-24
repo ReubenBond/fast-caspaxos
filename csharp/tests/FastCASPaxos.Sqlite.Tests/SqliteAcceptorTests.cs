@@ -8,7 +8,7 @@ namespace FastCASPaxos.Sqlite.Tests;
 public sealed class SqliteAcceptorTests
 {
     [Fact]
-    public async Task ExactRetry_WithFreshBytesAndAfterReopen_PreservesOriginalPromise()
+    public async Task ExactRetryWithFreshBytesAndAfterReopenPreservesOriginalPromise()
     {
         using var database = new TestDatabase();
         var accepted = new Ballot(2, 7);
@@ -34,7 +34,7 @@ public sealed class SqliteAcceptorTests
     }
 
     [Fact]
-    public async Task SameBallotWithDifferentBytes_RejectsWithoutMutation()
+    public async Task SameBallotWithDifferentBytesRejectsWithoutMutation()
     {
         using var database = new TestDatabase();
         await using var server = await database.OpenAsync();
@@ -53,7 +53,7 @@ public sealed class SqliteAcceptorTests
     }
 
     [Fact]
-    public async Task StalePrepareAndAccept_ReturnConflictAndPreserveAcceptedState()
+    public async Task StalePrepareAndAcceptReturnConflictAndPreserveAcceptedState()
     {
         using var database = new TestDatabase();
         await using var server = await database.OpenAsync();
@@ -77,7 +77,7 @@ public sealed class SqliteAcceptorTests
     }
 
     [Fact]
-    public async Task AcceptWithoutPiggyback_UsesAcceptedBallotAsFloor()
+    public async Task AcceptWithoutPiggybackUsesAcceptedBallotAsFloor()
     {
         using var database = new TestDatabase();
         var ballot = new Ballot(8, 4);
@@ -104,7 +104,7 @@ public sealed class SqliteAcceptorTests
     }
 
     [Fact]
-    public async Task MaximumBallotFields_RoundTripWithoutTruncation()
+    public async Task MaximumBallotFieldsRoundTripWithoutTruncation()
     {
         using var database = new TestDatabase();
         var maximum = new Ballot(int.MaxValue, int.MaxValue);
@@ -132,7 +132,7 @@ public sealed class SqliteAcceptorTests
     }
 
     [Fact]
-    public async Task MissingAndEmptyValues_RemainDistinctAfterReopen()
+    public async Task MissingAndEmptyValuesRemainDistinctAfterReopen()
     {
         using var database = new TestDatabase();
         await using (var server = await database.OpenAsync())
@@ -161,7 +161,7 @@ public sealed class SqliteAcceptorTests
     }
 
     [Fact]
-    public async Task PromiseOnlyRecord_SurvivesReopenButIsNotListed()
+    public async Task PromiseOnlyRecordSurvivesReopenButIsNotListed()
     {
         using var database = new TestDatabase();
         var promised = new Ballot(9, 2);
@@ -186,7 +186,7 @@ public sealed class SqliteAcceptorTests
     }
 
     [Fact]
-    public async Task AcknowledgedWrite_IsVisibleToIndependentConnectionAndServer()
+    public async Task AcknowledgedWriteIsVisibleToIndependentConnectionAndServer()
     {
         using var database = new TestDatabase();
         await using var writer = await database.OpenAsync();
@@ -221,7 +221,7 @@ public sealed class SqliteAcceptorTests
     }
 
     [Fact]
-    public async Task IndependentServers_ObserveEachOthersPromiseAndAcceptedFloor()
+    public async Task IndependentServersObserveEachOthersPromiseAndAcceptedFloor()
     {
         using var database = new TestDatabase();
         await using var first = await database.OpenAsync();
@@ -245,7 +245,7 @@ public sealed class SqliteAcceptorTests
     }
 
     [Fact]
-    public async Task ReadOnlyRetriesAndRejections_DoNotAttemptStorageWrites()
+    public async Task ReadOnlyRetriesAndRejectionsDoNotAttemptStorageWrites()
     {
         using var database = new TestDatabase();
         await using var server = await database.OpenAsync();

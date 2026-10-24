@@ -21,7 +21,7 @@ public sealed class RequestValidationTests
 
     [Theory]
     [MemberData(nameof(BadRequests))]
-    public async Task MalformedRawRequests_RejectBeforeDomainDispatch(BadRequest scenario)
+    public async Task MalformedRawRequestsRejectBeforeDomainDispatch(BadRequest scenario)
     {
         var acceptor = new DelegateAcceptor();
         var registers = new DelegateRegister();
@@ -81,7 +81,7 @@ public sealed class RequestValidationTests
     [InlineData(Operation.Read)]
     [InlineData(Operation.CompareExchange)]
     [InlineData(Operation.RegisterList)]
-    public async Task MalformedText_IsRejectedBeforeDispatch(Operation operation)
+    public async Task MalformedTextIsRejectedBeforeDispatch(Operation operation)
     {
         // Control/surrogate data are deliberately not theory arguments or display names.
         string[] invalid = ["\ud800", "\udc00", "\ud800x", "x\udc00", "\ud800\ud800", "\udc00\ud800"];
@@ -108,7 +108,7 @@ public sealed class RequestValidationTests
     [InlineData(Operation.Read)]
     [InlineData(Operation.CompareExchange)]
     [InlineData(Operation.RegisterList)]
-    public async Task PreCancelledOperations_DoNotDispatch(Operation operation)
+    public async Task PreCancelledOperationsDoNotDispatch(Operation operation)
     {
         var invoker = StubCallInvoker.Fail(new InvalidOperationException("Must never dispatch."));
         using var cancellation = new CancellationTokenSource();
@@ -120,7 +120,7 @@ public sealed class RequestValidationTests
     }
 
     [Fact]
-    public async Task InvalidClientArguments_DoNotDispatch()
+    public async Task InvalidClientArgumentsDoNotDispatch()
     {
         var invoker = StubCallInvoker.Fail(new InvalidOperationException("Must never dispatch."));
         var acceptor = new GrpcKeyedAcceptor(invoker);
@@ -148,7 +148,7 @@ public sealed class RequestValidationTests
     }
 
     [Fact]
-    public async Task ExpectedVersionPresence_IsPreservedAndEmptyReachesLowerLayer()
+    public async Task ExpectedVersionPresenceIsPreservedAndEmptyReachesLowerLayer()
     {
         using var directory = new TestDirectory();
         await using var cluster = await SqliteContractCluster.OpenAsync(directory);
@@ -179,7 +179,7 @@ public sealed class RequestValidationTests
     [InlineData(Operation.Read)]
     [InlineData(Operation.CompareExchange)]
     [InlineData(Operation.RegisterList)]
-    public async Task Services_ForwardCancellationTokenToEveryDomainOperation(Operation operation)
+    public async Task ServicesForwardCancellationTokenToEveryDomainOperation(Operation operation)
     {
         using var cancellation = new CancellationTokenSource();
         CancellationToken observed = default;

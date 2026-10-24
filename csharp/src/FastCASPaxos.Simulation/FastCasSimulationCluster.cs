@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+using System.Globalization;
 using Clockwork;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
@@ -31,8 +33,8 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
     private readonly HashSet<FastCasAddress> _clientAddresses = [];
     private readonly Dictionary<FastCasAddress, FastCasAddress> _collocatedProposerClients = [];
     private readonly Dictionary<int, FastCasConsensusRegister<TValue>> _consensusRegisters = [];
-    private readonly List<FastCasSimulationNode<TValue>> _proposerNodes = [];
-    private readonly List<FastCasSimulationNode<TValue>> _acceptorNodes = [];
+    private ImmutableArray<FastCasSimulationNode<TValue>> _proposerNodes = [];
+    private ImmutableArray<FastCasSimulationNode<TValue>> _acceptorNodes = [];
     private readonly List<string> _faultHistory = [];
     private int _nextClientRequestId;
 
@@ -47,7 +49,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         InitialValue = initialValue;
         Options = options ?? new FastCasSimulationOptions();
         Transport = new FastCasSimulationTransport<TValue>(
-            new SimulationNetwork(() => Nodes, CreateDerivedRandom()),
+            new SimulationNetwork(() => ImmutableArray<SimulationNode>.CastUp(Nodes), CreateDerivedRandom()),
             Options.TransportObserver);
         if (Options.LoggerFactory is { } loggerFactory)
         {
@@ -76,13 +78,13 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
 
     public IReadOnlyDictionary<int, RoutedProposeResponse<TValue, FastCasAddress>> ClientResponses => _clientResponses;
 
-    public IReadOnlyList<FastCasSimulationNode<TValue>> ProposerNodes => _proposerNodes;
+    public ImmutableArray<FastCasSimulationNode<TValue>> ProposerNodes => _proposerNodes;
 
-    public IReadOnlyList<FastCasSimulationNode<TValue>> AcceptorNodes => _acceptorNodes;
+    public ImmutableArray<FastCasSimulationNode<TValue>> AcceptorNodes => _acceptorNodes;
 
     public IReadOnlyDictionary<int, FastCasConsensusRegister<TValue>> ConsensusRegisters => _consensusRegisters;
 
-    public IReadOnlyList<string> FaultHistory => _faultHistory;
+    public ImmutableArray<string> FaultHistory => [.. _faultHistory];
 
     public IReadOnlyDictionary<FastCasAddress, FastCasAddress> CollocatedProposerClients => _collocatedProposerClients;
 
@@ -93,7 +95,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
             ? register
             : throw new InvalidOperationException($"Unknown FastCASPaxos consensus register ordinal '{ordinal}'.");
 
-    public bool CanFormClassicQuorum() => 2 * AvailableAcceptorCount > _acceptorNodes.Count;
+    public bool CanFormClassicQuorum() => 2 * AvailableAcceptorCount > _acceptorNodes.Length;
 
     public bool CanReachClassicQuorum(FastCasAddress proposer)
     {
@@ -103,7 +105,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
             && Network.CanDeliver(proposer.NetworkAddress, node.NetworkAddress)
             && Network.CanDeliver(node.NetworkAddress, proposer.NetworkAddress));
 
-        return 2 * reachableAcceptors > _acceptorNodes.Count;
+        return 2 * reachableAcceptors > _acceptorNodes.Length;
     }
 
     public FastCasSimulationNode<TValue> AddAcceptor(
@@ -122,17 +124,18 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
             CreateNodeLogger(nodeId));
 
         RegisterNode(node);
-        _acceptorNodes.Add(node);
+        _acceptorNodes = _acceptorNodes.Add(node);
         ApplyCollocatedLinkLatencyFor(node.Host.Address);
         return node;
     }
 
     public FastCasSimulationNode<TValue> AddProposer(
         int ordinal,
-        IEnumerable<FastCasAddress>? acceptors = null)
+        ImmutableArray<FastCasAddress>? acceptors = null)
     {
-        var resolvedAcceptors = acceptors?.ToList() ?? [.. _acceptorNodes.Select(node => node.Host.Address)];
-        if (resolvedAcceptors.Count == 0)
+        if (acceptors is { IsDefault: true }) throw new ArgumentNullException(nameof(acceptors));
+        var resolvedAcceptors = acceptors ?? [.. _acceptorNodes.Select(node => node.Host.Address)];
+        if (resolvedAcceptors.Length == 0)
         {
             throw new InvalidOperationException("Add at least one acceptor before creating a proposer, or supply explicit acceptor addresses.");
         }
@@ -149,7 +152,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
             CreateNodeLogger(nodeId));
 
         RegisterNode(node);
-        _proposerNodes.Add(node);
+        _proposerNodes = _proposerNodes.Add(node);
         ApplyCollocatedLinkLatencyFor(node.Host.Address);
         RegisterCollocatedClient(node.Host.Address);
         RefreshCommittedValueBroadcasters();
@@ -158,10 +161,11 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
 
     public FastCasConsensusRegister<TValue> AddConsensusRegister(
         int ordinal,
-        IEnumerable<FastCasAddress>? acceptors = null,
+        ImmutableArray<FastCasAddress>? acceptors = null,
         IFastCasAcceptorStateStore<TValue>? stateStore = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(ordinal, 1);
+        if (acceptors is { IsDefault: true }) throw new ArgumentNullException(nameof(acceptors));
         if (_consensusRegisters.ContainsKey(ordinal))
         {
             throw new InvalidOperationException($"A consensus register for ordinal {ordinal} already exists.");
@@ -172,10 +176,12 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         EnsureRoleAddressAvailable(proposerAddress);
         EnsureRoleAddressAvailable(acceptorAddress);
 
-        var resolvedAcceptors = acceptors?.Distinct().ToList() ?? [.. _acceptorNodes.Select(node => node.Host.Address)];
+        ImmutableArray<FastCasAddress> resolvedAcceptors = acceptors is { } explicitAcceptors
+            ? [.. explicitAcceptors.Distinct()]
+            : [.. _acceptorNodes.Select(node => node.Host.Address)];
         if (!resolvedAcceptors.Contains(acceptorAddress))
         {
-            resolvedAcceptors.Add(acceptorAddress);
+            resolvedAcceptors = resolvedAcceptors.Add(acceptorAddress);
         }
 
         var register = new FastCasConsensusRegister<TValue>(
@@ -205,9 +211,9 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
             CreateNodeLogger(register.ProposerHost.NodeId));
 
         RegisterNode(acceptorNode);
-        _acceptorNodes.Add(acceptorNode);
+        _acceptorNodes = _acceptorNodes.Add(acceptorNode);
         RegisterNode(proposerNode);
-        _proposerNodes.Add(proposerNode);
+        _proposerNodes = _proposerNodes.Add(proposerNode);
         _consensusRegisters.Add(ordinal, register);
 
         ApplyCollocatedLinkLatencyFor(acceptorNode.Host.Address);
@@ -236,7 +242,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
     public void CreateConsensusRegisterConfiguration(int registerCount)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(registerCount, 1);
-        var acceptorAddresses = Enumerable.Range(1, registerCount).Select(FastCasAddress.Acceptor).ToList();
+        ImmutableArray<FastCasAddress> acceptorAddresses = [.. Enumerable.Range(1, registerCount).Select(FastCasAddress.Acceptor)];
         for (var ordinal = 1; ordinal <= registerCount; ordinal++)
         {
             AddConsensusRegister(ordinal, acceptorAddresses);
@@ -551,37 +557,37 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
     public string DescribeState()
     {
         var builder = new StringBuilder();
-        builder.AppendLine($"time: {TimeProvider.GetUtcNow():O}");
-        builder.AppendLine($"responses: {_clientResponses.Count}");
-        builder.AppendLine($"network: dropRate={Network.MessageDropRate:P0}, delays={Network.EnableDelays}, baseDelay={Network.BaseMessageDelay}, maxJitter={Network.MaxJitter}");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"time: {TimeProvider.GetUtcNow():O}");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"responses: {_clientResponses.Count}");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"network: dropRate={Network.MessageDropRate:P0}, delays={Network.EnableDelays}, baseDelay={Network.BaseMessageDelay}, maxJitter={Network.MaxJitter}");
         var linkLatencies = Network.GetAllLinkLatencies();
         if (linkLatencies.Count > 0)
         {
-            builder.AppendLine($"link-latencies: {linkLatencies.Count} override(s)");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"link-latencies: {linkLatencies.Count} override(s)");
             foreach (var ((source, target), latency) in linkLatencies.OrderBy(entry => entry.Key.Source, StringComparer.Ordinal).ThenBy(entry => entry.Key.Target, StringComparer.Ordinal))
             {
-                builder.AppendLine($"  {source} -> {target}: base={latency.BaseDelay}, jitter={latency.MaxJitter}");
+                builder.AppendLine(CultureInfo.InvariantCulture, $"  {source} -> {target}: base={latency.BaseDelay}, jitter={latency.MaxJitter}");
             }
         }
-        builder.AppendLine($"classicQuorumAvailable: {CanFormClassicQuorum()}");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"classicQuorumAvailable: {CanFormClassicQuorum()}");
         foreach (var proposer in _proposerNodes)
         {
-            builder.AppendLine($"reachableQuorum[{proposer.Host.Address}]={CanReachClassicQuorum(proposer.Host.Address)}");
+            builder.AppendLine(CultureInfo.InvariantCulture, $"reachableQuorum[{proposer.Host.Address}]={CanReachClassicQuorum(proposer.Host.Address)}");
         }
-        builder.AppendLine($"clusterQueue: scheduled={TaskQueue.ScheduledItems.Count}");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"clusterQueue: scheduled={TaskQueue.ScheduledItems.Count}");
         builder.AppendLine("nodes:");
 
         foreach (var node in Nodes.OrderBy(node => node.NetworkAddress))
         {
-            builder.Append($"  - {node.NetworkAddress}: running={node.IsRunning}, suspended={node.IsSuspended}, queued={node.Context.TaskQueue.ScheduledItems.Count}");
+            builder.Append(CultureInfo.InvariantCulture, $"  - {node.NetworkAddress}: running={node.IsRunning}, suspended={node.IsSuspended}, queued={node.Context.TaskQueue.ScheduledItems.Count}");
             switch (node.Host)
             {
                 case IFastCasProposerNodeHost<TValue> proposer:
-                    builder.Append($", cached={proposer.CachedValue}");
+                    builder.Append(CultureInfo.InvariantCulture, $", cached={proposer.CachedValue}");
                     break;
                 case IFastCasAcceptorNodeHost<TValue> acceptor:
                     var state = acceptor.State;
-                    builder.Append($", promised={state.PromisedBallot}, accepted={state.AcceptedBallot}, value={state.AcceptedValue}");
+                    builder.Append(CultureInfo.InvariantCulture, $", promised={state.PromisedBallot}, accepted={state.AcceptedBallot}, value={state.AcceptedValue}");
                     break;
             }
 
@@ -593,7 +599,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
             builder.AppendLine("fault-history:");
             foreach (var fault in _faultHistory.TakeLast(10))
             {
-                builder.AppendLine($"  - {fault}");
+                builder.AppendLine(CultureInfo.InvariantCulture, $"  - {fault}");
             }
         }
 
@@ -613,10 +619,10 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
     {
         // Build per-proposer histories from client responses (commit history is no longer
         // tracked on the proposer itself — it's now observable via DiagnosticSource events).
-        Dictionary<FastCasAddress, IReadOnlyList<TValue>> commitHistories = [];
+        Dictionary<FastCasAddress, ImmutableArray<TValue>> commitHistories = [];
         foreach (var responseGroup in _clientResponses.Values.GroupBy(r => r.Proposer))
         {
-            var values = new List<TValue>();
+            var values = ImmutableArray.CreateBuilder<TValue>();
             foreach (var response in responseGroup.OrderBy(r => r.Round))
             {
                 var v = response.CommittedValue;
@@ -631,7 +637,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
                 }
             }
 
-            commitHistories[responseGroup.Key] = values;
+            commitHistories[responseGroup.Key] = values.DrainToImmutable();
         }
 
         FastCasSafetyInvariantChecker.AssertSafety(commitHistories, _clientResponses.Values);
@@ -656,7 +662,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         failure?.Throw();
     }
 
-    private IReadOnlyList<FastCasAcceptorStateSnapshot<TValue>> CreateAcceptorStateSnapshots() =>
+    private FastCasAcceptorStateSnapshot<TValue>[] CreateAcceptorStateSnapshots() =>
         [.. _acceptorNodes
             .OrderBy(node => node.Host.Address.ToString(), StringComparer.Ordinal)
             .Select(node =>

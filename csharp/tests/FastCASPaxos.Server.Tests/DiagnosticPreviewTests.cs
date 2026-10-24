@@ -13,7 +13,7 @@ public sealed class DiagnosticPreviewTests
     [InlineData(256)]
     [InlineData(257)]
     [InlineData(4096)]
-    public void PayloadPreview_BoundsBinaryBytesWithoutMutatingSource(int length)
+    public void PayloadPreviewBoundsBinaryBytesWithoutMutatingSource(int length)
     {
         var bytes = Enumerable.Range(0, length).Select(i => (byte)i).ToArray();
         var value = new ByteString(bytes);
@@ -32,7 +32,7 @@ public sealed class DiagnosticPreviewTests
     [InlineData(1023)]
     [InlineData(1024)]
     [InlineData(1025)]
-    public void KeyPreview_BoundsUtf16WithoutNormalizingUnicodeOrBinaryCharacters(int length)
+    public void KeyPreviewBoundsUtf16WithoutNormalizingUnicodeOrBinaryCharacters(int length)
     {
         var key = "\0é中" + new string('x', length - 3);
         var preview = Assert.IsType<KeyPreview>(KeyPreview.From(key));
@@ -45,7 +45,7 @@ public sealed class DiagnosticPreviewTests
     }
 
     [Fact]
-    public void RegisterPreview_DistinguishesAbsentPresentEmptyAndOpaque()
+    public void RegisterPreviewDistinguishesAbsentPresentEmptyAndOpaque()
     {
         Assert.Equal(new RegisterPreview("register", false, null, null), RegisterPreview.FromAccepted(Absent));
         var version = Version(7, 11);
@@ -65,7 +65,7 @@ public sealed class DiagnosticPreviewTests
     }
 
     [Fact]
-    public void KeyPreview_TruncationDoesNotSplitValidSurrogatePair()
+    public void KeyPreviewTruncationDoesNotSplitValidSurrogatePair()
     {
         var key = new string('a', 1023) + "\U0001F600" + "tail";
         var preview = Assert.IsType<KeyPreview>(KeyPreview.From(key));
@@ -78,7 +78,7 @@ public sealed class DiagnosticPreviewTests
     }
 
     [Fact]
-    public void KeyPreview_MalformedUtf16IsExplicitlyLossyAndNeverAnExactAlias()
+    public void KeyPreviewMalformedUtf16IsExplicitlyLossyAndNeverAnExactAlias()
     {
         foreach (var malformed in new[] { "a\ud800b", "a\udc00b" })
         {
@@ -98,7 +98,7 @@ public sealed class DiagnosticPreviewTests
     }
 
     [Fact]
-    public void AcceptorStatePreview_PreservesFullBallotsAndTruncatesEnvelopePayloadIndependently()
+    public void AcceptorStatePreviewPreservesFullBallotsAndTruncatesEnvelopePayloadIndependently()
     {
         var payload = new ByteString(Enumerable.Range(0, 300).Select(i => (byte)i).ToArray());
         var accepted = Envelope(Version(7, 11), payload);

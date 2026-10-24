@@ -12,7 +12,7 @@ namespace FastCASPaxos.Grpc.Tests;
 public sealed class DiagnosticCorrelationTests
 {
     [Fact]
-    public async Task ClientInterceptor_CopiesHeadersAndPreservesCallOptionsWithoutAmbientLeakage()
+    public async Task ClientInterceptorCopiesHeadersAndPreservesCallOptionsWithoutAmbientLeakage()
     {
         var original = new Metadata { { "authorization", "test-auth" }, { "custom-bin", new byte[] { 1, 2 } } };
         using var cancellation = new CancellationTokenSource();
@@ -54,7 +54,7 @@ public sealed class DiagnosticCorrelationTests
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public async Task ServerInterceptor_BoundsUntrustedCorrelationAndRestoresContext(bool invalid, bool fail)
+    public async Task ServerInterceptorBoundsUntrustedCorrelationAndRestoresContext(bool invalid, bool fail)
     {
         var previous = new DiagnosticContext("outer", "outer-operation", "outer-call");
         var operation = Guid.NewGuid().ToString("N");
@@ -94,7 +94,7 @@ public sealed class DiagnosticCorrelationTests
     }
 
     [Fact]
-    public async Task RealHttp2_TwoHostsLinkLocalOutboundInboundAndQuorumOperation()
+    public async Task RealHttp2TwoHostsLinkLocalOutboundInboundAndQuorumOperation()
     {
         using var directory = new TestDirectory();
         await using var remote = await DiagnosticHost.Start(DiagnosticHost.Options(directory, "b", 2));
@@ -147,7 +147,7 @@ public sealed class DiagnosticCorrelationTests
     }
 
     [Fact]
-    public async Task ConcurrentHttp2Calls_DoNotCrossContaminateOperationOrCallIds()
+    public async Task ConcurrentHttp2CallsDoNotCrossContaminateOperationOrCallIds()
     {
         using var directory = new TestDirectory();
         await using var remote = await DiagnosticHost.Start(DiagnosticHost.Options(directory, "b", 2));

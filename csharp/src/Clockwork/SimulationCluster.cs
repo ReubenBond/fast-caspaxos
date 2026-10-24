@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Globalization;
 using Microsoft.Extensions.Logging;
@@ -87,13 +88,13 @@ public abstract class SimulationCluster<TNode> : IAsyncDisposable
     /// Gets all nodes in the simulation, including suspended nodes (snapshot).
     /// Consider using <see cref="ActiveNodes"/> for most operations.
     /// </summary>
-    public IReadOnlyList<TNode> Nodes => [.. _nodes.Values];
+    public ImmutableArray<TNode> Nodes => [.. _nodes.Values];
 
     /// <summary>
     /// Gets all active (non-suspended) nodes in the simulation (snapshot).
     /// Suspended nodes cannot process messages and are excluded from convergence checks.
     /// </summary>
-    public IReadOnlyList<TNode> ActiveNodes => [.. _nodes.Values.Where(n => !n.IsSuspended)];
+    public ImmutableArray<TNode> ActiveNodes => [.. _nodes.Values.Where(n => !n.IsSuspended)];
 
     /// <summary>
     /// Gets the cluster-level task queue for scheduling general simulation work.
@@ -482,9 +483,10 @@ public abstract class SimulationCluster<TNode> : IAsyncDisposable
         catch (AggregateException ex)
         {
             // Log but don't throw - we're in cleanup
-#pragma warning disable CA1848 // Use the LoggerMessage delegates - this is rarely called cleanup code
-            logger?.LogWarning(ex, "Exception during cancellation");
-#pragma warning restore CA1848
+            if (logger is not null)
+            {
+                SimulationClusterLog.CancellationFailed(logger, ex);
+            }
         }
     }
 
@@ -510,5 +512,11 @@ public abstract class SimulationCluster<TNode> : IAsyncDisposable
         GC.SuppressFinalize(this);
     }
 
-    private string DebuggerDisplay => string.Create(CultureInfo.InvariantCulture, $"SimulationCluster(Seed={Seed}, Nodes={Nodes.Count}, Time={Clock.CurrentTime:hh\\:mm\\:ss\\.fff})");
+    private string DebuggerDisplay => string.Create(CultureInfo.InvariantCulture, $"SimulationCluster(Seed={Seed}, Nodes={Nodes.Length}, Time={Clock.CurrentTime:hh\\:mm\\:ss\\.fff})");
+}
+
+internal static partial class SimulationClusterLog
+{
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Exception during cancellation")]
+    public static partial void CancellationFailed(ILogger logger, Exception exception);
 }

@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
 using FastCASPaxos.Protocol;
@@ -112,16 +113,16 @@ public sealed class GrpcKeyedAcceptor : IKeyedAcceptor
         var response = await _calls.Invoke(o => _client.ListKeysAsync(request, o), cancellationToken).ConfigureAwait(false);
         return RpcErrors.Response(() =>
         {
-            var entries = response.Entries.Select(entry =>
+            ImmutableArray<KeyedAcceptorState> entries = [.. response.Entries.Select(entry =>
             {
                 var (ballot, value) = WireConvert.Accepted(entry.Accepted);
                 WireConvert.Require(value is not null, "Inventory entries must contain an accepted value.");
                 return new KeyedAcceptorState(WireConvert.Key(entry.Key, entry.HasKey),
                     WireConvert.Ballot(entry.PromisedBallot), ballot, value!.Value);
-            }).ToArray();
+            })];
             var cursor = response.HasContinuationKey ? response.ContinuationKey : null;
             WireConvert.ValidatePage(entries.Select(e => e.Key).ToArray(), cursor, request);
-            return new KeyPage(Array.AsReadOnly(entries), cursor);
+            return new KeyPage(entries, cursor);
         });
     }
 }

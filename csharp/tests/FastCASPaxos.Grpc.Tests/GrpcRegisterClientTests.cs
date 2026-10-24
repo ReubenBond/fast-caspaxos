@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Clockwork;
 using FastCASPaxos.Server;
 using Grpc.Core;
@@ -14,7 +15,7 @@ public sealed class GrpcRegisterClientTests
     [InlineData(true, StatusCode.Unavailable)]
     [InlineData(false, StatusCode.DeadlineExceeded)]
     [InlineData(true, StatusCode.DeadlineExceeded)]
-    public async Task ReadOnlyCalls_FailOverAndPreserveRequests(bool list, StatusCode failure)
+    public async Task ReadOnlyCallsFailOverAndPreserveRequests(bool list, StatusCode failure)
     {
         var offline = StubCallInvoker.Fail(new RpcException(new(failure, "offline")));
         var healthy = StubCallInvoker.Reply(list
@@ -24,7 +25,7 @@ public sealed class GrpcRegisterClientTests
         if (list)
         {
             var result = await client.ListKeysAsync("catalog/", "", 2);
-            Assert.Equal(["catalog/\0", "catalog/\U0001F600"], result.Keys);
+            Assert.Equal<string>(["catalog/\0", "catalog/\U0001F600"], result.Keys);
             Assert.Equal("catalog/\U0001F600", result.ContinuationKey);
             var request = Assert.IsType<Wire.ListKeysRequest>(Assert.Single(healthy.Calls).Request);
             Assert.Equal("catalog/", request.Prefix);
@@ -42,7 +43,7 @@ public sealed class GrpcRegisterClientTests
     }
 
     [Fact]
-    public async Task EndpointAffinity_RetainsSuccessfulServerAndMovesAfterFailure()
+    public async Task EndpointAffinityRetainsSuccessfulServerAndMovesAfterFailure()
     {
         var offline = false;
         var first = new StubCallInvoker((_, _) => offline
@@ -60,7 +61,7 @@ public sealed class GrpcRegisterClientTests
     }
 
     [Fact]
-    public async Task DefiniteUnavailable_RetriesIdenticalMutationAtNextEndpoint()
+    public async Task DefiniteUnavailableRetriesIdenticalMutationAtNextEndpoint()
     {
         var first = StubCallInvoker.Fail(Definite(StatusCode.Unavailable, "unavailable"));
         var second = StubCallInvoker.Reply(new Wire.CompareExchangeResponse { Applied = Present() });
@@ -84,7 +85,7 @@ public sealed class GrpcRegisterClientTests
     [InlineData(StatusCode.ResourceExhausted)]
     [InlineData(StatusCode.DataLoss)]
     [InlineData(StatusCode.Internal)]
-    public async Task AmbiguousMutationFailure_ReturnsUnknownWithoutReplay(StatusCode code)
+    public async Task AmbiguousMutationFailureReturnsUnknownWithoutReplay(StatusCode code)
     {
         var cause = new RpcException(new(code, "uncertain"));
         var first = StubCallInvoker.Fail(cause);
@@ -101,7 +102,7 @@ public sealed class GrpcRegisterClientTests
     }
 
     [Fact]
-    public async Task UnknownWithLaterObservation_PreservesOutcomeAndCause()
+    public async Task UnknownWithLaterObservationPreservesOutcomeAndCause()
     {
         var first = StubCallInvoker.Reply(new Wire.CompareExchangeResponse
         {
@@ -121,7 +122,7 @@ public sealed class GrpcRegisterClientTests
     }
 
     [Fact]
-    public async Task Mismatch_PreservesOpaqueExpectedVersionAndCurrent()
+    public async Task MismatchPreservesOpaqueExpectedVersionAndCurrent()
     {
         var first = StubCallInvoker.Reply(new Wire.CompareExchangeResponse { Mismatch = Present() });
         var second = StubCallInvoker.Reply(new Wire.CompareExchangeResponse { Applied = Present() });
@@ -139,7 +140,7 @@ public sealed class GrpcRegisterClientTests
     [InlineData(StatusCode.ResourceExhausted, "busy", typeof(RegisterBusyException))]
     [InlineData(StatusCode.InvalidArgument, "invalid", typeof(ArgumentException))]
     [InlineData(StatusCode.Cancelled, "cancelled", typeof(OperationCanceledException))]
-    public async Task DefiniteNonRetryableFailure_RemainsExplicit(StatusCode code, string kind, Type type)
+    public async Task DefiniteNonRetryableFailureRemainsExplicit(StatusCode code, string kind, Type type)
     {
         var first = StubCallInvoker.Fail(Definite(code, kind));
         var second = StubCallInvoker.Reply(new Wire.CompareExchangeResponse { Applied = Present() });
@@ -154,7 +155,7 @@ public sealed class GrpcRegisterClientTests
     [InlineData(StatusCode.ResourceExhausted)]
     [InlineData(StatusCode.DataLoss)]
     [InlineData(StatusCode.Internal)]
-    public async Task NonRetryableReadFailure_RemainsExplicit(StatusCode code)
+    public async Task NonRetryableReadFailureRemainsExplicit(StatusCode code)
     {
         var first = StubCallInvoker.Fail(new RpcException(new(code, "failure")));
         var second = StubCallInvoker.Reply(Absent());
@@ -165,7 +166,7 @@ public sealed class GrpcRegisterClientTests
     }
 
     [Fact]
-    public async Task CorruptReplies_ProduceDataLossAndMutationUncertainty()
+    public async Task CorruptRepliesProduceDataLossAndMutationUncertainty()
     {
         var first = StubCallInvoker.Reply(new Wire.RegisterState());
         var second = StubCallInvoker.Reply(Absent());
@@ -184,7 +185,7 @@ public sealed class GrpcRegisterClientTests
     }
 
     [Fact]
-    public async Task PreCancellationAndLocalValidation_SendNoRequests()
+    public async Task PreCancellationAndLocalValidationSendNoRequests()
     {
         var endpoint = StubCallInvoker.Reply(Absent());
         using var client = new GrpcRegisterClient([endpoint]);
@@ -200,7 +201,7 @@ public sealed class GrpcRegisterClientTests
     }
 
     [Fact]
-    public async Task InFlightCancellation_RetainsWriteUncertaintyAndCallerToken()
+    public async Task InFlightCancellationRetainsWriteUncertaintyAndCallerToken()
     {
         using var cancellation = new CancellationTokenSource();
         var first = new StubCallInvoker((_, _) =>
@@ -217,7 +218,7 @@ public sealed class GrpcRegisterClientTests
     }
 
     [Fact]
-    public async Task ExhaustedEndpoints_AreAttemptedOnceAndPreserveLastError()
+    public async Task ExhaustedEndpointsAreAttemptedOnceAndPreserveLastError()
     {
         var cause = new RpcException(new(StatusCode.Unavailable, "last endpoint"));
         var first = StubCallInvoker.Fail(new RpcException(new(StatusCode.Unavailable, "first endpoint")));
@@ -232,7 +233,7 @@ public sealed class GrpcRegisterClientTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Budget_LimitsEachAttemptAndStopsAtOverallDeadline(bool mutation)
+    public async Task BudgetLimitsEachAttemptAndStopsAtOverallDeadline(bool mutation)
     {
         var clock = new SimulationClock(new DateTimeOffset(2040, 1, 2, 3, 4, 5, TimeSpan.Zero));
         var time = new SimulationTimeProvider(new SimulationTaskQueue(clock, new()), clock);
@@ -264,7 +265,7 @@ public sealed class GrpcRegisterClientTests
     }
 
     [Fact]
-    public async Task CancellationBetweenAttempts_StopsFailover()
+    public async Task CancellationBetweenAttemptsStopsFailover()
     {
         using var cancellation = new CancellationTokenSource();
         var first = new StubCallInvoker((_, _) =>
@@ -281,7 +282,7 @@ public sealed class GrpcRegisterClientTests
     }
 
     [Fact]
-    public async Task Disposal_IsIdempotentAndLeavesCallerOwnedInvokerUsable()
+    public async Task DisposalIsIdempotentAndLeavesCallerOwnedInvokerUsable()
     {
         var endpoint = StubCallInvoker.Reply(Absent());
         var client = new GrpcRegisterClient([endpoint]);
@@ -293,16 +294,16 @@ public sealed class GrpcRegisterClientTests
     }
 
     [Fact]
-    public void Constructors_ValidateEndpointSetAndBounds()
+    public void ConstructorsValidateEndpointSetAndBounds()
     {
-        Assert.Throws<ArgumentException>(() => new GrpcRegisterClient(Array.Empty<Uri>()));
-        Assert.Throws<ArgumentException>(() => new GrpcRegisterClient(new[] { new Uri("relative", UriKind.Relative) }));
-        Assert.Throws<ArgumentException>(() => new GrpcRegisterClient(new Uri[] { null! }));
-        Assert.Throws<ArgumentException>(() => new GrpcRegisterClient(Array.Empty<CallInvoker>()));
-        Assert.Throws<ArgumentException>(() => new GrpcRegisterClient(new CallInvoker[] { null! }));
+        Assert.Throws<ArgumentException>(() => new GrpcRegisterClient(ImmutableArray<Uri>.Empty));
+        Assert.Throws<ArgumentException>(() => new GrpcRegisterClient([new Uri("relative", UriKind.Relative)]));
+        Assert.Throws<ArgumentException>(() => new GrpcRegisterClient([(Uri)null!]));
+        Assert.Throws<ArgumentException>(() => new GrpcRegisterClient(ImmutableArray<CallInvoker>.Empty));
+        Assert.Throws<ArgumentException>(() => new GrpcRegisterClient([(CallInvoker)null!]));
         foreach (var invalid in new[] { "file:///tmp", "https://host/path", "https://user@host", "https://host?x=1", "https://host/#fragment" })
-            Assert.Throws<ArgumentException>(() => new GrpcRegisterClient(new[] { new Uri(invalid) }));
-        Assert.Throws<ArgumentException>(() => new GrpcRegisterClient(new[] { new Uri("https://HOST"), new Uri("https://host/") }));
+            Assert.Throws<ArgumentException>(() => new GrpcRegisterClient([new Uri(invalid)]));
+        Assert.Throws<ArgumentException>(() => new GrpcRegisterClient([new Uri("https://HOST"), new Uri("https://host/")]));
         var endpoint = StubCallInvoker.Reply(Absent());
         foreach (var invalid in new[] { TimeSpan.Zero, TimeSpan.FromTicks(-1), TimeSpan.FromDays(1) + TimeSpan.FromTicks(1) })
         {

@@ -33,7 +33,7 @@ public sealed class RegisterGrpcService(IRegisterService registers, ILogger<Regi
                         WireConvert.Require(result.Current is not null, "Mismatch requires an established current value.");
                         return new Wire.CompareExchangeResponse { Mismatch = WireConvert.ToWire(result.Current!) };
                     case CompareExchangeStatus.Unknown:
-                        if (result.Error is not null) logger.LogWarning(result.Error, "CompareExchange has an unknown outcome.");
+                        if (result.Error is not null) logger.CompareExchangeOutcomeUnknown(result.Error);
                         return new Wire.CompareExchangeResponse
                         {
                             Unknown = new()
@@ -56,7 +56,7 @@ public sealed class RegisterGrpcService(IRegisterService registers, ILogger<Regi
             var page = await registers.ListKeysAsync(request.Prefix, cursor, request.Limit, context.CancellationToken);
             return RpcErrors.Response(() =>
             {
-                WireConvert.ValidatePage(page.Keys, page.ContinuationKey, request);
+                WireConvert.ValidatePage(page.Keys.AsSpan(), page.ContinuationKey, request);
                 var response = new Wire.RegisterKeyPage();
                 response.Keys.AddRange(page.Keys);
                 if (page.ContinuationKey is not null) response.ContinuationKey = page.ContinuationKey;

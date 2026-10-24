@@ -12,7 +12,7 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class FastCasSimulationClusterTests
 {
     [Fact]
-    public async Task RunProposal_CompletesAgainstConfiguredQuorum()
+    public async Task RunProposalCompletesAgainstConfiguredQuorum()
     {
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 123,
@@ -28,11 +28,11 @@ public sealed class FastCasSimulationClusterTests
         var response = cluster.RunProposal(FastCasAddress.Proposer(1), AppendOperation(1, "A"));
 
         Assert.Equal(new TestValue(1, "A"), response.CommittedValue);
-        Assert.Equal("RunProposal_CompletesAgainstConfiguredQuorum (seed: 123)", cluster.GetReproductionHint(nameof(RunProposal_CompletesAgainstConfiguredQuorum)));
+        Assert.Equal("RunProposalCompletesAgainstConfiguredQuorum (seed: 123)", cluster.GetReproductionHint(nameof(RunProposalCompletesAgainstConfiguredQuorum)));
     }
 
     [Fact]
-    public async Task SendProposal_StoresClientResponseByRequestId()
+    public async Task SendProposalStoresClientResponseByRequestId()
     {
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 456,
@@ -52,7 +52,7 @@ public sealed class FastCasSimulationClusterTests
     }
 
     [Fact]
-    public async Task RunProposal_BroadcastsCommittedValueToPeerProposers()
+    public async Task RunProposalBroadcastsCommittedValueToPeerProposers()
     {
         var history = new RecordingHistoryObserver();
         await using var cluster = new FastCasSimulationCluster<TestValue>(
@@ -90,7 +90,7 @@ public sealed class FastCasSimulationClusterTests
     }
 
     [Fact]
-    public async Task RunProposal_BroadcastsClassicPreparedBallotToPeerProposers()
+    public async Task RunProposalBroadcastsClassicPreparedBallotToPeerProposers()
     {
         var history = new RecordingHistoryObserver();
         await using var cluster = new FastCasSimulationCluster<TestValue>(
@@ -123,7 +123,7 @@ public sealed class FastCasSimulationClusterTests
     }
 
     [Fact]
-    public async Task AdaptiveMode_ForwardsRequestsToLearnedLeader()
+    public async Task AdaptiveModeForwardsRequestsToLearnedLeader()
     {
         var transportObserver = new RecordingTransportObserver();
         await using var cluster = new FastCasSimulationCluster<TestValue>(
@@ -168,7 +168,7 @@ public sealed class FastCasSimulationClusterTests
     }
 
     [Fact]
-    public async Task AdaptiveMode_ForwardFailureFallsBackToLocalTakeover()
+    public async Task AdaptiveModeForwardFailureFallsBackToLocalTakeover()
     {
         var transportObserver = new RecordingTransportObserver();
         await using var cluster = new FastCasSimulationCluster<TestValue>(
@@ -214,7 +214,7 @@ public sealed class FastCasSimulationClusterTests
     }
 
     [Fact]
-    public async Task FaultOperations_BlockThenRestoreProgress()
+    public async Task FaultOperationsBlockThenRestoreProgress()
     {
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 789,
@@ -245,7 +245,7 @@ public sealed class FastCasSimulationClusterTests
     }
 
     [Fact]
-    public async Task CrashRestart_PreservesAcceptorState()
+    public async Task CrashRestartPreservesAcceptorState()
     {
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 246,
@@ -267,7 +267,7 @@ public sealed class FastCasSimulationClusterTests
     }
 
     [Fact]
-    public async Task CreateConfiguration_ConfiguresZeroLatencyForCollocatedProposerAndAcceptor()
+    public async Task CreateConfigurationConfiguresZeroLatencyForCollocatedProposerAndAcceptor()
     {
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 741,
@@ -292,7 +292,7 @@ public sealed class FastCasSimulationClusterTests
     }
 
     [Fact]
-    public async Task ClearLinkLatencies_RetainsZeroLatencyForCollocatedPairs()
+    public async Task ClearLinkLatenciesRetainsZeroLatencyForCollocatedPairs()
     {
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 742,
@@ -340,7 +340,7 @@ public sealed class FastCasSimulationClusterTests
     }
 
     [Fact]
-    public async Task CreateConsensusRegisterConfiguration_CreatesCombinedRegisterEndpoints()
+    public async Task CreateConsensusRegisterConfigurationCreatesCombinedRegisterEndpoints()
     {
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 743,
@@ -366,7 +366,7 @@ public sealed class FastCasSimulationClusterTests
     }
 
     [Fact]
-    public async Task ConsensusRegisterConfiguration_RunsProposalsAndBroadcastsLearns()
+    public async Task ConsensusRegisterConfigurationRunsProposalsAndBroadcastsLearns()
     {
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 744,
@@ -395,7 +395,7 @@ public sealed class FastCasSimulationClusterTests
     }
 
     [Fact]
-    public async Task RunProposal_UpdatesAcceptorSafetyMonitorHistory()
+    public async Task RunProposalUpdatesAcceptorSafetyMonitorHistory()
     {
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 135,
@@ -413,12 +413,12 @@ public sealed class FastCasSimulationClusterTests
         var artifact = cluster.AcceptorSafetyMonitor.CreateArtifact();
         Assert.Single(artifact.Commits);
         Assert.Equal(1, artifact.Commits[0].Version);
-        Assert.True(artifact.Commits[0].Witnesses.Count >= 3);
-        Assert.Equal(5, artifact.FinalSnapshot.Count);
+        Assert.True(artifact.Commits[0].Witnesses.Length >= 3);
+        Assert.Equal(5, artifact.FinalSnapshot.Length);
     }
 
     [Fact]
-    public async Task RunProposal_WhenQuorumUnavailable_ThrowsWithDiagnostics()
+    public async Task RunProposalWhenQuorumUnavailableThrowsWithDiagnostics()
     {
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 654,
@@ -441,7 +441,7 @@ public sealed class FastCasSimulationClusterTests
     }
 
     [Fact]
-    public async Task Diagnostics_IncludeSeedNodeStateAndFaultHistory()
+    public async Task DiagnosticsIncludeSeedNodeStateAndFaultHistory()
     {
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 987,
@@ -456,7 +456,7 @@ public sealed class FastCasSimulationClusterTests
         cluster.SetMessageDropRate(0.25);
         cluster.SuspendNode(FastCasAddress.Acceptor(1));
 
-        var diagnostics = cluster.GetFailureDiagnostics(nameof(Diagnostics_IncludeSeedNodeStateAndFaultHistory));
+        var diagnostics = cluster.GetFailureDiagnostics(nameof(DiagnosticsIncludeSeedNodeStateAndFaultHistory));
 
         Assert.Contains("seed: 987", diagnostics);
         Assert.Contains("proposer-1", diagnostics);
@@ -465,7 +465,7 @@ public sealed class FastCasSimulationClusterTests
         Assert.Contains("suspend acceptor-1", diagnostics);
     }
 
-    private static IOperation<TestValue> AppendOperation(int expectedVersion, string suffix) =>
+    private static Operation<TestValue, TestValue> AppendOperation(int expectedVersion, string suffix) =>
         new Operation<TestValue, TestValue>
         {
             Input = new TestValue(expectedVersion, suffix),

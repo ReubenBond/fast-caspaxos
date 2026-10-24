@@ -13,7 +13,7 @@ public sealed class FailureContractTests
     [InlineData(StatusCode.ResourceExhausted, "busy", typeof(RegisterBusyException))]
     [InlineData(StatusCode.Unavailable, "unavailable", typeof(RegisterUnavailableException))]
     [InlineData(StatusCode.Cancelled, "cancelled", typeof(OperationCanceledException))]
-    public async Task DefinitiveFailures_RequireMatchingStatusAndTrailer(StatusCode status, string kind, Type expectedType)
+    public async Task DefinitiveFailuresRequireMatchingStatusAndTrailer(StatusCode status, string kind, Type expectedType)
     {
         var definite = new RpcException(new Status(status, "before mutation"),
             new Metadata { { "fastcaspaxos-failure", kind } });
@@ -49,7 +49,7 @@ public sealed class FailureContractTests
     [InlineData(StatusCode.Cancelled)]
     [InlineData(StatusCode.Internal)]
     [InlineData(StatusCode.Unknown)]
-    public async Task GenericRpcFailures_AreUnknownForWritesAndErrorsForReads(StatusCode status)
+    public async Task GenericRpcFailuresAreUnknownForWritesAndErrorsForReads(StatusCode status)
     {
         var failure = new RpcException(new Status(status, "transport lost"));
         var invoker = StubCallInvoker.Fail(failure);
@@ -74,7 +74,7 @@ public sealed class FailureContractTests
     }
 
     [Fact]
-    public async Task NonRpcFailureAfterDispatch_RemainsUnknownWithOriginalCause()
+    public async Task NonRpcFailureAfterDispatchRemainsUnknownWithOriginalCause()
     {
         var failure = new IOException("reply was lost");
         var client = new GrpcRegisterService(StubCallInvoker.Fail(failure));
@@ -91,7 +91,7 @@ public sealed class FailureContractTests
     [InlineData(RequestValidationTests.Operation.Read)]
     [InlineData(RequestValidationTests.Operation.CompareExchange)]
     [InlineData(RequestValidationTests.Operation.RegisterList)]
-    public async Task Deadline_UsesInjectedTimeProviderForEachCall(RequestValidationTests.Operation operation)
+    public async Task DeadlineUsesInjectedTimeProviderForEachCall(RequestValidationTests.Operation operation)
     {
         using var cancellation = new CancellationTokenSource();
         var timeout = TimeSpan.FromMinutes(2);
@@ -120,7 +120,7 @@ public sealed class FailureContractTests
     [Theory]
     [InlineData(RequestValidationTests.Operation.Prepare)]
     [InlineData(RequestValidationTests.Operation.Read)]
-    public async Task DefaultDeadline_UsesThirtySecondsFromInjectedTimeProvider(RequestValidationTests.Operation operation)
+    public async Task DefaultDeadlineUsesThirtySecondsFromInjectedTimeProvider(RequestValidationTests.Operation operation)
     {
         var clock = new FixedTimeProvider(new DateTimeOffset(2040, 1, 2, 3, 4, 5, TimeSpan.Zero));
         var invoker = StubCallInvoker.Fail(new RpcException(new Status(StatusCode.Unavailable, "offline")));
@@ -133,7 +133,7 @@ public sealed class FailureContractTests
     }
 
     [Fact]
-    public async Task DeadlineFailureAfterDispatch_RemainsUnknown()
+    public async Task DeadlineFailureAfterDispatchRemainsUnknown()
     {
         var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var fail = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -154,7 +154,7 @@ public sealed class FailureContractTests
     }
 
     [Fact]
-    public async Task CancellationAfterDispatch_WithoutDefinitiveTrailerRemainsUnknown()
+    public async Task CancellationAfterDispatchWithoutDefinitiveTrailerRemainsUnknown()
     {
         var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var cancellation = new CancellationTokenSource();
@@ -186,7 +186,7 @@ public sealed class FailureContractTests
     [InlineData(RequestValidationTests.Operation.AcceptorList)]
     [InlineData(RequestValidationTests.Operation.Read)]
     [InlineData(RequestValidationTests.Operation.RegisterList)]
-    public async Task NonCasCancellationAfterDispatch_ThrowsWithCallerToken(RequestValidationTests.Operation operation)
+    public async Task NonCasCancellationAfterDispatchThrowsWithCallerToken(RequestValidationTests.Operation operation)
     {
         var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var cancellation = new CancellationTokenSource();
@@ -212,7 +212,7 @@ public sealed class FailureContractTests
     }
 
     [Fact]
-    public async Task CancellationBeforeMutation_WithDefinitiveTrailerThrows()
+    public async Task CancellationBeforeMutationWithDefinitiveTrailerThrows()
     {
         var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var cancellation = new CancellationTokenSource();
@@ -253,7 +253,7 @@ public sealed class FailureContractTests
     [InlineData(ServiceFailure.Unavailable, StatusCode.Unavailable, "unavailable")]
     [InlineData(ServiceFailure.Internal, StatusCode.Internal, null)]
     [InlineData(ServiceFailure.UnrelatedCancellation, StatusCode.Internal, null)]
-    public async Task ServiceExceptions_MapDefinitiveErrorsWithoutLeakingInternalDetails(
+    public async Task ServiceExceptionsMapDefinitiveErrorsWithoutLeakingInternalDetails(
         ServiceFailure scenario, StatusCode status, string? trailer)
     {
         Exception cause = scenario switch
@@ -290,7 +290,7 @@ public sealed class FailureContractTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task CommittedWrite_WithLostOrMalformedReply_RemainsUnknownAndReadable(bool malformed)
+    public async Task CommittedWriteWithLostOrMalformedReplyRemainsUnknownAndReadable(bool malformed)
     {
         using var directory = new TestDirectory();
         await using var cluster = await SqliteContractCluster.OpenAsync(directory);
@@ -320,7 +320,7 @@ public sealed class FailureContractTests
     }
 
     [Fact]
-    public async Task CommittedWrite_CancelledReplyIsUnknownAndDurable()
+    public async Task CommittedWriteCancelledReplyIsUnknownAndDurable()
     {
         using var directory = new TestDirectory();
         await using var cluster = await SqliteContractCluster.OpenAsync(directory);
@@ -357,7 +357,7 @@ public sealed class FailureContractTests
     }
 
     [Fact]
-    public void TimeoutConfiguration_ValidatesExactBoundaries()
+    public void TimeoutConfigurationValidatesExactBoundaries()
     {
         var invoker = StubCallInvoker.Reply(Absent());
         foreach (var invalid in new[] { TimeSpan.Zero, TimeSpan.FromTicks(-1), TimeSpan.FromDays(1) + TimeSpan.FromTicks(1) })

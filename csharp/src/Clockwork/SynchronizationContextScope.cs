@@ -6,7 +6,6 @@ namespace Clockwork;
 /// <remarks>
 /// This struct is only used as a disposable scope and is not intended for comparison.
 /// </remarks>
-[System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1815:Override equals and operator equals on value types", Justification = "Struct is only used as disposable scope, not for comparison")]
 public readonly struct SynchronizationContextScope : IDisposable
 {
     private readonly SynchronizationContext? _previous;

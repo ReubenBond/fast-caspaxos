@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Model;
 using FastCASPaxos.Simulation;
 using FastCASPaxos.Simulation.Hosts;
@@ -9,7 +10,7 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class CorpusScenarioTests
 {
     [Fact]
-    public async Task StringCorpus_ReachesHelloWorld()
+    public async Task StringCorpusReachesHelloWorld()
     {
         await using var cluster = CreateStringCluster(seed: 8801);
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
@@ -18,7 +19,7 @@ public sealed class CorpusScenarioTests
         var operations = TestCorpus.BuildStringOperations();
         var expected = TestCorpus.StringExpectedValue;
 
-        for (var index = 0; index < operations.Count; index++)
+        for (var index = 0; index < operations.Length; index++)
         {
             var response = cluster.RunProposal(proposers[index % proposers.Length], operations[index]);
             Assert.Equal(index + 1, response.CommittedValue.Version);
@@ -35,7 +36,7 @@ public sealed class CorpusScenarioTests
     }
 
     [Fact]
-    public async Task SetCorpus_ReachesExpectedMembership()
+    public async Task SetCorpusReachesExpectedMembership()
     {
         await using var cluster = CreateSetCluster(seed: 8802);
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
@@ -44,7 +45,7 @@ public sealed class CorpusScenarioTests
         var (operations, expected) = TestCorpus.BuildSetOperations();
         var expectedVersion = 0;
 
-        for (var index = 0; index < operations.Count; index++)
+        for (var index = 0; index < operations.Length; index++)
         {
             var response = cluster.RunProposal(proposers[index % proposers.Length], operations[index]);
             var committed = response.CommittedValue;
@@ -64,7 +65,7 @@ public sealed class CorpusScenarioTests
     }
 
     [Fact]
-    public async Task RandomStringCorpus_ReachesDeterministicValue()
+    public async Task RandomStringCorpusReachesDeterministicValue()
     {
         await using var cluster = CreateStringCluster(seed: 8803);
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
@@ -73,7 +74,7 @@ public sealed class CorpusScenarioTests
         var proposerRandom = new Random(8804);
         var (operations, expected) = TestCorpus.BuildRandomStringOperations();
 
-        for (var index = 0; index < operations.Count; index++)
+        for (var index = 0; index < operations.Length; index++)
         {
             var response = cluster.RunProposal(proposers[proposerRandom.Next(proposers.Length)], operations[index]);
             Assert.Equal(index + 1, response.CommittedValue.Version);
@@ -89,7 +90,7 @@ public sealed class CorpusScenarioTests
     }
 
     [Fact]
-    public async Task ForkingStringCorpus_ResolvesToSingleCommittedChain()
+    public async Task ForkingStringCorpusResolvesToSingleCommittedChain()
     {
         await using var cluster = CreateStringCluster(seed: 8805);
         cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
@@ -97,7 +98,7 @@ public sealed class CorpusScenarioTests
         var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
         var (operations, expected) = TestCorpus.BuildForkingStringOperations();
 
-        for (var index = 0; index < operations.Count; index++)
+        for (var index = 0; index < operations.Length; index++)
         {
             _ = cluster.RunProposal(proposers[index % proposers.Length], operations[index]);
         }
@@ -111,32 +112,32 @@ public sealed class CorpusScenarioTests
         cluster.AssertSafetyInvariants();
     }
 
-    private static IReadOnlyList<StringValue> ReadBackStringValues(
+    private static ImmutableArray<StringValue> ReadBackStringValues(
         FastCasSimulationCluster<StringValue> cluster,
         Func<IOperation<StringValue>> createReadOperation)
     {
-        List<StringValue> values = [];
+        var values = ImmutableArray.CreateBuilder<StringValue>(cluster.ProposerNodes.Length);
         foreach (var proposer in cluster.ProposerNodes)
         {
             _ = cluster.RunProposal(proposer.Host.Address, createReadOperation());
             values.Add(Assert.IsType<FastCasProposerHost<StringValue>>(proposer.Host).CachedValue);
         }
 
-        return values;
+        return values.MoveToImmutable();
     }
 
-    private static IReadOnlyList<SetValue> ReadBackSetValues(
+    private static ImmutableArray<SetValue> ReadBackSetValues(
         FastCasSimulationCluster<SetValue> cluster,
         Func<IOperation<SetValue>> createReadOperation)
     {
-        List<SetValue> values = [];
+        var values = ImmutableArray.CreateBuilder<SetValue>(cluster.ProposerNodes.Length);
         foreach (var proposer in cluster.ProposerNodes)
         {
             _ = cluster.RunProposal(proposer.Host.Address, createReadOperation());
             values.Add(Assert.IsType<FastCasProposerHost<SetValue>>(proposer.Host).CachedValue);
         }
 
-        return values;
+        return values.MoveToImmutable();
     }
 
     private static FastCasSimulationCluster<StringValue> CreateStringCluster(int seed) =>

@@ -12,13 +12,13 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class FastCasSimulationNodeHostTests
 {
     [Fact]
-    public void ProposerAndAcceptors_ReachConsensusThroughSimulationTransport()
+    public void ProposerAndAcceptorsReachConsensusThroughSimulationTransport()
     {
         var clock = new SimulationClock(DateTimeOffset.UnixEpoch);
         var guard = new SingleThreadedGuard();
         var clusterQueue = new SimulationTaskQueue(clock, guard);
         List<SimulationNode> nodes = [];
-        var network = new SimulationNetwork(() => nodes, new SimulationRandom(321));
+        var network = new SimulationNetwork(() => [.. nodes], new SimulationRandom(321));
         var transport = new FastCasSimulationTransport<TestValue>(network);
         var options = new FastCasSimulationOptions
         {
@@ -48,7 +48,7 @@ public sealed class FastCasSimulationNodeHostTests
 
         var proposerHost = new FastCasProposerHost<TestValue>(
             new FastCasNodeId(FastCasParticipantRole.Proposer, 1),
-            acceptorAddresses,
+            [.. acceptorAddresses],
             transport,
             default,
             options);
@@ -85,13 +85,13 @@ public sealed class FastCasSimulationNodeHostTests
     }
 
     [Fact]
-    public void ProposerLearner_AdoptsCommittedValueAndSupportsNextProposal()
+    public void ProposerLearnerAdoptsCommittedValueAndSupportsNextProposal()
     {
         var clock = new SimulationClock(DateTimeOffset.UnixEpoch);
         var guard = new SingleThreadedGuard();
         var clusterQueue = new SimulationTaskQueue(clock, guard);
         List<SimulationNode> nodes = [];
-        var network = new SimulationNetwork(() => nodes, new SimulationRandom(654));
+        var network = new SimulationNetwork(() => [.. nodes], new SimulationRandom(654));
         var transport = new FastCasSimulationTransport<TestValue>(network);
         var options = new FastCasSimulationOptions
         {
@@ -119,7 +119,7 @@ public sealed class FastCasSimulationNodeHostTests
 
         var proposerOneHost = new FastCasProposerHost<TestValue>(
             new FastCasNodeId(FastCasParticipantRole.Proposer, 1),
-            acceptorAddresses,
+            [.. acceptorAddresses],
             transport,
             default,
             options);
@@ -135,7 +135,7 @@ public sealed class FastCasSimulationNodeHostTests
 
         var proposerTwoHost = new FastCasProposerHost<TestValue>(
             new FastCasNodeId(FastCasParticipantRole.Proposer, 2),
-            acceptorAddresses,
+            [.. acceptorAddresses],
             transport,
             default,
             options);
@@ -197,13 +197,13 @@ public sealed class FastCasSimulationNodeHostTests
     }
 
     [Fact]
-    public void ProposerLearner_FastModeLearnedCommitArrivesAfterNetworkDelayAndCarriesPreparedBallot()
+    public void ProposerLearnerFastModeLearnedCommitArrivesAfterNetworkDelayAndCarriesPreparedBallot()
     {
         var clock = new SimulationClock(DateTimeOffset.UnixEpoch);
         var guard = new SingleThreadedGuard();
         var clusterQueue = new SimulationTaskQueue(clock, guard);
         List<SimulationNode> nodes = [];
-        var network = new SimulationNetwork(() => nodes, new SimulationRandom(777));
+        var network = new SimulationNetwork(() => [.. nodes], new SimulationRandom(777));
         var transport = new FastCasSimulationTransport<TestValue>(network);
         var options = new FastCasSimulationOptions
         {
@@ -231,7 +231,7 @@ public sealed class FastCasSimulationNodeHostTests
 
         var proposerOneHost = new FastCasProposerHost<TestValue>(
             new FastCasNodeId(FastCasParticipantRole.Proposer, 1),
-            acceptorAddresses,
+            [.. acceptorAddresses],
             transport,
             default,
             options);
@@ -247,7 +247,7 @@ public sealed class FastCasSimulationNodeHostTests
 
         var proposerTwoHost = new FastCasProposerHost<TestValue>(
             new FastCasNodeId(FastCasParticipantRole.Proposer, 2),
-            acceptorAddresses,
+            [.. acceptorAddresses],
             transport,
             default,
             options);
@@ -359,7 +359,7 @@ public sealed class FastCasSimulationNodeHostTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void QueuedRead_CompletesThroughItsOwnAcceptQuorum(bool forwarded)
+    public void QueuedReadCompletesThroughItsOwnAcceptQuorum(bool forwarded)
     {
         var clock = new SimulationClock(DateTimeOffset.UnixEpoch);
         var guard = new SingleThreadedGuard();
@@ -381,7 +381,7 @@ public sealed class FastCasSimulationNodeHostTests
         transport.RegisterEndpoint(new(forwardingProposer, clientQueue, responses.Add));
         var host = new FastCasProposerHost<TestValue>(
             new FastCasNodeId(FastCasParticipantRole.Proposer, 1),
-            acceptors,
+            [.. acceptors],
             transport,
             default,
             new FastCasSimulationOptions
@@ -440,7 +440,7 @@ public sealed class FastCasSimulationNodeHostTests
         if (forwarded)
         {
             var response = Assert.IsType<FastCasForwardProposeResponseMessage<TestValue>>(responses[1]);
-            Assert.Equal(forwardingProposer, response.To);
+            Assert.Equal(forwardingProposer, response.Destination);
             Assert.Equal(caller, response.OriginalCaller);
             Assert.Equal(2, response.RequestId);
             Assert.Equal(value, response.Payload.CommittedValue);
@@ -448,7 +448,7 @@ public sealed class FastCasSimulationNodeHostTests
         else
         {
             var response = Assert.IsType<FastCasProposeResponseMessage<TestValue>>(responses[1]);
-            Assert.Equal(caller, response.To);
+            Assert.Equal(caller, response.Destination);
             Assert.Equal(2, response.RequestId);
             Assert.Equal(value, response.Payload.CommittedValue);
         }
@@ -464,7 +464,7 @@ public sealed class FastCasSimulationNodeHostTests
                 acceptor, host.Address, new(host.Ballot.Round, acceptor, Ballot.Zero)));
     }
 
-    private static IOperation<TestValue> AppendOperation(int expectedVersion, string suffix) =>
+    private static Operation<TestValue, TestValue> AppendOperation(int expectedVersion, string suffix) =>
         new Operation<TestValue, TestValue>
         {
             Input = new TestValue(expectedVersion, suffix),
@@ -489,7 +489,7 @@ public sealed class FastCasSimulationNodeHostTests
     private static void RunUntilIdle(
         SimulationTaskQueue clusterQueue,
         SimulationTaskQueue clientQueue,
-        IReadOnlyList<SimulationTaskQueue> nodeQueues)
+        ReadOnlySpan<SimulationTaskQueue> nodeQueues)
     {
         for (var i = 0; i < 1000; i++)
         {

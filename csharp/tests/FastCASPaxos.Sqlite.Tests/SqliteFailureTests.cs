@@ -10,11 +10,11 @@ public sealed class SqliteFailureTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task StatementFailure_RollsBackAndFailsClosed(bool updateExisting) =>
+    public async Task StatementFailureRollsBackAndFailsClosed(bool updateExisting) =>
         await VerifyFailureAsync(updateExisting, deferredCommitFailure: false);
 
     [Fact]
-    public async Task CommitFailure_RollsBackAndFailsClosed() =>
+    public async Task CommitFailureRollsBackAndFailsClosed() =>
         await VerifyFailureAsync(updateExisting: true, deferredCommitFailure: true);
 
     private static async Task VerifyFailureAsync(bool updateExisting, bool deferredCommitFailure)

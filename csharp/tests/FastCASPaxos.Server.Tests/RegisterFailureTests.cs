@@ -11,7 +11,7 @@ public sealed class RegisterFailureTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task ClassicQuorum_DoesNotWaitForMinority(bool offline)
+    public async Task ClassicQuorumDoesNotWaitForMinority(bool offline)
     {
         var peers = Peers();
         using var gate = new Gate();
@@ -21,12 +21,12 @@ public sealed class RegisterFailureTests
             peers[0].Prepare = async (key, request, _) =>
             {
                 await gate.WaitAsync();
-                return await peers[0].Inner.PrepareAsync(key, request);
+                return await peers[0].Inner.PrepareAsync(key, request, CancellationToken.None);
             };
             peers[0].Accept = async (key, request, _) =>
             {
                 await gate.WaitAsync();
-                return await peers[0].Inner.AcceptAsync(key, request);
+                return await peers[0].Inner.AcceptAsync(key, request, CancellationToken.None);
             };
         }
         await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(1), Options());
@@ -41,7 +41,7 @@ public sealed class RegisterFailureTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task QuorumLoss_DeadlineBeforeMutationThrowsUnavailable(bool write)
+    public async Task QuorumLossDeadlineBeforeMutationThrowsUnavailable(bool write)
     {
         var peers = Peers();
         RequireRecovery(peers);
@@ -64,7 +64,7 @@ public sealed class RegisterFailureTests
     }
 
     [Fact]
-    public async Task CancellationBeforeMutation_ThrowsAndReleasesAdmission()
+    public async Task CancellationBeforeMutationThrowsAndReleasesAdmission()
     {
         var peers = Peers();
         using var gate = new Gate();
@@ -96,7 +96,7 @@ public sealed class RegisterFailureTests
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
-    public async Task CancellationOrDeadlineAfterMutation_ReturnsUnknownEvenBeforeDurability(bool deadline, bool durable)
+    public async Task CancellationOrDeadlineAfterMutationReturnsUnknownEvenBeforeDurability(bool deadline, bool durable)
     {
         var peers = Peers();
         var clock = new ManualTime();
@@ -107,9 +107,9 @@ public sealed class RegisterFailureTests
             peer.Accept = async (key, request, _) =>
             {
                 AcceptorAcceptResult result = default;
-                if (durable) result = await peer.Inner.AcceptAsync(key, request);
+                if (durable) result = await peer.Inner.AcceptAsync(key, request, CancellationToken.None);
                 await gate.WaitAsync();
-                return durable ? result : await peer.Inner.AcceptAsync(key, request);
+                return durable ? result : await peer.Inner.AcceptAsync(key, request, CancellationToken.None);
             };
         }
         await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(1), Options(clock: clock));
@@ -137,7 +137,7 @@ public sealed class RegisterFailureTests
     [Theory]
     [InlineData("classic")]
     [InlineData("fast")]
-    public async Task Retry_RecoversOwnTokenWithoutApplyingTwice(string mode)
+    public async Task RetryRecoversOwnTokenWithoutApplyingTwice(string mode)
     {
         var peers = Peers();
         foreach (var peer in peers)
@@ -162,7 +162,7 @@ public sealed class RegisterFailureTests
     }
 
     [Fact]
-    public async Task SupersededUncertainMutation_IsUnknownNotMismatch()
+    public async Task SupersededUncertainMutationIsUnknownNotMismatch()
     {
         var peers = Peers();
         using var gate = new Gate();
@@ -192,7 +192,7 @@ public sealed class RegisterFailureTests
     }
 
     [Fact]
-    public async Task AllMutationsExplicitlyRejected_ReturnsMismatchRatherThanUnknown()
+    public async Task AllMutationsExplicitlyRejectedReturnsMismatchRatherThanUnknown()
     {
         var peers = Peers();
         var existingVersion = Version(9, 1);
@@ -214,7 +214,7 @@ public sealed class RegisterFailureTests
     }
 
     [Fact]
-    public async Task StorageFailuresAfterDispatch_PreserveUncertaintyAndCauseAtDeadline()
+    public async Task StorageFailuresAfterDispatchPreserveUncertaintyAndCauseAtDeadline()
     {
         var peers = Peers();
         var clock = new ManualTime();
@@ -237,7 +237,7 @@ public sealed class RegisterFailureTests
     }
 
     [Fact]
-    public async Task LateDuplicateAcceptReplies_CannotCompleteRetriedAttempt()
+    public async Task LateDuplicateAcceptRepliesCannotCompleteRetriedAttempt()
     {
         var peers = Peers();
         var clock = new ManualTime();
@@ -289,7 +289,7 @@ public sealed class RegisterFailureTests
     }
 
     [Fact]
-    public async Task LatePrepareReplies_CannotOverrideNewerRecovery()
+    public async Task LatePrepareRepliesCannotOverrideNewerRecovery()
     {
         var peers = Peers();
         RequireRecovery(peers);
@@ -336,7 +336,7 @@ public sealed class RegisterFailureTests
     }
 
     [Fact]
-    public async Task Capacity_IncludesQueuedCallsAndDoesNotSerializeIndependentKeys()
+    public async Task CapacityIncludesQueuedCallsAndDoesNotSerializeIndependentKeys()
     {
         var peers = Peers();
         RequireRecovery(peers);
@@ -370,7 +370,7 @@ public sealed class RegisterFailureTests
     }
 
     [Fact]
-    public async Task Dispose_CancelsWorkAndLeavesCollaboratorsOwnedByCaller()
+    public async Task DisposeCancelsWorkAndLeavesCollaboratorsOwnedByCaller()
     {
         var peers = Peers();
         RequireRecovery(peers);
@@ -399,7 +399,7 @@ public sealed class RegisterFailureTests
     }
 
     [Fact]
-    public async Task Dispose_AfterMutationReturnsUnknownWithoutWaitingForTransport()
+    public async Task DisposeAfterMutationReturnsUnknownWithoutWaitingForTransport()
     {
         var peers = Peers();
         using var gate = new Gate();
@@ -425,7 +425,7 @@ public sealed class RegisterFailureTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Read_MinorityFailureOrLateReply_DoesNotDelayMatchingQuorum(bool failure)
+    public async Task ReadMinorityFailureOrLateReplyDoesNotDelayMatchingQuorum(bool failure)
     {
         var peers = Peers();
         var value = Envelope(Version(9, 1), Payload);
@@ -436,7 +436,7 @@ public sealed class RegisterFailureTests
         {
             if (failure) throw new IOException("offline");
             await late.WaitAsync();
-            return await peers[0].Inner.ReadAsync(key, known);
+            return await peers[0].Inner.ReadAsync(key, known, CancellationToken.None);
         };
         var ballots = new TestBallots(1);
         await using var service = new ReplicatedRegisterService(Routes(peers), ballots, Options());
@@ -455,7 +455,7 @@ public sealed class RegisterFailureTests
     }
 
     [Fact]
-    public async Task Read_CanceledProbe_DoesNotDispatchRecovery()
+    public async Task ReadCanceledProbeDoesNotDispatchRecovery()
     {
         var peers = Peers();
         using var cancellation = new CancellationTokenSource();
@@ -483,7 +483,7 @@ public sealed class RegisterFailureTests
     }
 
     [Fact]
-    public async Task Read_LateObservationCannotCompleteAnotherCall()
+    public async Task ReadLateObservationCannotCompleteAnotherCall()
     {
         var peers = Peers();
         var old = Envelope(Version(9, 1), ByteString.Empty);
@@ -501,7 +501,7 @@ public sealed class RegisterFailureTests
             var calls = 0;
             peer.Read = async (key, known, _) =>
             {
-                var response = await peer.Inner.ReadAsync(key, known);
+                var response = await peer.Inner.ReadAsync(key, known, CancellationToken.None);
                 if (Interlocked.Increment(ref calls) == 1)
                 {
                     await oldReplies.WaitAsync();
@@ -540,7 +540,7 @@ public sealed class RegisterFailureTests
     }
 
     [Fact]
-    public async Task Read_ProbeAndRecoveryShareOriginalDeadline()
+    public async Task ReadProbeAndRecoveryShareOriginalDeadline()
     {
         var peers = Peers();
         var clock = new ManualTime();

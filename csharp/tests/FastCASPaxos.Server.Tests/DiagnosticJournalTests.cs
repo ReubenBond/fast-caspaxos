@@ -1,3 +1,4 @@
+using System.Globalization;
 using FastCASPaxos.Server.Diagnostics;
 using Xunit;
 using static FastCASPaxos.Server.Tests.TestSupport;
@@ -9,7 +10,7 @@ public sealed class DiagnosticJournalTests
     private static readonly TimeSpan Heartbeat = TimeSpan.FromSeconds(15);
 
     [Fact]
-    public async Task InitialReset_UsesCurrentCursorAndControlledMetadata()
+    public async Task InitialResetUsesCurrentCursorAndControlledMetadata()
     {
         var clock = new ManualTime();
         using var journal = new NodeEventJournal("node-a", 3, clock);
@@ -40,7 +41,7 @@ public sealed class DiagnosticJournalTests
     [InlineData(ResetCase.OtherBoot, "restarted")]
     [InlineData(ResetCase.Future, "history-unavailable")]
     [InlineData(ResetCase.Expired, "history-unavailable")]
-    public async Task InvalidOrUnavailableCursor_ResetsThenFollowsLive(ResetCase scenario, string reason)
+    public async Task InvalidOrUnavailableCursorResetsThenFollowsLive(ResetCase scenario, string reason)
     {
         using var journal = new NodeEventJournal("a", 3);
         for (var i = 1; i <= 4; i++) journal.Publish("sample", i);
@@ -66,7 +67,7 @@ public sealed class DiagnosticJournalTests
     }
 
     [Fact]
-    public async Task ExactCapacityReplay_HandoffAndWaitingPublishLoseNoEvents()
+    public async Task ExactCapacityReplayHandoffAndWaitingPublishLoseNoEvents()
     {
         var clock = new ManualTime();
         using var journal = new NodeEventJournal("a", 3, clock);
@@ -80,7 +81,7 @@ public sealed class DiagnosticJournalTests
         {
             var item = await Next(reader);
             Assert.Equal("sample", item.Kind);
-            Assert.Equal(expected.ToString(), item.Sequence);
+            Assert.Equal(expected.ToString(CultureInfo.InvariantCulture), item.Sequence);
             Assert.Equal(expected, item.Data);
         }
         var waiting = reader.MoveNextAsync().AsTask();
@@ -93,7 +94,7 @@ public sealed class DiagnosticJournalTests
     }
 
     [Fact]
-    public async Task SlowReader_RecoversAtCurrentCursorWithoutBlockingPublishersOrFastReader()
+    public async Task SlowReaderRecoversAtCurrentCursorWithoutBlockingPublishersOrFastReader()
     {
         using var journal = new NodeEventJournal("a", 3);
         await using var slow = journal.ReadAsync(null, Heartbeat).GetAsyncEnumerator();
@@ -113,7 +114,7 @@ public sealed class DiagnosticJournalTests
     }
 
     [Fact]
-    public async Task QuietHeartbeat_UsesInjectedClockAndDoesNotAdvanceCursor()
+    public async Task QuietHeartbeatUsesInjectedClockAndDoesNotAdvanceCursor()
     {
         var clock = new ManualTime();
         using var journal = new NodeEventJournal("a", 3, clock);
@@ -137,7 +138,7 @@ public sealed class DiagnosticJournalTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task WaitingReader_CancellationOrDisposalReleasesIt(bool dispose)
+    public async Task WaitingReaderCancellationOrDisposalReleasesIt(bool dispose)
     {
         var clock = new ManualTime();
         using var journal = new NodeEventJournal("a", 3, clock);
@@ -164,7 +165,7 @@ public sealed class DiagnosticJournalTests
     }
 
     [Fact]
-    public void StorageAndOperationSnapshots_RemainIndependent()
+    public void StorageAndOperationSnapshotsRemainIndependent()
     {
         using var journal = new NodeEventJournal("a", 3);
         Assert.Equal(new StorageObservation("starting"), journal.Storage);
@@ -187,7 +188,7 @@ public sealed class DiagnosticJournalTests
     }
 
     [Fact]
-    public async Task Validation_RejectsInvalidCapacityNodeAndHeartbeat()
+    public async Task ValidationRejectsInvalidCapacityNodeAndHeartbeat()
     {
         Assert.Throws<ArgumentException>(() => new NodeEventJournal(" "));
         Assert.Throws<ArgumentOutOfRangeException>(() => new NodeEventJournal("a", 0));

@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
 using FastCASPaxos.Protocol;
@@ -8,14 +9,14 @@ namespace FastCASPaxos.Core.Tests.Protocol;
 public sealed class ConsensusRegisterTests
 {
     [Fact]
-    public void LocalRegister_ProcessesRequestWithoutExternalProtocolMessages()
+    public void LocalRegisterProcessesRequestWithoutExternalProtocolMessages()
     {
         var register = CreateRegister();
 
         register.SubmitClientRequest("client", 1, AppendOperation(1, "A"));
         var messages = register.DrainMessages();
 
-        Assert.Equal(2, messages.Count);
+        Assert.Equal(2, messages.Length);
         var learn = Assert.IsType<LearnCommittedValueOutputMessage<TestValue, string>>(messages[0]);
         Assert.Equal(new TestValue(1, "A"), learn.Value);
 
@@ -29,7 +30,7 @@ public sealed class ConsensusRegisterTests
     }
 
     [Fact]
-    public void LocalRegister_QueuesSecondRequestUntilFirstCompletes()
+    public void LocalRegisterQueuesSecondRequestUntilFirstCompletes()
     {
         var register = CreateRegister(modePolicy: ProposerModePolicy.StaticClassic);
 
@@ -38,7 +39,7 @@ public sealed class ConsensusRegisterTests
 
         var messages = register.DrainMessages();
 
-        Assert.Equal(4, messages.Count);
+        Assert.Equal(4, messages.Length);
         var responses = messages.OfType<ProposeResponseOutputMessage<TestValue, string>>().ToList();
         Assert.Equal(2, responses.Count);
         Assert.Equal([1, 2], responses.Select(message => message.RequestId));
@@ -47,7 +48,7 @@ public sealed class ConsensusRegisterTests
     }
 
     [Fact]
-    public void LocalRegister_DefersLearnedCommitUntilQueueDrains()
+    public void LocalRegisterDefersLearnedCommitUntilQueueDrains()
     {
         var register = CreateRegister(
             modePolicy: ProposerModePolicy.StaticClassic,
@@ -85,7 +86,7 @@ public sealed class ConsensusRegisterTests
     }
 
     [Fact]
-    public void LocalRegister_ForwardsCompletionMetadataForForwardedRequests()
+    public void LocalRegisterForwardsCompletionMetadataForForwardedRequests()
     {
         var register = CreateRegister();
 
@@ -96,7 +97,7 @@ public sealed class ConsensusRegisterTests
             Operation: AppendOperation(1, "A")));
 
         var messages = register.DrainMessages();
-        Assert.Equal(2, messages.Count);
+        Assert.Equal(2, messages.Length);
         Assert.IsType<LearnCommittedValueOutputMessage<TestValue, string>>(messages[0]);
         var response = Assert.IsType<ForwardProposeResponseOutputMessage<TestValue, string>>(messages[1]);
         Assert.Equal("proposer-2", response.To);
@@ -107,7 +108,7 @@ public sealed class ConsensusRegisterTests
     }
 
     [Fact]
-    public void RemoteRegister_EmitsPrepareAcceptAndLearnMessages()
+    public void RemoteRegisterEmitsPrepareAcceptAndLearnMessages()
     {
         var register = CreateRegister(acceptors: ["a1", "a2", "a3", "a4", "a5"], acceptorRoute: "a1");
 
@@ -134,7 +135,7 @@ public sealed class ConsensusRegisterTests
     }
 
     [Fact]
-    public void Timeout_PropagatesRetryMessages()
+    public void TimeoutPropagatesRetryMessages()
     {
         var register = CreateRegister(modePolicy: ProposerModePolicy.StaticClassic, acceptors: ["a1", "a2", "a3", "a4", "a5"], acceptorRoute: "a1");
 
@@ -149,7 +150,7 @@ public sealed class ConsensusRegisterTests
     }
 
     [Fact]
-    public void PrepareRecovery_KeepsRecoveredProposerValueSeparateFromLocalAcceptorState()
+    public void PrepareRecoveryKeepsRecoveredProposerValueSeparateFromLocalAcceptorState()
     {
         var register = CreateRegister(
             modePolicy: ProposerModePolicy.StaticClassic,
@@ -173,7 +174,7 @@ public sealed class ConsensusRegisterTests
     }
 
     [Fact]
-    public void PendingAccept_UsesSingleCurrentValueView()
+    public void PendingAcceptUsesSingleCurrentValueView()
     {
         var register = CreateRegister(
             modePolicy: ProposerModePolicy.StaticClassic,
@@ -198,7 +199,7 @@ public sealed class ConsensusRegisterTests
         ProposerModePolicy? modePolicy = null,
         string proposerRoute = "p1",
         string acceptorRoute = "p1",
-        IReadOnlyList<string>? acceptors = null)
+        ImmutableArray<string>? acceptors = null)
     {
         return new ConsensusRegister<TestValue, string>(
             proposerRoute,
@@ -239,7 +240,7 @@ public sealed class ConsensusRegisterTests
         DeliverAcceptAccepted(register, "a3");
     }
 
-    private static IOperation<TestValue> AppendOperation(int expectedVersion, string suffix) =>
+    private static Operation<TestValue, TestValue> AppendOperation(int expectedVersion, string suffix) =>
         new Operation<TestValue, TestValue>
         {
             Input = new TestValue(expectedVersion, suffix),

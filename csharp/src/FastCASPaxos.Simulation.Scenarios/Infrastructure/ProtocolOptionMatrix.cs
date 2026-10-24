@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Protocol;
 using FastCASPaxos.Simulation;
 using FastCASPaxos.Simulation.Hosts;
@@ -18,7 +19,7 @@ public sealed record ProtocolModeCase(string Name, ProposerModePolicy ModePolicy
 
 public static class ProtocolOptionMatrix
 {
-    private static readonly ProtocolModeCase[] Modes =
+    private static readonly ImmutableArray<ProtocolModeCase> Modes =
     [
         new("classic", ProposerModePolicy.StaticClassic),
         new("fast", ProposerModePolicy.StaticFast),
@@ -66,23 +67,24 @@ public static class ProtocolOptionMatrix
     public static FastCasSimulationCluster<StringValue> CreateStringCluster(ProtocolModeCase mode, int seed) =>
         new(seed, default, mode.CreateOptions(), DateTimeOffset.UnixEpoch);
 
-    public static IReadOnlyList<StringValue> ReadAllStringValues(FastCasSimulationCluster<StringValue> cluster)
+    public static ImmutableArray<StringValue> ReadAllStringValues(FastCasSimulationCluster<StringValue> cluster)
     {
-        List<StringValue> values = [];
-        foreach (var proposer in cluster.ProposerNodes)
+        var proposers = cluster.ProposerNodes;
+        var values = ImmutableArray.CreateBuilder<StringValue>(proposers.Length);
+        foreach (var proposer in proposers)
         {
             _ = cluster.RunProposal(proposer.Host.Address, StringScenarioOperations.Read());
             values.Add(GetRequiredProposerHost(proposer).CachedValue);
         }
 
-        return values;
+        return values.MoveToImmutable();
     }
 
-    public static IReadOnlyList<StringValue> ReadUntilStringValuesAgree(
+    public static ImmutableArray<StringValue> ReadUntilStringValuesAgree(
         FastCasSimulationCluster<StringValue> cluster,
         int maxRounds = 5)
     {
-        IReadOnlyList<StringValue> latest = Array.Empty<StringValue>();
+        ImmutableArray<StringValue> latest = [];
         for (var round = 0; round < maxRounds; round++)
         {
             latest = ReadAllStringValues(cluster);
@@ -95,7 +97,7 @@ public static class ProtocolOptionMatrix
         return latest;
     }
 
-    public static IReadOnlyList<StringValue> EnsureConvergedStringValue(
+    public static ImmutableArray<StringValue> EnsureConvergedStringValue(
         FastCasSimulationCluster<StringValue> cluster,
         int expectedVersion,
         string expectedValue,
@@ -125,7 +127,7 @@ public static class ProtocolOptionMatrix
         return values;
     }
 
-    public static IReadOnlyList<ProtocolModeCase> GetAllModes() => Modes;
+    public static ImmutableArray<ProtocolModeCase> GetAllModes() => Modes;
 
     private static FastCasProposerHost<StringValue> GetRequiredProposerHost(FastCasSimulationNode<StringValue> proposerNode) =>
         proposerNode.Host as FastCasProposerHost<StringValue>

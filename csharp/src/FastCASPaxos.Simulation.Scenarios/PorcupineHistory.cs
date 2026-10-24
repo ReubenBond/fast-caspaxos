@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using FastCASPaxos.Messages;
@@ -11,7 +12,7 @@ public sealed record PorcupineHistoryArtifact(
     string ScenarioName,
     int Round,
     int Seed,
-    IReadOnlyList<PorcupineHistoryEvent> Events);
+    ImmutableArray<PorcupineHistoryEvent> Events);
 
 public sealed record PorcupineHistoryEvent(
     long Sequence,
@@ -34,7 +35,7 @@ public sealed record PorcupineOperationInput(
 public sealed record PorcupineValueOutput(
     int Version,
     string? StringValue,
-    IReadOnlyList<string>? SetValue)
+    ImmutableArray<string>? SetValue)
 {
     public static PorcupineValueOutput FromString(StringValue value) =>
         new(
@@ -46,7 +47,7 @@ public sealed record PorcupineValueOutput(
         new(
             value.Version,
             StringValue: null,
-            SetValue: (value.Value ?? []).OrderBy(item => item, StringComparer.Ordinal).ToArray());
+            SetValue: [.. (value.Value ?? []).Order(StringComparer.Ordinal)]);
 }
 
 internal interface IPorcupineHistoryOperationDescriptor<TValue>
@@ -174,7 +175,7 @@ internal sealed class PorcupineHistoryBuilder
             ScenarioName: scenarioName,
             Round: round,
             Seed: seed,
-            Events: _events.ToArray());
+            Events: [.. _events]);
     }
 
     private static bool TryDescribeOperation<TValue>(

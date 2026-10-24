@@ -187,7 +187,7 @@ The constructor validates distinct HTTP(S) origins and owns one SDK channel per
 origin. Each channel uses the endpoint's HTTPS authority and normal certificate
 validation. The SDK manages each connection pool; separate channels preserve
 distinct TLS identities across endpoints. `Dispose` closes owned channels.
-The `IEnumerable<CallInvoker>` overload accepts caller-owned channels for
+The `ImmutableArray<CallInvoker>` overload accepts caller-owned channels for
 authentication or custom transport setup. Those invokers must enforce call
 deadlines and use application-controlled mutation retries.
 
@@ -238,8 +238,9 @@ The `csharp/Directory.Build.props`, `Directory.Build.targets`,
 `Directory.Packages.props`, and root `csharp/.editorconfig` files form the upstream
 source build boundary. Retain these files with the selected projects: they
 terminate parent-repository build and analyzer-policy discovery and keep package
-versions declared in upstream project files. The upstream editor configuration
-uses the SDK's diagnostic defaults plus local formatting conventions.
+versions declared in upstream project files. The upstream build enables the latest recommended .NET analyzers and treats
+warnings as errors. The editor configuration applies local formatting
+conventions.
 The embedding application's own build and analyzers retain its local policy.
 CI's `Test-SourceBoundary.ps1` checks this contract beneath deliberately
 incompatible parent build/central-package settings and strict analyzer rules,

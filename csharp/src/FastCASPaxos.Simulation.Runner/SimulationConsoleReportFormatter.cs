@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Globalization;
 using System.Text;
 using FastCASPaxos.Simulation.Scenarios;
@@ -18,7 +19,7 @@ public static class SimulationConsoleReportFormatter
         ArgumentNullException.ThrowIfNull(scenarioParameters);
 
         List<string> lines = [];
-        var successfulRuns = batchResult.Runs.Where(run => run.Success).ToArray();
+        ImmutableArray<SimulationRunResult> successfulRuns = [.. batchResult.Runs.Where(run => run.Success)];
         var failedRuns = batchResult.Runs.Where(run => !run.Success).ToArray();
 
         if (successfulRuns.Length > 0)
@@ -51,7 +52,7 @@ public static class SimulationConsoleReportFormatter
         lines.Add(
             string.Create(
                 CultureInfo.InvariantCulture,
-                $"Completed {batchResult.Runs.Count} run(s): {batchResult.SucceededCount} passed, {batchResult.FailedCount} failed."));
+                $"Completed {batchResult.Runs.Length} run(s): {batchResult.SucceededCount} passed, {batchResult.FailedCount} failed."));
         lines.Add($"Artifacts: {artifactsPath}");
         return string.Join(Environment.NewLine, lines);
     }

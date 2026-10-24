@@ -24,7 +24,7 @@ public sealed class HostLifecycleTests
 
     [Theory]
     [MemberData(nameof(InvalidConfigurations))]
-    public void NodeOptions_RejectInvalidConfiguration(BadOptions scenario)
+    public void NodeOptionsRejectInvalidConfiguration(BadOptions scenario)
     {
         using var directory = new TestDirectory();
         var options = Options(directory);
@@ -70,7 +70,7 @@ public sealed class HostLifecycleTests
     }
 
     [Fact]
-    public void NodeOptions_RequireExplicitMembershipAndAcceptBoundaryConfiguration()
+    public void NodeOptionsRequireExplicitMembershipAndAcceptBoundaryConfiguration()
     {
         Assert.Empty(new NodeOptions().Peers);
         using var directory = new TestDirectory();
@@ -94,7 +94,7 @@ public sealed class HostLifecycleTests
     }
 
     [Fact]
-    public void NodeOptions_RejectNegativeBoundsAsWellAsZero()
+    public void NodeOptionsRejectNegativeBoundsAsWellAsZero()
     {
         using var directory = new TestDirectory();
         Action<NodeOptions>[] invalid =
@@ -122,7 +122,7 @@ public sealed class HostLifecycleTests
     }
 
     [Fact]
-    public async Task NodeRuntime_OfflineMembershipDoesNotRequireConnectivityAtStartup()
+    public async Task NodeRuntimeOfflineMembershipDoesNotRequireConnectivityAtStartup()
     {
         using var directory = new TestDirectory();
         var options = Options(directory);
@@ -140,7 +140,7 @@ public sealed class HostLifecycleTests
     }
 
     [Fact]
-    public async Task NodeRuntime_DisposalIsIdempotentAndReopenPreservesState()
+    public async Task NodeRuntimeDisposalIsIdempotentAndReopenPreservesState()
     {
         using var directory = new TestDirectory();
         var options = Options(directory);
@@ -165,7 +165,7 @@ public sealed class HostLifecycleTests
         await using var reopened = await NodeRuntime.OpenAsync(options).WaitAsync(Watchdog);
         Assert.Equal(current, await reopened.Registers.ReadAsync("durable").AsTask().WaitAsync(Watchdog));
         var page = await reopened.Acceptor.ListKeysAsync("queued-");
-        Assert.Equal(16, page.Entries.Count);
+        Assert.Equal(16, page.Entries.Length);
         for (var index = 0; index < 16; index++)
         {
             Assert.Equal($"queued-{index:D2}", page.Entries[index].Key);
@@ -178,19 +178,19 @@ public sealed class HostLifecycleTests
     }
 
     [Fact]
-    public async Task NodeRuntime_PreCancelledStartupCreatesNoDatabase()
+    public async Task NodeRuntimePreCancelledStartupCreatesNoDatabase()
     {
         using var directory = new TestDirectory();
         var options = Options(directory);
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => NodeRuntime.OpenAsync(options, cancellation.Token));
+        var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => NodeRuntime.OpenAsync(options, cancellationToken: cancellation.Token));
         Assert.Equal(cancellation.Token, error.CancellationToken);
         Assert.Empty(Directory.GetFiles(directory.Path));
     }
 
     [Fact]
-    public async Task NodeRuntime_InvalidStartupRejectsBeforeCreatingDatabase()
+    public async Task NodeRuntimeInvalidStartupRejectsBeforeCreatingDatabase()
     {
         using var directory = new TestDirectory();
         await Assert.ThrowsAsync<ArgumentNullException>(() => NodeRuntime.OpenAsync(null!));
@@ -201,7 +201,7 @@ public sealed class HostLifecycleTests
     }
 
     [Fact]
-    public async Task NodeRuntime_FailedProposerInitializationReleasesAcceptor()
+    public async Task NodeRuntimeFailedProposerInitializationReleasesAcceptor()
     {
         using var directory = new TestDirectory();
         var options = Options(directory);

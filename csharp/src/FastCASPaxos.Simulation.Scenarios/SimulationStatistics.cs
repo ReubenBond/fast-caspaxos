@@ -180,13 +180,11 @@ public sealed class SimulationStatisticsSummary
     public static SimulationStatisticsSummary FromBatch(SimulationBatchResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
-        return FromRuns(result.Runs);
+        return FromRuns(result.Runs.AsSpan());
     }
 
-    public static SimulationStatisticsSummary FromRuns(IEnumerable<SimulationRunResult> runs)
+    public static SimulationStatisticsSummary FromRuns(ReadOnlySpan<SimulationRunResult> runs)
     {
-        ArgumentNullException.ThrowIfNull(runs);
-
         Dictionary<string, long> totals = new(StringComparer.Ordinal);
         var acceptorRoundTrips = new RoundTripDistributionBuilder();
         var readAcceptorRoundTrips = new RoundTripDistributionBuilder();
@@ -224,10 +222,9 @@ public sealed class SimulationStatisticsSummary
                         writeAcceptorRoundTrips.Add(roundTripSample.RoundTrips);
                         break;
                     default:
-                        throw new ArgumentOutOfRangeException(
-                            nameof(roundTripSample.Kind),
-                            roundTripSample.Kind,
-                            null);
+                        throw new ArgumentException(
+                            $"Unsupported proposal kind '{roundTripSample.Kind}'.",
+                            nameof(runs));
                 }
             }
         }

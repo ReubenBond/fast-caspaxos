@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
 
@@ -11,7 +12,7 @@ namespace FastCASPaxos.Protocol;
 public abstract class ProposerEngine<TValue, TRoute>
     where TRoute : notnull
 {
-    private readonly List<TRoute> _acceptors;
+    private readonly ImmutableArray<TRoute> _acceptors;
     private readonly Dictionary<TRoute, PrepareResponse> _prepareResponses = [];
     private readonly Dictionary<TRoute, AcceptResponse> _acceptResponses = [];
     private readonly ProposerRuntime _runtime;
@@ -23,11 +24,15 @@ public abstract class ProposerEngine<TValue, TRoute>
     public ProposerEngine(
         ProposerRuntime runtime,
         TValue initialValue,
-        IEnumerable<TRoute> acceptors,
+        ImmutableArray<TRoute> acceptors,
         ProposerModePolicy modePolicy)
     {
         ArgumentNullException.ThrowIfNull(runtime);
-        ArgumentNullException.ThrowIfNull(acceptors);
+        if (acceptors.IsDefault)
+        {
+            throw new ArgumentNullException(nameof(acceptors));
+        }
+
         ArgumentNullException.ThrowIfNull(modePolicy);
         modePolicy.Validate();
 
@@ -35,7 +40,7 @@ public abstract class ProposerEngine<TValue, TRoute>
         _modePolicy = modePolicy.CreateRuntimeCopy();
         _initialValue = initialValue;
         CurrentValue = initialValue;
-        _acceptors = [.. acceptors];
+        _acceptors = acceptors;
     }
 
     protected IOperation<TValue>? CurrentOperation { get; private set; }
@@ -337,15 +342,15 @@ public abstract class ProposerEngine<TValue, TRoute>
         // simple majority is enough.
         if (ballot.IsFastRoundBallot)
         {
-            return 4 * responses >= 3 * _acceptors.Count;
+            return 4 * responses >= 3 * _acceptors.Length;
         }
 
-        return 2 * responses > _acceptors.Count;
+        return 2 * responses > _acceptors.Length;
     }
 
     public bool IsQuorumPossible(Ballot ballot, int successResponses, int failureResponses)
     {
-        var remaining = _acceptors.Count - (successResponses + failureResponses);
+        var remaining = _acceptors.Length - (successResponses + failureResponses);
 
         // Stop waiting once even the best-case remaining responses cannot produce either a success
         // quorum or a rejection quorum.
@@ -568,8 +573,8 @@ public abstract class ProposerEngine<TValue, TRoute>
         // A candidate is viable only if the prepare responses we have not seen yet could
         // still lift it to a full fast quorum. If no value is viable, then the split fast ballot
         // cannot possibly have committed anything and classic recovery may safely move forward.
-        var remainingResponses = _acceptors.Count - _prepareResponses.Count;
-        var fastQuorumSize = (3 * _acceptors.Count + 3) / 4;
+        var remainingResponses = _acceptors.Length - _prepareResponses.Count;
+        var fastQuorumSize = (3 * _acceptors.Length + 3) / 4;
         var viableChoices = 0;
         foreach (var (_, count) in values)
         {

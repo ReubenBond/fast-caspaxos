@@ -8,7 +8,7 @@ namespace FastCASPaxos.Simulation.Tests;
 public sealed class FastClassicConflictScenarioTests
 {
     [Fact]
-    public async Task ConcurrentFastRoundConflicts_ConvergeOnSingleCommittedValue()
+    public async Task ConcurrentFastRoundConflictsConvergeOnSingleCommittedValue()
     {
         await using var cluster = new FastCasSimulationCluster<StringValue>(
             seed: 666,

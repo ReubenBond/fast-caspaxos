@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Model;
 
 namespace FastCASPaxos.Server;
@@ -13,4 +14,4 @@ public interface ILocalAcceptorInspection
 public sealed record LocalAcceptorState(
     string Key, Ballot PromisedBallot, Ballot AcceptedBallot, ByteString? AcceptedValue);
 
-public sealed record LocalAcceptorPage(IReadOnlyList<LocalAcceptorState> Entries, string? ContinuationKey);
+public sealed record LocalAcceptorPage(ImmutableArray<LocalAcceptorState> Entries, string? ContinuationKey);

@@ -11,7 +11,7 @@ public sealed class RegisterRestartTests
     [Theory]
     [InlineData("classic")]
     [InlineData("leader")]
-    public async Task Restart_DelayedOldPrepareAndAcceptCannotReplaceNewerState(string mode)
+    public async Task RestartDelayedOldPrepareAndAcceptCannotReplaceNewerState(string mode)
     {
         using var ballotDatabase = new TestDatabase();
         using var firstDatabase = new TestDatabase();
@@ -119,7 +119,7 @@ public sealed class RegisterRestartTests
         await using var reader = new ReplicatedRegisterService(
             [new("c", partitioned), new("a", first), new("b", second)], reopenedBallots, options);
         Assert.Equal(updated.Current, await reader.ReadAsync("durable").AsTask().WaitAsync(TestDatabase.Timeout));
-        Assert.Equal(new[] { "durable" }, (await reader.ListKeysAsync()).Keys);
+        Assert.Equal<string>(["durable"], (await reader.ListKeysAsync()).Keys);
     }
 
     private sealed class PartitionedAcceptor(IKeyedAcceptor inner) : IKeyedAcceptor

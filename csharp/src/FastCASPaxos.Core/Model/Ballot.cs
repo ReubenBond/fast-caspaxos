@@ -9,13 +9,13 @@ public readonly struct Ballot(int round, int id) : IComparable<Ballot>
     /// <summary>
     /// The round / epoch number.
     /// </summary>
-    public readonly int Round = round;
+    public int Round { get; } = round;
 
     /// <summary>
     /// The unique identifier of the proposer.
     /// A proposer id of 0 represents a fast round ballot.
     /// </summary>
-    public readonly int Proposer = id;
+    public int Proposer { get; } = id;
 
     /// <summary>
     /// Creates the initial shared fast-round ballot.

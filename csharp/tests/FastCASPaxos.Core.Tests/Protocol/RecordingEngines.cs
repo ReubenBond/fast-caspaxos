@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
 using FastCASPaxos.Protocol;
@@ -114,7 +115,7 @@ public sealed class RecordingProposerEngine<TValue, TRoute> : ValueTrackingPropo
         TRoute proposer,
         int proposerId,
         TValue initialValue,
-        IEnumerable<TRoute> acceptors,
+        ImmutableArray<TRoute> acceptors,
         ProposerModePolicy modePolicy)
         : base(new ProposerRuntime(), initialValue, acceptors, modePolicy)
     {
@@ -168,7 +169,7 @@ public sealed class RecordingProposerEngine<TValue, TRoute> : ValueTrackingPropo
 public sealed class RecordingOperationDriver<TValue, TRoute> : OperationDriver<TValue, TRoute>
     where TRoute : notnull
 {
-    public RecordingOperationDriver(TRoute caller, IEnumerable<TRoute> proposers)
+    public RecordingOperationDriver(TRoute caller, ImmutableArray<TRoute> proposers)
         : base(caller, proposers) { }
 
     public List<ScheduledProposal<TValue, TRoute>> SentProposals { get; } = [];

@@ -12,7 +12,6 @@ namespace Clockwork;
 /// Creates a new simulation random with the specified seed.
 /// </remarks>
 /// <param name="seed">The seed for reproducible random sequences.</param>
-#pragma warning disable CA5394 // Do not use insecure randomness - intentionally deterministic for simulation testing
 public sealed class SimulationRandom(int seed) : Random(seed)
 {
     /// <summary>
@@ -40,29 +39,13 @@ public sealed class SimulationRandom(int seed) : Random(seed)
     }
 
     /// <summary>
-    /// Shuffles the elements of the list in place.
-    /// </summary>
-    public void Shuffle<T>(IList<T> list)
-    {
-        ArgumentNullException.ThrowIfNull(list);
-        var n = list.Count;
-        while (n > 1)
-        {
-            n--;
-            var k = Next(n + 1);
-            (list[k], list[n]) = (list[n], list[k]);
-        }
-    }
-
-    /// <summary>
     /// Returns a random element from the list.
     /// </summary>
-    public T Choose<T>(IList<T> list)
+    public T Choose<T>(ReadOnlySpan<T> list)
     {
-        ArgumentNullException.ThrowIfNull(list);
-        if (list.Count == 0)
+        if (list.IsEmpty)
             throw new ArgumentException("List cannot be empty", nameof(list));
-        return list[Next(list.Count)];
+        return list[Next(list.Length)];
     }
 
     /// <summary>
@@ -91,4 +74,3 @@ public sealed class SimulationRandom(int seed) : Random(seed)
         return new Guid(bytes);
     }
 }
-#pragma warning restore CA5394

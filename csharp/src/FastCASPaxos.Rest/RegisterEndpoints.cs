@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Globalization;
 using FastCASPaxos.Server;
 using Microsoft.AspNetCore.Builder;
@@ -10,7 +11,7 @@ using Microsoft.Net.Http.Headers;
 
 namespace FastCASPaxos.Rest;
 
-public sealed record RegisterKeyList(IReadOnlyList<string> Keys, string? Continuation);
+public sealed record RegisterKeyList(ImmutableArray<string> Keys, string? Continuation);
 
 public static class RegisterEndpoints
 {
@@ -111,7 +112,7 @@ public static class RegisterEndpoints
                     if (result.Current!.IsPresent) context.Response.Headers.ETag = ETag(result.Current.Version!.Value);
                     return Problem(412, "mismatch", "The register's established state failed the write precondition.");
                 case CompareExchangeStatus.Unknown:
-                    if (result.Error is not null) logger.LogWarning(result.Error, "Register write outcome is unknown.");
+                    if (result.Error is not null) logger.WriteOutcomeUnknown(result.Error);
                     var extensions = new Dictionary<string, object?>();
                     if (result.Current is { IsPresent: true })
                         extensions["currentEtag"] = ETag(result.Current.Version!.Value);
@@ -139,12 +140,12 @@ public static class RegisterEndpoints
         }
         catch (IOException error) when (!dispatched)
         {
-            logger.LogInformation(error, "HTTP request body failed before register dispatch.");
+            logger.RequestBodyFailed(error);
             return Problem(400, "body-read", "The HTTP request body could not be read.");
         }
         catch (ArgumentException error) when (dispatched)
         {
-            logger.LogInformation(error, "The register service rejected an argument before mutation.");
+            logger.ArgumentRejected(error);
             return Problem(400, "invalid", "The register service rejected a request argument or version token.");
         }
         catch (RegisterBusyException)
@@ -153,7 +154,7 @@ public static class RegisterEndpoints
         }
         catch (RegisterUnavailableException error)
         {
-            logger.LogWarning(error, "Register operation reached its deadline before mutation.");
+            logger.RegisterUnavailable(error);
             return Problem(503, "unavailable", "A register quorum was unavailable before the operation deadline.");
         }
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
@@ -162,7 +163,7 @@ public static class RegisterEndpoints
         }
         catch (Exception error)
         {
-            logger.LogError(error, "HTTP register operation failed.");
+            logger.OperationFailed(error);
             return Problem(500, "internal", "The operation failed; consult the server log.",
                 operation == Operation.Write && dispatched ? "unknown" : "not-applied");
         }

@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Model;
 using FastCASPaxos.Simulation.Contracts;
 
@@ -27,18 +28,18 @@ public readonly struct StringValue(int version, string value) : IVersionedValue<
 
 public static class StringScenarioOperations
 {
-    public static IReadOnlyList<IOperation<StringValue>> AppendSequence(string value)
+    public static ImmutableArray<IOperation<StringValue>> AppendSequence(string value)
     {
         ArgumentNullException.ThrowIfNull(value);
 
-        List<IOperation<StringValue>> operations = [];
+        var operations = ImmutableArray.CreateBuilder<IOperation<StringValue>>(value.Length);
         var version = 0;
         foreach (var character in value)
         {
             operations.Add(AppendAtVersion(++version, character.ToString()));
         }
 
-        return operations;
+        return operations.MoveToImmutable();
     }
 
     public static IOperation<StringValue> AppendAtVersion(int version, string segment) =>

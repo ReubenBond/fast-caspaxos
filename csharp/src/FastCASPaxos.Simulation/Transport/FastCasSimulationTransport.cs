@@ -36,19 +36,19 @@ public sealed class FastCasSimulationTransport<TValue>
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        if (!_endpoints.TryGetValue(message.To, out var endpoint))
+        if (!_endpoints.TryGetValue(message.Destination, out var endpoint))
         {
-            throw new InvalidOperationException($"Unknown FastCASPaxos simulation endpoint '{message.To}'.");
+            throw new InvalidOperationException($"Unknown FastCASPaxos simulation endpoint '{message.Destination}'.");
         }
 
-        var deliveryStatus = Network.CheckDelivery(message.From.NetworkAddress, message.To.NetworkAddress);
+        var deliveryStatus = Network.CheckDelivery(message.From.NetworkAddress, message.Destination.NetworkAddress);
         _observer?.OnTransportMessage(GetMessageKind(message), deliveryStatus);
         if (deliveryStatus != DeliveryStatus.Success)
         {
             return deliveryStatus;
         }
 
-        endpoint.DeliveryQueue.EnqueueAfter(() => endpoint.Deliver(message), Network.GetMessageDelay(message.From.NetworkAddress, message.To.NetworkAddress));
+        endpoint.DeliveryQueue.EnqueueAfter(() => endpoint.Deliver(message), Network.GetMessageDelay(message.From.NetworkAddress, message.Destination.NetworkAddress));
         return DeliveryStatus.Success;
     }
 

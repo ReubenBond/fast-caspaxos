@@ -30,7 +30,7 @@ try
         var value = await client.ReadAsync(key);
         Require(value.IsPresent && value.Value?.Length == 0, "The retained register must contain a present empty value.");
         var page = await client.ListKeysAsync(prefix: key, limit: 1);
-        Require(page.Keys.Count == 1 && page.Keys[0] == key, "Listing must discover the written key.");
+        Require(page.Keys.Length == 1 && page.Keys[0] == key, "Listing must discover the written key.");
     }
     Console.WriteLine($"Smoke succeeded: {args[0]} '{key}' through {clients.Length} endpoint(s).");
 }

@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using FastCASPaxos.Server;
 using Grpc.Core;
 
@@ -75,10 +76,10 @@ public sealed class GrpcRegisterService : IRegisterService
         var response = await _calls.Invoke(o => _client.ListKeysAsync(request, o), cancellationToken).ConfigureAwait(false);
         return RpcErrors.Response(() =>
         {
-            var keys = response.Keys.ToArray();
+            ImmutableArray<string> keys = [.. response.Keys];
             var cursor = response.HasContinuationKey ? response.ContinuationKey : null;
-            WireConvert.ValidatePage(keys, cursor, request);
-            return new RegisterKeyPage(Array.AsReadOnly(keys), cursor);
+            WireConvert.ValidatePage(keys.AsSpan(), cursor, request);
+            return new RegisterKeyPage(keys, cursor);
         });
     }
 }
