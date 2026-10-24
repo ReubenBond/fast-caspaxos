@@ -1,0 +1,17 @@
+<Project DefaultTargets="Build">
+  <PropertyGroup>
+    <AdminRoot>$(MSBuildThisFileDirectory)</AdminRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <AdminSource Include="$(AdminRoot)src\**\*" />
+  </ItemGroup>
+  <Target Name="Restore" Inputs="$(AdminRoot)package.json;$(AdminRoot)package-lock.json"
+          Outputs="$(AdminRoot)node_modules\.package-lock.json">
+    <Exec WorkingDirectory="$(AdminRoot)" Command="npm ci --no-audit --no-fund" />
+  </Target>
+  <Target Name="Build" DependsOnTargets="Restore"
+          Inputs="$(AdminRoot)package.json;$(AdminRoot)package-lock.json;$(AdminRoot)index.html;$(AdminRoot)tsconfig.json;$(AdminRoot)vite.config.ts;@(AdminSource)"
+          Outputs="$(AdminRoot)dist\index.html">
+    <Exec WorkingDirectory="$(AdminRoot)" Command="npm run build" />
+  </Target>
+</Project>

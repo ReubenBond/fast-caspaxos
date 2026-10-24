@@ -7,20 +7,14 @@
     <AdminRoot>$(MSBuildProjectDirectory)\..\..\..\admin</AdminRoot>
   </PropertyGroup>
   <ItemGroup>
-    <AdminSource Include="$(AdminRoot)\src\**\*" />
     <ProjectReference Include="..\FastCASPaxos.Grpc\FastCASPaxos.Grpc.csproj" />
     <ProjectReference Include="..\FastCASPaxos.Rest\FastCASPaxos.Rest.csproj" />
     <ProjectReference Include="..\FastCASPaxos.Sqlite\FastCASPaxos.Sqlite.csproj" />
   </ItemGroup>
-  <Target Name="RestoreAdminDependencies" Condition="'$(BuildAdminConsole)' == 'true'"
-          Inputs="$(AdminRoot)\package.json;$(AdminRoot)\package-lock.json" Outputs="$(AdminRoot)\node_modules\.package-lock.json">
-    <Exec WorkingDirectory="$(AdminRoot)" Command="npm ci --no-audit --no-fund" />
-  </Target>
-  <Target Name="BuildAdminAssets" BeforeTargets="PrepareForBuild" DependsOnTargets="RestoreAdminDependencies"
-          Condition="'$(BuildAdminConsole)' == 'true'"
-          Inputs="$(AdminRoot)\package.json;$(AdminRoot)\package-lock.json;$(AdminRoot)\index.html;$(AdminRoot)\tsconfig.json;$(AdminRoot)\vite.config.ts;@(AdminSource)"
-          Outputs="$(AdminRoot)\dist\index.html">
-    <Exec WorkingDirectory="$(AdminRoot)" Command="npm run build" />
+  <Target Name="BuildAdminAssets" BeforeTargets="PrepareForBuild" Condition="'$(BuildAdminConsole)' == 'true'">
+    <!-- Both target frameworks share one build request for node_modules and dist. -->
+    <MSBuild Projects="$(AdminRoot)\build.proj" Targets="Build"
+             RemoveProperties="TargetFramework;TargetFrameworks" />
   </Target>
   <Target Name="CopyAdminAssets" AfterTargets="Build" Condition="'$(BuildAdminConsole)' == 'true'">
     <ItemGroup>

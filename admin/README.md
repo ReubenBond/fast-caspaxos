@@ -22,7 +22,9 @@ Open `http://127.0.0.1:5000/admin/`. For a cluster, use the existing
 
 The host's normal build restores the lockfile with `npm ci` when needed, runs
 TypeScript checking and the Vite production build, and copies assets into
-`wwwroot/admin` beside the executable. Publish includes the same assets:
+`wwwroot/admin` beside the executable. Both target frameworks share one
+`build.proj` request, keeping dependency installation and asset generation
+serialized. Publish includes the same assets:
 
 ```powershell
 dotnet publish csharp\src\FastCASPaxos.Host -f net11.0 -c Release
