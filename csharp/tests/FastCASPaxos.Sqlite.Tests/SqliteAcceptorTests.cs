@@ -141,7 +141,7 @@ public sealed class SqliteAcceptorTests
             Assert.True(missing.IsPromised);
             Assert.Equal(Ballot.Zero, missing.AcceptedBallot);
             Assert.Null(missing.AcceptedValue);
-            Assert.True((await server.AcceptAsync("empty", new(Ballot.InitialFast(), ByteString.Empty, Ballot.Zero))).IsAccepted);
+            Assert.True((await server.AcceptAsync("empty", new(Ballot.InitialFast(), default, Ballot.Zero))).IsAccepted);
         }
 
         await using var reopened = await database.OpenAsync();
@@ -151,6 +151,10 @@ public sealed class SqliteAcceptorTests
         Assert.Equal(Ballot.Zero, stillMissing.AcceptedBallot);
         Assert.Equal(ByteString.Empty, empty.AcceptedValue);
         Assert.Equal(Ballot.InitialFast(), empty.AcceptedBallot);
+        Assert.True((await reopened.AcceptAsync("empty",
+            new(Ballot.InitialFast(), ByteString.Empty, Ballot.Zero))).IsAccepted);
+        Assert.False((await reopened.AcceptAsync("empty",
+            new(Ballot.InitialFast(), new([42]), Ballot.Zero))).IsAccepted);
         var listed = Assert.Single((await reopened.ListKeysAsync()).Entries);
         Assert.Equal("empty", listed.Key);
         Assert.Equal(ByteString.Empty, listed.AcceptedValue);

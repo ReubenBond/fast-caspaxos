@@ -6,21 +6,24 @@ namespace FastCASPaxos.Server.Tests;
 public sealed class AcceptedDigestTests
 {
     [Theory]
+    [InlineData("default")]
     [InlineData("empty")]
     [InlineData("abc")]
     public void Hash_KnownVector_ReturnsSha256(string caseId)
     {
-        var value = caseId == "empty" ? ByteString.Empty : new ByteString("abc"u8);
-        var expected = caseId == "empty"
-            ? "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
-            : "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD";
+        var value = caseId switch
+        {
+            "default" => default,
+            "empty" => ByteString.Empty,
+            "abc" => new ByteString("abc"u8),
+            _ => throw new ArgumentOutOfRangeException(nameof(caseId))
+        };
+        var expected = caseId == "abc"
+            ? "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD"
+            : "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855";
 
         Assert.Equal(Convert.FromHexString(expected), AcceptedDigest.Hash(value).ToArray());
     }
-
-    [Fact]
-    public void Hash_NullValue_Throws() =>
-        Assert.Throws<ArgumentNullException>(() => AcceptedDigest.Hash(null!));
 
     [Theory]
     [InlineData(0, 1)]
@@ -37,8 +40,8 @@ public sealed class AcceptedDigestTests
         Assert.Throws<ArgumentException>(() => new AcceptedDigest(new(1, 1), new(new byte[length])).Validate());
 
     [Fact]
-    public void Validate_NullHash_Throws() =>
-        Assert.Throws<ArgumentNullException>(() => new AcceptedDigest(new(1, 1), null!).Validate());
+    public void Validate_DefaultHash_Throws() =>
+        Assert.Throws<ArgumentException>(() => new AcceptedDigest(new(1, 1), default).Validate());
 
     [Theory]
     [InlineData(0)]

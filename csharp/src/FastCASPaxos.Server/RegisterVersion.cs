@@ -11,7 +11,6 @@ public static class RegisterVersion
     /// </summary>
     public static bool IsValid(ByteString version)
     {
-        ArgumentNullException.ThrowIfNull(version);
         var bytes = version.Span;
         return bytes.Length == 8 && BinaryPrimitives.ReadInt32BigEndian(bytes) > 0
             && BinaryPrimitives.ReadInt32BigEndian(bytes[4..]) > 0;

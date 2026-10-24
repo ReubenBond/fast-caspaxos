@@ -14,11 +14,11 @@ public sealed class RegisterSimulationClusterTests
         {
             var client = simulation.CreateClient();
             Assert.Equal(new RegisterValue(null, null), await client.ReadAsync("key"));
-            var created = await client.CompareExchangeAsync("key", null, ByteString.Empty);
+            var created = await client.CompareExchangeAsync("key", null, default);
             Assert.Equal(CompareExchangeStatus.Applied, created.Status);
             Assert.Equal(ByteString.Empty, created.Current!.Value);
             Assert.True(created.Current.IsPresent);
-            var original = created.Current.Version!;
+            var original = created.Current.Version!.Value;
             var updated = await client.CompareExchangeAsync("key", new(original.ToArray()), ByteString.Empty);
             Assert.Equal(CompareExchangeStatus.Applied, updated.Status);
             Assert.Equal(ByteString.Empty, updated.Current!.Value);
@@ -460,14 +460,13 @@ public sealed class RegisterSimulationClusterTests
             var client = simulation.CreateClient();
             var result = await client.CompareExchangeAsync("key", null, new([42]));
             Assert.Equal(CompareExchangeStatus.Applied, result.Status);
-            Assert.True(RegisterVersion.IsValid(result.Current!.Version!));
+            Assert.True(RegisterVersion.IsValid(result.Current!.Version!.Value));
             foreach (var malformed in new[] { ByteString.Empty, new ByteString([1]), new ByteString(new byte[8]) })
                 await Assert.ThrowsAsync<ArgumentException>(() =>
                     client.CompareExchangeAsync("key", malformed, new([99])).AsTask());
             Assert.Equal(result.Current, await client.ReadAsync("key"));
             await Assert.ThrowsAsync<ArgumentNullException>(() => client.ReadAsync(null!).AsTask());
             await Assert.ThrowsAsync<ArgumentNullException>(() => client.CompareExchangeAsync(null!, null, new([1])).AsTask());
-            await Assert.ThrowsAsync<ArgumentNullException>(() => client.CompareExchangeAsync("key", null, null!).AsTask());
             await Assert.ThrowsAsync<ArgumentNullException>(() => client.ListKeysAsync(null!).AsTask());
         });
     }

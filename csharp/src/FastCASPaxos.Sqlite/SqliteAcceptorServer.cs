@@ -89,7 +89,6 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         string key, AcceptRequest<ByteString> request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(key);
-        ArgumentNullException.ThrowIfNull(request.Value);
         ValidateBallot(request.Ballot, nameof(request));
         if (!request.NextBallotToPrepare.IsZero)
         {
@@ -216,7 +215,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
             }
             var state = Load(connection, transaction, encodedKey, out _);
             Debug.Assert(state.AcceptedValue is not null);
-            return new KeyedAcceptorState(key, state.PromisedBallot, state.AcceptedBallot, state.AcceptedValue);
+            return new KeyedAcceptorState(key, state.PromisedBallot, state.AcceptedBallot, state.AcceptedValue.Value);
         }, cancellationToken);
     }
 
@@ -506,7 +505,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
     {
         if (exists && original.PromisedBallot == state.PromisedBallot
             && original.AcceptedBallot == state.AcceptedBallot
-            && Equals(original.AcceptedValue, state.AcceptedValue))
+            && original.AcceptedValue == state.AcceptedValue)
         {
             return false;
         }
@@ -514,7 +513,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         if (exists && original.AcceptedBallot == state.AcceptedBallot
-            && Equals(original.AcceptedValue, state.AcceptedValue))
+            && original.AcceptedValue == state.AcceptedValue)
         {
             command.CommandText = """
                 UPDATE acceptor_state SET promised_round=$pr, promised_proposer=$pp WHERE key=$key;

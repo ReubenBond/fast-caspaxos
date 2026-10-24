@@ -121,7 +121,7 @@ public sealed class FailurePhaseTests
         await harness.Invoke(context);
         var problem = Problem(context, 503, "unknown", "unknown");
         if (current is { IsPresent: true })
-            Assert.Equal(Tag(current.Version!), problem.GetProperty("currentEtag").GetString());
+            Assert.Equal(Tag(current.Version!.Value), problem.GetProperty("currentEtag").GetString());
         else
             Assert.False(problem.TryGetProperty("currentEtag", out _));
         if (cause == Cause.None)

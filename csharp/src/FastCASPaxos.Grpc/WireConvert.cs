@@ -50,7 +50,6 @@ internal static class WireConvert
 
     public static ProtoBytes ToWire(ByteString value)
     {
-        ArgumentNullException.ThrowIfNull(value);
         return ProtoBytes.CopyFrom(value.ToArray());
     }
 
@@ -67,7 +66,7 @@ internal static class WireConvert
             Require(ballot.IsZero, "An unaccepted record must have the zero ballot.");
             return null;
         }
-        return new() { Ballot = ToWire(ballot), Value = ToWire(value) };
+        return new() { Ballot = ToWire(ballot), Value = ToWire(value.Value) };
     }
 
     public static (Ballot Ballot, ByteString? Value) Accepted(Wire.AcceptedState? value) =>
@@ -81,7 +80,7 @@ internal static class WireConvert
             return new() { Absent = new() };
         }
         Require(value.Value is not null, "A present register must have both value and version.");
-        return new() { Present = new() { Value = ToWire(value.Value!), Version = ToWire(value.Version) } };
+        return new() { Present = new() { Value = ToWire(value.Value!.Value), Version = ToWire(value.Version.Value) } };
     }
 
     public static RegisterValue Register(Wire.RegisterState? value) => value?.StateCase switch

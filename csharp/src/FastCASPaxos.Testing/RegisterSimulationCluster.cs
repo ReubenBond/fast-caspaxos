@@ -323,8 +323,7 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
             string key, ByteString? expectedVersion, ByteString value, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(key);
-            ArgumentNullException.ThrowIfNull(value);
-            if (expectedVersion is not null && !RegisterVersion.IsValid(expectedVersion))
+            if (expectedVersion is { } expected && !RegisterVersion.IsValid(expected))
                 throw new ArgumentException("A register version must be a token returned by this register cluster.", nameof(expectedVersion));
             owner.RequireContext();
             cancellationToken.ThrowIfCancellationRequested();
@@ -333,7 +332,7 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
             {
                 var state = await owner.ExecuteAsync(this, operation, cancellationToken);
                 var current = state.Get(key);
-                var status = Equals(current.Version, operation.Version) ? CompareExchangeStatus.Applied
+                var status = current.Version == operation.Version ? CompareExchangeStatus.Applied
                     : operation.MayHaveApplied ? CompareExchangeStatus.Unknown : CompareExchangeStatus.Mismatch;
                 owner.Record($"result node={node} status={status}");
                 return new(status, current);
@@ -388,7 +387,7 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
         public (OperationStatus Status, RegisterState Result) Apply(RegisterState current)
         {
             var existing = current.Get(key);
-            if (_expired || Equals(existing.Version, version) || !Equals(existing.Version, expectedVersion))
+            if (_expired || existing.Version == version || existing.Version != expectedVersion)
                 return (OperationStatus.NotApplicable, current);
             MayHaveApplied = true;
             return (OperationStatus.Success, current.Set(key, new(payload, version)));

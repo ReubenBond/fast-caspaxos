@@ -194,7 +194,6 @@ public sealed class RepairContractTests
     [InlineData("different-wrong-key")]
     [InlineData("default-union")]
     [InlineData("zero-accepted-ballot")]
-    [InlineData("missing-bytes")]
     public async Task ConditionalFetchService_InvalidDomainResult_FailsInsteadOfSerializing(string scenario)
     {
         var state = new KeyedAcceptorState("other", new(9, 2), new(3, 1), ByteString.Empty);
@@ -203,7 +202,6 @@ public sealed class RepairContractTests
             "unchanged-without-known" => new AcceptorUnchanged(),
             "different-wrong-key" => state,
             "zero-accepted-ballot" => state with { Key = "key", AcceptedBallot = default },
-            "missing-bytes" => state with { Key = "key", AcceptedValue = null! },
             _ => default
         };
         var source = new DelegateDigests { Fetch = (_, _, _) => ValueTask.FromResult(outcome) };

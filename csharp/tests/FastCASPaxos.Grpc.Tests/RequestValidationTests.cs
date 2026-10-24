@@ -138,9 +138,7 @@ public sealed class RequestValidationTests
             await Assert.ThrowsAsync<ArgumentException>(() => register.ListKeysAsync(limit: limit).AsTask());
         }
         await Assert.ThrowsAsync<ArgumentNullException>(() => acceptor.PrepareAsync(null!, new(new(1, 1))).AsTask());
-        await Assert.ThrowsAsync<ArgumentNullException>(() => acceptor.AcceptAsync("key", new(new(1, 1), null!, new())).AsTask());
         await Assert.ThrowsAsync<ArgumentNullException>(() => register.ReadAsync(null!).AsTask());
-        await Assert.ThrowsAsync<ArgumentNullException>(() => register.CompareExchangeAsync("key", null, null!).AsTask());
         await Assert.ThrowsAsync<ArgumentNullException>(() => register.ListKeysAsync(prefix: null!).AsTask());
         await Assert.ThrowsAsync<ArgumentNullException>(() => acceptor.ListKeysAsync(prefix: null!).AsTask());
         Assert.Empty(invoker.Calls);

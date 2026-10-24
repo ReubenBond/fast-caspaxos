@@ -26,7 +26,7 @@ public sealed class GrpcRegisterService : IRegisterService
         string key, ByteString? expectedVersion, ByteString value, CancellationToken cancellationToken = default)
     {
         var request = new Wire.CompareExchangeRequest { Key = WireConvert.Text(key), Value = WireConvert.ToWire(value) };
-        if (expectedVersion is not null) request.ExpectedVersion = WireConvert.ToWire(expectedVersion);
+        if (expectedVersion is { } expected) request.ExpectedVersion = WireConvert.ToWire(expected);
         var options = _calls.Options(cancellationToken);
         try
         {
@@ -39,12 +39,12 @@ public sealed class GrpcRegisterService : IRegisterService
                     case Wire.CompareExchangeResponse.OutcomeOneofCase.Applied:
                         var current = WireConvert.Register(response.Applied);
                         WireConvert.Require(current.IsPresent, "An applied write must return a present value.");
-                        WireConvert.Require(value.Equals(current.Value) && !Equals(expectedVersion, current.Version),
+                        WireConvert.Require(value == current.Value && expectedVersion != current.Version,
                             "An applied write must return its requested payload with a fresh version.");
                         return new CompareExchangeResult(CompareExchangeStatus.Applied, current);
                     case Wire.CompareExchangeResponse.OutcomeOneofCase.Mismatch:
                         var mismatch = WireConvert.Register(response.Mismatch);
-                        WireConvert.Require(!Equals(expectedVersion, mismatch.Version),
+                        WireConvert.Require(expectedVersion != mismatch.Version,
                             "A mismatch must report a different version than the expected version.");
                         return new CompareExchangeResult(CompareExchangeStatus.Mismatch, mismatch);
                     case Wire.CompareExchangeResponse.OutcomeOneofCase.Unknown:

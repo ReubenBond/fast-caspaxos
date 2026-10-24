@@ -6,7 +6,7 @@ public sealed record PayloadPreview(int Length, string Base64, bool Truncated)
 {
     public const int MaximumBytes = 256;
 
-    public static PayloadPreview? From(ByteString? value) => value is null ? null : From(value.Span);
+    public static PayloadPreview? From(ByteString? value) => value is { } bytes ? From(bytes.Span) : null;
 
     internal static PayloadPreview From(ReadOnlySpan<byte> value) =>
         new(value.Length, Convert.ToBase64String(value[..Math.Min(value.Length, MaximumBytes)]),
@@ -61,7 +61,7 @@ public sealed record AcceptorStateObservation(
     public static AcceptorStateObservation From(LocalAcceptorState state) => new(
         KeyPreview.From(state.Key)!, state.PromisedBallot, state.AcceptedBallot,
         PayloadPreview.From(state.AcceptedValue),
-        state.AcceptedValue is null ? null : RegisterPreview.FromAccepted(state.AcceptedValue));
+        state.AcceptedValue is { } value ? RegisterPreview.FromAccepted(value) : null);
 }
 
 public sealed record StorageObservation(string Status, string? Error = null);

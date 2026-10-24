@@ -8,7 +8,7 @@ public sealed class RegisterValidationTests
     [Fact]
     public async Task NativeVersionShape_UsesTheSameRuleAsRegisterAdmission()
     {
-        Assert.Throws<ArgumentNullException>(() => RegisterVersion.IsValid(null!));
+        Assert.False(RegisterVersion.IsValid(default));
         var peers = Peers();
         await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(1), Options());
         ByteString[] invalid = [ByteString.Empty, new(new byte[7]), new(new byte[9]),
@@ -77,7 +77,6 @@ public sealed class RegisterValidationTests
         await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(1), Options());
         await Assert.ThrowsAsync<ArgumentNullException>(() => service.ReadAsync(null!).AsTask());
         await Assert.ThrowsAsync<ArgumentNullException>(() => service.CompareExchangeAsync(null!, null, Payload).AsTask());
-        await Assert.ThrowsAsync<ArgumentNullException>(() => service.CompareExchangeAsync("key", null, null!).AsTask());
         await Assert.ThrowsAsync<ArgumentNullException>(() => service.ListKeysAsync(null!).AsTask());
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.ListKeysAsync(limit: 0).AsTask());
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.ListKeysAsync(limit: -1).AsTask());
@@ -88,8 +87,7 @@ public sealed class RegisterValidationTests
         Assert.All(peers, peer => Assert.Empty(peer.Prepares));
         Assert.All(peers, peer => Assert.Empty(peer.Accepts));
         Assert.All(peers, peer => Assert.Empty(peer.Reads));
-        // Empty key and payload are valid, unlike null.
-        Assert.Equal(CompareExchangeStatus.Applied, (await service.CompareExchangeAsync("", null, ByteString.Empty)).Status);
+        Assert.Equal(CompareExchangeStatus.Applied, (await service.CompareExchangeAsync("", null, default)).Status);
         Assert.Equal(ByteString.Empty, (await service.ReadAsync("")).Value);
     }
 }

@@ -157,7 +157,7 @@ public sealed class RegisterFailureTests
         var sent = peers.SelectMany(peer => peer.Accepts).Select(item => item.Request).ToArray();
         Assert.True(sent.Length >= 6); // Lost replies force a real second accept phase.
         Assert.Single(sent.Select(request => request.Value).Distinct());
-        Assert.Equal(Envelope(result.Current!.Version!, Payload), sent[0].Value);
+        Assert.Equal(Envelope(result.Current!.Version!.Value, Payload), sent[0].Value);
         Assert.Equal(result.Current, await service.ReadAsync("key"));
     }
 
@@ -285,7 +285,7 @@ public sealed class RegisterFailureTests
         foreach (var peer in peers) peer.Accept = null;
         await using var reader = new ReplicatedRegisterService(Routes(peers), new TestBallots(2), Options());
         var current = await reader.ReadAsync("key").AsTask().WaitAsync(Watchdog);
-        Assert.Equal(Envelope(current.Version!, Payload), requests[0].Request.Value);
+        Assert.Equal(Envelope(current.Version!.Value, Payload), requests[0].Request.Value);
     }
 
     [Fact]

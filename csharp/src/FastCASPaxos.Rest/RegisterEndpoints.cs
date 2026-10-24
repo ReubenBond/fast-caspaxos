@@ -78,8 +78,8 @@ public static class RegisterEndpoints
                 var current = await service.ReadAsync(registerKey, context.RequestAborted);
                 if (!current.IsPresent)
                     return Problem(404, "missing", "The register is absent.");
-                context.Response.Headers.ETag = ETag(current.Version!);
-                return Results.Bytes(current.Value!.ToArray(), "application/octet-stream");
+                context.Response.Headers.ETag = ETag(current.Version!.Value);
+                return Results.Bytes(current.Value!.Value.ToArray(), "application/octet-stream");
             }
 
             var expected = ExpectedVersion(context.Request);
@@ -102,19 +102,19 @@ public static class RegisterEndpoints
             switch (result.Status)
             {
                 case CompareExchangeStatus.Applied:
-                    context.Response.Headers.ETag = ETag(result.Current!.Version!);
+                    context.Response.Headers.ETag = ETag(result.Current!.Version!.Value);
                     if (expected is not null) return Results.NoContent();
                     context.Response.Headers.Location =
                         $"{context.Request.PathBase}{context.Request.Path}?key={Uri.EscapeDataString(registerKey)}";
                     return Results.StatusCode(StatusCodes.Status201Created);
                 case CompareExchangeStatus.Mismatch:
-                    if (result.Current!.IsPresent) context.Response.Headers.ETag = ETag(result.Current.Version!);
+                    if (result.Current!.IsPresent) context.Response.Headers.ETag = ETag(result.Current.Version!.Value);
                     return Problem(412, "mismatch", "The register's established state failed the write precondition.");
                 case CompareExchangeStatus.Unknown:
                     if (result.Error is not null) logger.LogWarning(result.Error, "Register write outcome is unknown.");
                     var extensions = new Dictionary<string, object?>();
                     if (result.Current is { IsPresent: true })
-                        extensions["currentEtag"] = ETag(result.Current.Version!);
+                        extensions["currentEtag"] = ETag(result.Current.Version!.Value);
                     if (result.Error is not null)
                         extensions["cause"] = result.Error switch
                         {

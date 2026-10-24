@@ -30,8 +30,17 @@ before disposing those dependencies.
 ## Values and conditional outcomes
 
 `RegisterValue` uses null `Value` and `Version` for logical absence. A present
-empty payload has a zero-length `ByteString` and a non-null version. ByteString
-copies input bytes and returns owned copies through `ToArray()`.
+empty payload has a zero-length `ByteString` and a non-null version. `ByteString`
+is a readonly struct with content-based `Equals`, `GetHashCode`, `==`, and `!=`.
+Its default value and `ByteString.Empty` both represent empty bytes.
+It copies input bytes and returns owned copies through `ToArray()`.
+
+The class-to-struct API change requires rebuilding consumers. Use `ByteString?`
+for optional bytes and unwrap present values through `.Value` or a property
+pattern before passing them to APIs accepting `ByteString`. Nullable equality
+preserves the distinction between absent bytes and present empty bytes.
+Register envelopes, SQLite blobs, and protobuf bytes retain their existing
+encodings.
 
 Pass the exact opaque version from a read or successful write as
 `expectedVersion`. Null creates only an absent register. Every applied write

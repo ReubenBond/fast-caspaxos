@@ -37,7 +37,7 @@ public sealed class AcceptorContractTests
         }
 
         await Prepare(2);
-        await Accept(3, ByteString.Empty); // Promise 2 is below accepted ballot 3.
+        await Accept(3, default); // Promise 2 is below accepted ballot 3.
         await Accept(3, ByteString.Empty, 9); // Exact retry cannot change the promise.
         await Accept(3, Payload); // Same-ballot different payload must reject.
         await Prepare(5);
@@ -95,7 +95,7 @@ public sealed class AcceptorContractTests
         Assert.Equal(FastCASPaxos.Model.Ballot.Zero, domain.AcceptedBallot);
         Assert.Empty((await client.ListKeysAsync()).Entries); // Promise-only keys are not inventory.
 
-        await raw.AcceptAsync(new() { Key = "", Ballot = Ballot(1), Value = Google.Protobuf.ByteString.Empty }).ResponseAsync;
+        Assert.True((await client.AcceptAsync("", new(new(1, 1), default, new()))).IsAccepted);
         var accepted = await raw.PrepareAsync(new() { Key = "", Ballot = Ballot(2) }).ResponseAsync;
         Assert.Equal(Ballot(1), accepted.Accepted.Ballot);
         Assert.True(accepted.Accepted.HasValue);

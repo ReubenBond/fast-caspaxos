@@ -20,7 +20,7 @@ public sealed class RegisterGrpcService(IRegisterService registers, ILogger<Regi
         {
             var key = WireConvert.Key(request.Key, request.HasKey);
             var value = WireConvert.Bytes(request.Value, request.HasValue);
-            var expected = request.HasExpectedVersion ? new ByteString(request.ExpectedVersion.Span) : null;
+            ByteString? expected = request.HasExpectedVersion ? new ByteString(request.ExpectedVersion.Span) : null;
             var result = await registers.CompareExchangeAsync(key, expected, value, context.CancellationToken);
             return RpcErrors.Response(() =>
             {

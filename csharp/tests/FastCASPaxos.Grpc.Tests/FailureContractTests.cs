@@ -314,7 +314,7 @@ public sealed class FailureContractTests
         Assert.DoesNotContain("private commit diagnostic", error.Message, StringComparison.Ordinal);
         var durable = await inner.ReadAsync("committed").AsTask().WaitAsync(Watchdog);
         Assert.Equal(Payload, durable.Value);
-        Assert.Equal(8, durable.Version!.Length);
+        Assert.Equal(8, durable.Version!.Value.Length);
         Assert.Equal(CompareExchangeStatus.Mismatch,
             (await inner.CompareExchangeAsync("committed", null, ByteString.Empty)).Status);
     }

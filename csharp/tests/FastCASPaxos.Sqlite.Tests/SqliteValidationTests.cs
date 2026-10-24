@@ -44,15 +44,13 @@ public sealed class SqliteValidationTests
             server.PrepareAsync(null!, new(Ballot.InitialFast())).AsTask());
         await Assert.ThrowsAsync<ArgumentNullException>(() =>
             server.AcceptAsync(null!, new(Ballot.InitialFast(), ByteString.Empty, Ballot.Zero)).AsTask());
-        await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            server.AcceptAsync("key", new(Ballot.InitialFast(), null!, Ballot.Zero)).AsTask());
         await Assert.ThrowsAsync<ArgumentNullException>(() => server.ListKeysAsync(prefix: null!).AsTask());
         foreach (var limit in new[] { 0, -1, int.MinValue })
         {
             await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => server.ListKeysAsync(limit: limit).AsTask());
         }
 
-        Assert.True((await server.AcceptAsync("", new(Ballot.InitialFast(), ByteString.Empty, Ballot.Zero))).IsAccepted);
+        Assert.True((await server.AcceptAsync("", new(Ballot.InitialFast(), default, Ballot.Zero))).IsAccepted);
         Assert.Equal("", Assert.Single((await server.ListKeysAsync()).Entries).Key);
     }
 

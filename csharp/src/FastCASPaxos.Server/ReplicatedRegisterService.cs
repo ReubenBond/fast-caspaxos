@@ -64,14 +64,13 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
         string key, ByteString? expectedVersion, ByteString value, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(key);
-        ArgumentNullException.ThrowIfNull(value);
-        if (expectedVersion is not null) RegisterEncoding.ValidateVersion(expectedVersion);
+        if (expectedVersion is { } expected) RegisterEncoding.ValidateVersion(expected);
         using var call = Enter(cancellationToken);
         var operation = new RegisterOperation(expectedVersion, value);
         try
         {
             var current = await ExecuteAsync(key, operation, call).ConfigureAwait(false);
-            var status = current.Version is not null && current.Version.Equals(operation.Version)
+            var status = current.Version is not null && current.Version == operation.Version
                 ? CompareExchangeStatus.Applied
                 : operation.MayHaveApplied ? CompareExchangeStatus.Unknown : CompareExchangeStatus.Mismatch;
             return new CompareExchangeResult(status, current);
@@ -171,7 +170,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
                     await BackoffAsync(retries++, call.Token).ConfigureAwait(false);
                 }
             }
-            return RegisterEncoding.Decode(engine.Result);
+            return RegisterEncoding.Decode(engine.Result.Value);
         }
         catch (OperationCanceledException) when (call.Token.IsCancellationRequested)
         {
@@ -229,7 +228,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
                         break;
                     case KeyedAcceptorState accepted:
                         if (accepted.Key != key || accepted.AcceptedBallot.Round <= 0
-                            || accepted.AcceptedBallot.Proposer < 0 || accepted.AcceptedValue is null)
+                            || accepted.AcceptedBallot.Proposer < 0)
                         {
                             throw new InvalidDataException("An accepted observation must identify the requested key, ballot, and bytes.");
                         }
@@ -499,14 +498,14 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
         public void Initialize(ByteString version)
         {
             Version = version;
-            EncodedWrite = RegisterEncoding.Encode(version, Payload!);
+            EncodedWrite = RegisterEncoding.Encode(version, Payload!.Value);
         }
         public (OperationStatus Status, ByteString Result) Apply(ByteString current)
         {
             var existing = RegisterEncoding.Decode(current);
-            if (Payload is null || Equals(existing.Version, Version) || !Equals(existing.Version, _expectedVersion))
+            if (Payload is null || existing.Version == Version || existing.Version != _expectedVersion)
                 return (OperationStatus.NotApplicable, current);
-            return (OperationStatus.Success, EncodedWrite!);
+            return (OperationStatus.Success, EncodedWrite!.Value);
         }
     }
 

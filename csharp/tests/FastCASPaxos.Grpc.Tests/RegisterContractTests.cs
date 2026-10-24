@@ -21,10 +21,10 @@ public sealed class RegisterContractTests
         Assert.False(missing.IsPresent);
         Assert.Null(missing.Value);
         Assert.Null(missing.Version);
-        var create = await client.CompareExchangeAsync("", null, ByteString.Empty).AsTask().WaitAsync(Watchdog);
+        var create = await client.CompareExchangeAsync("", null, default).AsTask().WaitAsync(Watchdog);
         Assert.Equal(CompareExchangeStatus.Applied, create.Status);
         Assert.Equal(ByteString.Empty, create.Current!.Value);
-        Assert.Equal(8, create.Current.Version!.Length);
+        Assert.Equal(8, create.Current.Version!.Value.Length);
         Assert.Null(create.Error);
         Assert.Equal(create.Current, await client.ReadAsync(""));
         var mismatch = await client.CompareExchangeAsync("", null, Payload);

@@ -121,7 +121,7 @@ internal sealed class MemoryAcceptor : IKeyedAcceptor
                     && (afterKey is null || string.CompareOrdinal(pair.Key, afterKey) > 0))
                 .OrderBy(pair => pair.Key, StringComparer.Ordinal).Take(limit == int.MaxValue ? limit : limit + 1)
                 .Select(pair => new KeyedAcceptorState(pair.Key, pair.Value.PromisedBallot,
-                    pair.Value.AcceptedBallot, pair.Value.AcceptedValue!)).ToArray();
+                    pair.Value.AcceptedBallot, pair.Value.AcceptedValue!.Value)).ToArray();
             return ValueTask.FromResult(new KeyPage(entries.Take(limit).ToArray(),
                 entries.Length > limit ? entries[limit - 1].Key : null));
         }
@@ -133,7 +133,7 @@ internal sealed class MemoryAcceptor : IKeyedAcceptor
         {
             var state = Get(key);
             return state.AcceptedValue is null ? null :
-                new(key, state.PromisedBallot, state.AcceptedBallot, state.AcceptedValue);
+                new(key, state.PromisedBallot, state.AcceptedBallot, state.AcceptedValue.Value);
         }
     }
     private AcceptorState<ByteString?> Get(string key) => _states.TryGetValue(key, out var state)

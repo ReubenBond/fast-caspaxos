@@ -24,10 +24,10 @@ public sealed class RegisterTests
         Assert.All(peers, peer => Assert.Empty(peer.Prepares));
         Assert.All(peers, peer => Assert.Empty(peer.Accepts));
 
-        var create = await service.CompareExchangeAsync("key", null, ByteString.Empty);
+        var create = await service.CompareExchangeAsync("key", null, default);
         Assert.Equal(CompareExchangeStatus.Applied, create.Status);
         Assert.Equal(ByteString.Empty, create.Current!.Value);
-        Assert.Equal(8, create.Current.Version!.Length);
+        Assert.Equal(8, create.Current.Version!.Value.Length);
         var read = await service.ReadAsync("key");
         Assert.Equal(create.Current, read);
         var mismatch = await service.CompareExchangeAsync("key", null, Payload);
@@ -394,7 +394,7 @@ public sealed class RegisterTests
     [InlineData("zero-accepted-ballot")]
     [InlineData("negative-accepted-round")]
     [InlineData("negative-accepted-proposer")]
-    [InlineData("missing-bytes")]
+    [InlineData("default-bytes")]
     public async Task Read_InvalidObservation_ThrowsWithoutMutation(string scenario)
     {
         var peers = Peers();
@@ -405,7 +405,7 @@ public sealed class RegisterTests
             "zero-accepted-ballot" => new KeyedAcceptorState("key", new(2, 1), default, Envelope(Version(9, 1), Payload)),
             "negative-accepted-round" => new KeyedAcceptorState("key", new(2, 1), new(-1, 1), Envelope(Version(9, 1), Payload)),
             "negative-accepted-proposer" => new KeyedAcceptorState("key", new(2, 1), new(2, -1), Envelope(Version(9, 1), Payload)),
-            "missing-bytes" => new KeyedAcceptorState("key", new(2, 1), new(2, 1), null!),
+            "default-bytes" => new KeyedAcceptorState("key", new(2, 1), new(2, 1), default),
             _ => default
         };
         foreach (var peer in peers) peer.Read = (_, _, _) => ValueTask.FromResult(result);

@@ -49,7 +49,7 @@ internal static class RegisterEncoding
         {
             var version = DecodeVersion(value.Span);
             return version is null ? new("register", false, null, null)
-                : new("register", true, Convert.ToBase64String(version.Span), PayloadPreview.From(value.Span[13..]));
+                : new("register", true, Convert.ToBase64String(version.Value.Span), PayloadPreview.From(value.Span[13..]));
         }
         catch (InvalidDataException)
         {

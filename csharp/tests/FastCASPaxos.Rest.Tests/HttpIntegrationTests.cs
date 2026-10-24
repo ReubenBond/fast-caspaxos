@@ -89,7 +89,7 @@ public sealed class HttpIntegrationTests
             var initialTag = created.Headers.ETag!.ToString();
             var fromGrpc = await node.Grpc.ReadAsync(key);
             Assert.Equal(Payload, fromGrpc.Value);
-            Assert.Equal(initialTag, Tag(fromGrpc.Version!));
+            Assert.Equal(initialTag, Tag(fromGrpc.Version!.Value));
 
             using var readLocation = await node.Http.GetAsync(created.Headers.Location);
             Assert.Equal(Payload.ToArray(), await readLocation.Content.ReadAsByteArrayAsync());
@@ -103,7 +103,7 @@ public sealed class HttpIntegrationTests
 
             var grpcUpdate = await node.Grpc.CompareExchangeAsync(key, fromGrpc.Version, ByteString.Empty);
             Assert.Equal(CompareExchangeStatus.Applied, grpcUpdate.Status);
-            var grpcTag = Tag(grpcUpdate.Current!.Version!);
+            var grpcTag = Tag(grpcUpdate.Current!.Version!.Value);
             Assert.NotEqual(initialTag, grpcTag);
             using var emptyRead = await node.Http.GetAsync(ValueUrl(key));
             Assert.Equal(HttpStatusCode.OK, emptyRead.StatusCode);
@@ -122,7 +122,7 @@ public sealed class HttpIntegrationTests
             NoStore(updated);
             var last = await node.Grpc.ReadAsync(key);
             Assert.Equal(finalPayload, last.Value);
-            retainedVersion = last.Version!;
+            retainedVersion = last.Version!.Value;
             Assert.Equal(retainedTag, Tag(retainedVersion));
         }
 
@@ -247,7 +247,7 @@ public sealed class HttpIntegrationTests
         using var read = await node.Http.GetAsync(ValueUrl("independent-limits"));
         Assert.Equal(HttpStatusCode.OK, read.StatusCode);
         Assert.Equal(payload.ToArray(), await read.Content.ReadAsByteArrayAsync());
-        Assert.Equal(Tag(created.Current.Version!), read.Headers.ETag!.ToString());
+        Assert.Equal(Tag(created.Current.Version!.Value), read.Headers.ETag!.ToString());
     }
 
     [Fact]

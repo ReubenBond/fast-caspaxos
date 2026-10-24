@@ -43,9 +43,9 @@ public sealed class GrpcKeyedAcceptor : IKeyedAcceptor
                     WireConvert.Require(WireConvert.Key(entry.Key, entry.HasKey) == key, "The response must identify the requested key.");
                     var (ballot, value) = WireConvert.Accepted(entry.Accepted);
                     WireConvert.Require(value is not null, "Different requires accepted bytes.");
-                    WireConvert.Require(known is null || known != new AcceptedDigest(ballot, AcceptedDigest.Hash(value!)),
+                    WireConvert.Require(known is null || known != new AcceptedDigest(ballot, AcceptedDigest.Hash(value!.Value)),
                         "Different must differ from the supplied digest.");
-                    return new KeyedAcceptorState(key, WireConvert.Ballot(entry.PromisedBallot), ballot, value!);
+                    return new KeyedAcceptorState(key, WireConvert.Ballot(entry.PromisedBallot), ballot, value!.Value);
                 default:
                     throw new ArgumentException("An explicit read outcome is required.");
             }
@@ -117,7 +117,7 @@ public sealed class GrpcKeyedAcceptor : IKeyedAcceptor
                 var (ballot, value) = WireConvert.Accepted(entry.Accepted);
                 WireConvert.Require(value is not null, "Inventory entries must contain an accepted value.");
                 return new KeyedAcceptorState(WireConvert.Key(entry.Key, entry.HasKey),
-                    WireConvert.Ballot(entry.PromisedBallot), ballot, value!);
+                    WireConvert.Ballot(entry.PromisedBallot), ballot, value!.Value);
             }).ToArray();
             var cursor = response.HasContinuationKey ? response.ContinuationKey : null;
             WireConvert.ValidatePage(entries.Select(e => e.Key).ToArray(), cursor, request);

@@ -30,9 +30,10 @@ piggybacked prepare, or the conflicting ballot on rejection. Exact retries of an
 accepted ballot/value return the existing promise. Requests with a new value at
 an already accepted ballot are rejected.
 
-`ByteString` copies its input and provides structural equality. `ToArray` returns
-a caller-owned copy, so both request and response bytes stay stable for the
-lifetime of a protocol operation. A null prepare value and `Ballot.Zero` identify
+`ByteString` is a readonly struct that copies its input and provides structural
+equality through `Equals`, `==`, and `!=`. Its default value represents empty
+bytes. `ToArray` returns a caller-owned copy, so request and response bytes stay
+stable for the lifetime of a protocol operation. A null prepare value and `Ballot.Zero` identify
 an unaccepted key; `ByteString.Empty` is an accepted zero-length payload. Payload
 encoding, logical versions, conditional writes, and quorum decisions belong to
 the register layer.

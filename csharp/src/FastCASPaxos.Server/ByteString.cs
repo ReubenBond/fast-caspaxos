@@ -1,30 +1,34 @@
 namespace FastCASPaxos.Server;
 
 /// <summary>Owned, immutable bytes with structural equality for protocol retries.</summary>
-public sealed class ByteString : IEquatable<ByteString>
+/// <remarks>The default value represents empty bytes. Nullable ByteString represents absence.</remarks>
+public readonly struct ByteString : IEquatable<ByteString>
 {
-    private readonly byte[] _bytes;
+    private readonly byte[]? _bytes;
 
     public ByteString(ReadOnlySpan<byte> bytes) => _bytes = bytes.ToArray();
 
-    public static ByteString Empty { get; } = new([]);
+    public static ByteString Empty => default;
 
-    public int Length => _bytes.Length;
+    public int Length => Span.Length;
 
     internal ReadOnlySpan<byte> Span => _bytes;
 
     /// <summary>Returns a caller-owned copy.</summary>
-    public byte[] ToArray() => (byte[])_bytes.Clone();
+    public byte[] ToArray() => Span.ToArray();
 
-    public bool Equals(ByteString? other) =>
-        ReferenceEquals(this, other) || other is not null && _bytes.AsSpan().SequenceEqual(other._bytes);
+    public bool Equals(ByteString other) => Span.SequenceEqual(other.Span);
 
     public override bool Equals(object? obj) => obj is ByteString other && Equals(other);
 
     public override int GetHashCode()
     {
         var hash = new HashCode();
-        hash.AddBytes(_bytes);
+        hash.AddBytes(Span);
         return hash.ToHashCode();
     }
+
+    public static bool operator ==(ByteString left, ByteString right) => left.Equals(right);
+
+    public static bool operator !=(ByteString left, ByteString right) => !left.Equals(right);
 }

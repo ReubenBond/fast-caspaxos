@@ -21,7 +21,7 @@ public sealed record LocalStateView(
     {
         HttpQuery.ValidateResponseText(state.Key);
         return new(state.Key, state.PromisedBallot, state.AcceptedBallot, PayloadPreview.From(state.AcceptedValue),
-            state.AcceptedValue is null ? null : RegisterPreview.FromAccepted(state.AcceptedValue));
+            state.AcceptedValue is { } value ? RegisterPreview.FromAccepted(value) : null);
     }
 }
 public sealed record StateSnapshot(
