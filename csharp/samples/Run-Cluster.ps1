@@ -8,7 +8,7 @@ $project = Join-Path $PSScriptRoot '..\src\FastCASPaxos.Host\FastCASPaxos.Host.c
 $nodes = [Collections.Generic.List[Diagnostics.Process]]::new()
 $failed = $false
 
-& dotnet build $project --configuration Release --verbosity minimal
+& dotnet build $project --framework net11.0 --configuration Release --verbosity minimal
 if ($LASTEXITCODE -ne 0) { throw "Host/UI build failed with code $LASTEXITCODE." }
 
 Write-Host "Starting three nodes with durable data in $data"

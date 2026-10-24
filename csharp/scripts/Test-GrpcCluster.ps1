@@ -1,9 +1,9 @@
 param([int]$BasePort = 15431)
 $ErrorActionPreference = 'Stop'
 $csharp = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$hostDirectory = Join-Path $csharp 'src\FastCASPaxos.Host\bin\Release\net10.0'
+$hostDirectory = Join-Path $csharp 'src\FastCASPaxos.Host\bin\Release\net11.0'
 $hostDll = Join-Path $hostDirectory 'FastCASPaxos.Host.dll'
-$smokeDll = Join-Path $csharp 'samples\FastCASPaxos.Grpc.Smoke\bin\Release\net10.0\FastCASPaxos.Grpc.Smoke.dll'
+$smokeDll = Join-Path $csharp 'samples\FastCASPaxos.Grpc.Smoke\bin\Release\net11.0\FastCASPaxos.Grpc.Smoke.dll'
 if (-not (Test-Path $hostDll) -or -not (Test-Path $smokeDll)) {
     throw 'Build the host and smoke projects in Release first.'
 }

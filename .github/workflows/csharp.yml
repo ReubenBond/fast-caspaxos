@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - 'csharp/**'
+      - 'global.json'
       - '.github/workflows/csharp.yml'
   pull_request:
     paths:
       - 'csharp/**'
+      - 'global.json'
       - '.github/workflows/csharp.yml'
   workflow_dispatch:
 
@@ -20,7 +22,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: |
+            10.0.x
+            11.0.100-rc.2.26504.105
       - name: Build isolated consumer and publish Native AOT client
         shell: pwsh
         run: ./csharp/scripts/Test-SourceBoundary.ps1 -PublishAot
@@ -33,16 +37,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: |
+            10.0.x
+            11.0.100-rc.2.26504.105
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
       - name: Test
         run: dotnet test csharp/FastCASPaxos.slnx --configuration Release --verbosity minimal
-      - name: Build .NET 8 transport
+      - name: Build .NET 10 transport with C# latest
         run: |
-          dotnet build csharp/src/FastCASPaxos.Grpc/FastCASPaxos.Grpc.csproj --framework net8.0 --configuration Release --no-restore --verbosity minimal
-          dotnet build csharp/src/FastCASPaxos.Rest/FastCASPaxos.Rest.csproj --framework net8.0 --configuration Release --no-restore --verbosity minimal
+          dotnet build csharp/src/FastCASPaxos.Grpc/FastCASPaxos.Grpc.csproj --framework net10.0 --configuration Release --no-restore --verbosity minimal
+          dotnet build csharp/src/FastCASPaxos.Rest/FastCASPaxos.Rest.csproj --framework net10.0 --configuration Release --no-restore --verbosity minimal
       - name: Build runnable host and smoke client
         run: |
           dotnet build csharp/src/FastCASPaxos.Host/FastCASPaxos.Host.csproj --configuration Release --no-restore --verbosity minimal

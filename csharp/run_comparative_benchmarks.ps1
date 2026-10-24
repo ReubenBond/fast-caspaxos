@@ -336,7 +336,7 @@ Write-Host ""
 
 if (-not $DryRun) {
     Write-Host "Building ($configuration)..." -ForegroundColor Yellow
-    & dotnet build $projectPath -c $configuration --nologo -v quiet
+    & dotnet build $projectPath -f net11.0 -c $configuration --nologo -v quiet
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Build failed (exit code $LASTEXITCODE)" -ForegroundColor Red
         exit 1
@@ -364,7 +364,7 @@ foreach ($scenarioName in $selectedScenarios) {
         $outputDir = Join-Path $Output "$scenarioName\$($combo.OutputSubpath)"
 
         $arguments = @(
-            "run", "--no-build", "--project", $projectPath, "-c", $configuration,
+            "run", "--no-build", "--project", $projectPath, "-f", "net11.0", "-c", $configuration,
             "--",
             "--scenario", "benchmark-workload",
             "--seed", $BaseSeed,

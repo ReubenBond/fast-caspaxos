@@ -3,5 +3,6 @@
   <PropertyGroup>
     <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
     <DirectoryPackagesPropsPath>$(MSBuildThisFileDirectory)Directory.Packages.props</DirectoryPackagesPropsPath>
+    <LangVersion>latest</LangVersion>
   </PropertyGroup>
 </Project>

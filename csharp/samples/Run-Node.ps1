@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $Node = $Node.ToLowerInvariant()
 $source = Join-Path $PSScriptRoot '..\src\FastCASPaxos.Host'
-$dll = Join-Path $source 'bin\Release\net10.0\FastCASPaxos.Host.dll'
+$dll = Join-Path $source 'bin\Release\net11.0\FastCASPaxos.Host.dll'
 if (-not (Test-Path $dll)) { throw 'Build csharp\FastCASPaxos.slnx in Release before running the sample.' }
 $id = @('a', 'b', 'c').IndexOf($Node) + 1
 $data = [IO.Path]::GetFullPath($DataDirectory)

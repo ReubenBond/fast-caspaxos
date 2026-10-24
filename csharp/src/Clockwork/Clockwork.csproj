@@ -5,7 +5,7 @@
     <PackageId>Clockwork</PackageId>
     <PackageTags>simulation;testing;distributed-systems;deterministic;chaos-testing;time-travel</PackageTags>
     <RootNamespace>Clockwork</RootNamespace>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>

@@ -32,7 +32,7 @@ try
         $scenarioArgs += @("--scenario", $name)
     }
 
-    dotnet run --project src\FastCASPaxos.Simulation.Runner\FastCASPaxos.Simulation.Runner.csproj -- @scenarioArgs --seed $Seed --rounds $Rounds --output $outputDirectory
+    dotnet run --framework net11.0 --project src\FastCASPaxos.Simulation.Runner\FastCASPaxos.Simulation.Runner.csproj -- @scenarioArgs --seed $Seed --rounds $Rounds --output $outputDirectory
     if ($LASTEXITCODE -ne 0)
     {
         throw "Simulation runner failed with exit code $LASTEXITCODE."

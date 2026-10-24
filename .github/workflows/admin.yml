@@ -2,9 +2,9 @@ name: Administration console
 
 on:
   push:
-    paths: ['admin/**', 'csharp/**', '.github/workflows/admin.yml']
+    paths: ['admin/**', 'csharp/**', 'global.json', '.github/workflows/admin.yml']
   pull_request:
-    paths: ['admin/**', 'csharp/**', '.github/workflows/admin.yml']
+    paths: ['admin/**', 'csharp/**', 'global.json', '.github/workflows/admin.yml']
   workflow_dispatch:
 
 jobs:
@@ -20,12 +20,14 @@ jobs:
           cache-dependency-path: admin/package-lock.json
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: |
+            10.0.x
+            11.0.100-rc.2.26504.105
       - run: npm ci --no-audit --no-fund
         working-directory: admin
       - run: npm test
         working-directory: admin
-      - run: dotnet publish csharp/src/FastCASPaxos.Host/FastCASPaxos.Host.csproj -c Release --verbosity minimal
+      - run: dotnet publish csharp/src/FastCASPaxos.Host/FastCASPaxos.Host.csproj -c Release -f net11.0 --verbosity minimal
       - run: npx playwright install --with-deps chromium
         working-directory: admin
       - run: npm run test:browser

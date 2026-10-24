@@ -12,7 +12,7 @@ export class Cluster {
   private logs = new Map<number, string>();
   private ports: number[] = [];
   private data = '';
-  private readonly dll = resolve('..', 'csharp', 'src', 'FastCASPaxos.Host', 'bin', 'Release', 'net10.0', 'publish', 'FastCASPaxos.Host.dll');
+  private readonly dll = resolve('..', 'csharp', 'src', 'FastCASPaxos.Host', 'bin', 'Release', 'net11.0', 'publish', 'FastCASPaxos.Host.dll');
   origin(index: number): string { return `http://127.0.0.1:${this.ports[index + 3]}`; }
 
   async start(): Promise<void> {
