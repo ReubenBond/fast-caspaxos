@@ -1,6 +1,6 @@
 namespace FastCASPaxos.Host;
 
-/// <summary>Runs repair while serving and completes the departure barrier before Kestrel stops.</summary>
+/// <summary>Runs repair while serving and completes the configured shutdown before Kestrel stops.</summary>
 public sealed class NodeRepairService(NodeRuntime node, ILogger<NodeRepairService> logger)
     : BackgroundService, IHostedLifecycleService
 {
@@ -15,7 +15,8 @@ public sealed class NodeRepairService(NodeRuntime node, ILogger<NodeRepairServic
         try { await node.StopAsync(cancellationToken).ConfigureAwait(false); }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            logger.DurabilityWaitCancelled();
+            if (node.ShutdownMode == NodeShutdownMode.Departure) logger.DurabilityWaitCancelled();
+            else logger.RestartDrainCancelled();
         }
     }
 }

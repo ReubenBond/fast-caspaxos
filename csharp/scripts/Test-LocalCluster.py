@@ -148,9 +148,9 @@ class LocalClusterTests(unittest.TestCase):
         self.addCleanup(cluster.close)
         return cluster
 
-    def stopped(self, cluster):
-        cluster.process.wait(timeout=30)
-        deadline = time.monotonic() + 10
+    def stopped(self, cluster, timeout=30):
+        deadline = time.monotonic() + timeout
+        cluster.process.wait(timeout=timeout)
         cluster.output()
         while any(running(pid) for pid in cluster.pids.values()) and time.monotonic() < deadline:
             time.sleep(0.1)
@@ -161,9 +161,7 @@ class LocalClusterTests(unittest.TestCase):
                 self.assertNotEqual(probe.connect_ex(("127.0.0.1", port)), 0)
 
     def test_cluster_interrupt_restart_and_node_failure(self):
-        # Every host departs together, so remote-only durability waits end at the host deadline.
-        environment = {**os.environ, "HostOptions__ShutdownTimeout": "00:00:02"}
-        cluster = self.start(environment)
+        cluster = self.start()
         statuses = cluster.ready()
         for index, status in enumerate(statuses):
             self.assertEqual(status["nodeId"], "abc"[index])
@@ -189,18 +187,22 @@ class LocalClusterTests(unittest.TestCase):
             self.assertEqual(response.status, 201)
             etag = response.headers["ETag"]
             self.assertTrue(etag)
+        for index in range(3):
+            stream = cluster.request(index, "/v1/admin/events")
+            self.addCleanup(stream.close)
+            self.assertTrue(stream.readline().startswith(b"id:"))
         cluster.interrupt()
-        self.stopped(cluster)
+        self.stopped(cluster, timeout=10)
         self.assertIn("Waiting for nodes to finish graceful shutdown.", cluster.output())
-        self.assertIn("Shutdown cancellation ended the durability wait", cluster.output())
+        self.assertNotIn("Shutdown cancellation", cluster.output())
+        self.assertNotIn("The acceptor is draining for shutdown", cluster.output())
+        self.assertNotIn("Register operation reached its deadline", cluster.output())
         exit_codes = re.findall(r"finished shutdown with exit code (\d+)\.", cluster.output())
-        self.assertEqual(len(exit_codes), 3, cluster.output())
-        self.assertIn("1", exit_codes, cluster.output())
-        self.assertTrue(all(code in ("0", "1") for code in exit_codes), cluster.output())
+        self.assertEqual(exit_codes, ["0", "0", "0"], cluster.output())
         self.assertNotIn("Force-stopping", cluster.output())
         for name in ("acceptor-a", "acceptor-b", "acceptor-c", "proposer-1", "proposer-2", "proposer-3"):
             self.assertTrue((self.data / f"{name}.db").is_file())
-        restarted = self.start(environment)
+        restarted = self.start()
         again = restarted.ready()
         self.assertEqual(restarted.output().count("Build succeeded."), 1)
         for index in range(3):

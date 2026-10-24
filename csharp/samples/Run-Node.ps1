@@ -2,6 +2,7 @@ param(
     [Parameter(Mandatory)][ValidateSet('a', 'b', 'c')][string]$Node,
     [Parameter(Mandatory)][string]$DataDirectory,
     [ValidateRange(1, 65530)][int]$BasePort = 5001,
+    [ValidateSet('Departure', 'Restart')][string]$ShutdownMode = 'Departure',
     [switch]$PassThru
 )
 $ErrorActionPreference = 'Stop'
@@ -16,6 +17,7 @@ $arguments = @(
     "--Kestrel:Endpoints:Grpc:Url=http://127.0.0.1:$($BasePort + $id - 1)",
     "--Kestrel:Endpoints:Rest:Url=http://127.0.0.1:$($BasePort + $id + 2)",
     "--FastCASPaxos:AcceptorId=$Node",
+    "--FastCASPaxos:ShutdownMode=$ShutdownMode",
     "--FastCASPaxos:AcceptorDatabase=$(Join-Path $data "acceptor-$Node.db")",
     "--FastCASPaxos:ProposerId=$id",
     "--FastCASPaxos:ProposerDatabase=$(Join-Path $data "proposer-$id.db")"

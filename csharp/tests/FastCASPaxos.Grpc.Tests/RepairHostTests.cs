@@ -198,11 +198,13 @@ public sealed class RepairHostTests
         finally { release.TrySetResult(); }
     }
 
-    [Fact]
-    public async Task StopAsyncInFlightDurableAdmissionDrainsBeforeFrozenInventory()
+    [Theory]
+    [InlineData(NodeShutdownMode.Departure)]
+    [InlineData(NodeShutdownMode.Restart)]
+    public async Task StopAsyncInFlightDurableAdmissionDrainsBeforeCompletingShutdown(NodeShutdownMode mode)
     {
         using var directory = new TestDirectory();
-        await using var cluster = await RepairHostCluster.OpenAsync(directory);
+        await using var cluster = await RepairHostCluster.OpenAsync(directory, shutdownMode: mode);
         var store = Assert.IsType<SqliteAcceptorServer>(cluster.Node.Inspection);
         using var release = new ManualResetEventSlim();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -222,6 +224,7 @@ public sealed class RepairHostTests
             Assert.True(cluster.Node.IsDraining);
             Assert.False(cluster.Node.IsShutdownComplete);
             Assert.Equal("draining", cluster.Node.LastRepair!.State);
+            Assert.Equal(mode == NodeShutdownMode.Departure, cluster.Node.LastRepair.Departing);
             Assert.False(stopped.IsCompleted);
             Assert.False(accepted.IsCompleted);
             Assert.All(cluster.RemoteAcceptors, peer => Assert.Equal(0, Volatile.Read(ref peer.Calls)));
@@ -232,20 +235,32 @@ public sealed class RepairHostTests
             Assert.True((await accepted.WaitAsync(Watchdog)).IsAccepted);
             await stopped.WaitAsync(Watchdog);
             Assert.True(cluster.Node.IsShutdownComplete);
+            Assert.Equal(Payload, ReadState(await store.ReadAsync("in-flight")).AcceptedValue);
+            Assert.Equal("complete", cluster.Node.LastRepair!.State);
+            Assert.Equal(mode == NodeShutdownMode.Departure, cluster.Node.LastRepair.Departing);
+            if (mode == NodeShutdownMode.Restart)
+            {
+                Assert.All(cluster.RemoteAcceptors, peer => Assert.Equal(0, Volatile.Read(ref peer.Calls)));
+                Assert.Equal(0, cluster.Node.LastRepair.Examined);
+            }
             foreach (var remote in cluster.Stores)
             {
-                Assert.Equal(Payload, ReadState(await remote.ReadAsync("in-flight")).AcceptedValue);
+                if (mode == NodeShutdownMode.Departure)
+                    Assert.Equal(Payload, ReadState(await remote.ReadAsync("in-flight")).AcceptedValue);
+                else Assert.True(await remote.ReadAsync("in-flight") is AcceptorMissing);
                 Assert.True(await remote.ReadAsync("too-late") is AcceptorMissing);
             }
         }
         finally { release.Set(); store.BeforeCommit = null; }
     }
 
-    [Fact]
-    public async Task StopAsyncCancellationDuringAdmissionDrainReturnedTaskCutsOffWithoutLosingAcceptedWrite()
+    [Theory]
+    [InlineData(NodeShutdownMode.Departure)]
+    [InlineData(NodeShutdownMode.Restart)]
+    public async Task StopAsyncCancellationDuringAdmissionDrainReturnedTaskCutsOffWithoutLosingAcceptedWrite(NodeShutdownMode mode)
     {
         using var directory = new TestDirectory();
-        await using var cluster = await RepairHostCluster.OpenAsync(directory);
+        await using var cluster = await RepairHostCluster.OpenAsync(directory, shutdownMode: mode);
         var store = Assert.IsType<SqliteAcceptorServer>(cluster.Node.Inspection);
         using var release = new ManualResetEventSlim();
         using var cancellation = new CancellationTokenSource();
@@ -259,10 +274,12 @@ public sealed class RepairHostTests
         {
             var accepted = cluster.Node.Acceptor.AcceptAsync("in-flight", new(new(1, 0), Payload, new())).AsTask();
             await entered.Task.WaitAsync(Watchdog);
+            var cursor = cluster.Node.Diagnostics.Cursor;
             var stopped = cluster.Node.StopAsync(cancellation.Token);
             cancellation.Cancel();
 
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => stopped.WaitAsync(Watchdog));
+            await NextRepairAsync(cluster.Node, cursor, "cancelled", departing: mode == NodeShutdownMode.Departure);
             Assert.True(cluster.Node.IsDraining);
             Assert.False(cluster.Node.IsShutdownComplete);
             Assert.False(accepted.IsCompleted);
@@ -275,6 +292,39 @@ public sealed class RepairHostTests
             Assert.Equal(Payload, ReadState(await store.ReadAsync("in-flight")).AcceptedValue);
         }
         finally { release.Set(); store.BeforeCommit = null; }
+    }
+
+    [Fact]
+    public async Task HostedRestartShutdownRetainsValueVersionAndPromise()
+    {
+        using var directory = new TestDirectory();
+        var options = DiagnosticHost.Options(directory);
+        options.ShutdownMode = NodeShutdownMode.Restart;
+        var clock = new RepairClock();
+        await using var node = await NodeRuntime.OpenAsync(options, timeProvider: clock);
+        await using var endpoint = await RepairEndpoint.StartAsync(node.Acceptor, node.Digests, node, node);
+        var applied = await node.Registers.CompareExchangeAsync("retain", null, Payload);
+        Assert.Equal(CompareExchangeStatus.Applied, applied.Status);
+        var prepared = await node.Acceptor.PrepareAsync("retain", new(new(100, 2)));
+        Assert.True(prepared.IsPromised);
+        var before = ReadState(await node.Acceptor.ReadAsync("retain"));
+
+        await endpoint.App.StopAsync().WaitAsync(Watchdog);
+
+        Assert.True(node.IsShutdownComplete);
+        Assert.True(node.IsDraining);
+        Assert.Equal(NodeShutdownMode.Restart, node.ShutdownMode);
+        Assert.Equal("complete", node.LastRepair!.State);
+        Assert.False(node.LastRepair.Departing);
+        Assert.Equal((0L, 0L, 0L), (node.LastRepair.Examined, node.LastRepair.Repaired, node.LastRepair.Pending));
+        Assert.Equal(0, clock.GetTimestamp());
+        await node.DisposeAsync();
+
+        await using var reopened = await NodeRuntime.OpenAsync(options, timeProvider: clock);
+        Assert.Equal(before, ReadState(await reopened.Acceptor.ReadAsync("retain")));
+        var retained = await reopened.Registers.ReadAsync("retain");
+        Assert.Equal(Payload, retained.Value);
+        Assert.Equal(applied.Current!.Version, retained.Version);
     }
 
     [Fact]
@@ -416,6 +466,7 @@ public sealed class RepairHostTests
     [InlineData("excessive-interval")]
     [InlineData("zero-retry")]
     [InlineData("excessive-retry")]
+    [InlineData("invalid-shutdown-mode")]
     public void RepairOptionsInvalidBoundsRejectBeforeStorage(string scenario)
     {
         using var directory = new TestDirectory();
@@ -430,6 +481,7 @@ public sealed class RepairHostTests
             case "excessive-interval": options.RepairInterval = TimeSpan.FromDays(1) + TimeSpan.FromTicks(1); break;
             case "zero-retry": options.RepairRetryInterval = TimeSpan.Zero; break;
             case "excessive-retry": options.RepairRetryInterval = TimeSpan.FromDays(1) + TimeSpan.FromTicks(1); break;
+            case "invalid-shutdown-mode": options.ShutdownMode = (NodeShutdownMode)2; break;
         }
         Assert.Throws<ArgumentOutOfRangeException>(options.Validate);
         Assert.Empty(Directory.GetFiles(directory.Path));
@@ -443,6 +495,7 @@ public sealed class RepairHostTests
         Assert.Equal(128, defaults.RepairPageSize);
         Assert.Equal(TimeSpan.FromMinutes(1), defaults.RepairInterval);
         Assert.Equal(TimeSpan.FromSeconds(1), defaults.RepairRetryInterval);
+        Assert.Equal(NodeShutdownMode.Departure, defaults.ShutdownMode);
         using var directory = new TestDirectory();
         await using var cluster = await RepairHostCluster.OpenAsync(directory, target: 3);
         Assert.Equal(3, cluster.Node.TargetReplicas);

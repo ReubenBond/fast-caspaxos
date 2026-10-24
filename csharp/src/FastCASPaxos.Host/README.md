@@ -68,7 +68,7 @@ Sequences are decimal **strings**, preserving precision in JavaScript.
 | `GET /v1/admin/state?key=...` | One read-only local snapshot; `entry: null` means no persisted row. |
 | `GET /v1/admin/states?prefix=&after=&limit=100` | Local inventory including promise-only records. |
 | `GET /v1/admin/events` | `text/event-stream`, one host's observations. |
-| `GET /v1/admin/repair` | Node/boot identity, `draining`, `shutdownComplete`, `targetReplicas`, and nullable timestamped `lastRepair`. |
+| `GET /v1/admin/repair` | Node/boot identity, `draining`, `shutdownComplete` for the configured shutdown mode, `targetReplicas`, and nullable timestamped `lastRepair`. |
 | `POST /v1/admin/repair` | Stages coalesced durability passes across the configured hosts; 202 confirms staging, 503 identifies incomplete staging. |
 
 Snapshots use `Cache-Control: no-store`. SSE uses `no-store, no-transform`,

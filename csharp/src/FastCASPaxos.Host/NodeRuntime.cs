@@ -45,6 +45,7 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
         _clock = timeProvider;
         _repairInterval = options.RepairInterval;
         _repairRetryInterval = options.RepairRetryInterval;
+        ShutdownMode = options.ShutdownMode;
         var ordinal = options.Peers.Select(p => p.Id).Order(StringComparer.Ordinal).ToList().IndexOf(options.AcceptorId);
         _initialDelay = TimeSpan.FromTicks(Math.Max(1, options.RepairInterval.Ticks / options.Peers.Count * (ordinal + 1)));
         Diagnostics = new(options.AcceptorId, options.EventHistoryCapacity, timeProvider);
@@ -67,6 +68,7 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
     public RepairObservation? LastRepair => Volatile.Read(ref _lastRepair);
     public bool IsDraining => Volatile.Read(ref _stopping);
     public bool IsShutdownComplete => Volatile.Read(ref _shutdown)?.IsCompletedSuccessfully == true;
+    public NodeShutdownMode ShutdownMode { get; }
     public NodeEventJournal Diagnostics { get; }
     public int ProposerId { get; }
     public ImmutableArray<AdminPeer> Peers { get; }
@@ -212,7 +214,7 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
         }
     }
 
-    /// <summary>Seals mutation admission and establishes the target count on remote peers, until canceled.</summary>
+    /// <summary>Drains admitted mutations, then establishes remote replicas in departure mode.</summary>
     public Task StopAsync(CancellationToken cancellationToken = default)
     {
         lock (_gate)
@@ -226,14 +228,20 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownAborted.Token);
         cancellationToken = linked.Token;
+        var departing = ShutdownMode == NodeShutdownMode.Departure;
         _maintenanceStopping.Cancel();
-        PublishRepair(new("draining", true, Repair.TargetReplicas));
+        PublishRepair(new("draining", departing, Repair.TargetReplicas));
         var admitted = _admission!.QuiesceAsync();
         var registers = _registers!.DisposeAsync().AsTask();
         try
         {
             if (_periodic is not null) await _periodic.WaitAsync(cancellationToken).ConfigureAwait(false);
             await Task.WhenAll(admitted, registers).WaitAsync(cancellationToken).ConfigureAwait(false);
+            if (!departing)
+            {
+                PublishRepair(new("complete", false, Repair.TargetReplicas));
+                return;
+            }
             while (true)
             {
                 PublishRepair(new("running", true, Repair.TargetReplicas));
@@ -253,7 +261,7 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
         catch (Exception error)
         {
             PublishRepair(new(
-                cancellationToken.IsCancellationRequested ? "cancelled" : "failed", true, Repair.TargetReplicas, Error: error.Message));
+                cancellationToken.IsCancellationRequested ? "cancelled" : "failed", departing, Repair.TargetReplicas, Error: error.Message));
             throw;
         }
     }

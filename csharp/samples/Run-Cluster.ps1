@@ -12,10 +12,10 @@ $failed = $false
 if ($LASTEXITCODE -ne 0) { throw "Host/UI build failed with code $LASTEXITCODE." }
 
 Write-Host "Starting three nodes with durable data in $data"
-Write-Host 'Press Ctrl+C once to stop and wait for the hosts to finish graceful shutdown. Durable files are retained.'
+Write-Host 'Press Ctrl+C once to drain writes and stop for restart. Durable files are retained.'
 try {
     foreach ($node in @('a', 'b', 'c')) {
-        $process = & (Join-Path $PSScriptRoot 'Run-Node.ps1') -Node $node -DataDirectory $data -BasePort $BasePort -PassThru
+        $process = & (Join-Path $PSScriptRoot 'Run-Node.ps1') -Node $node -DataDirectory $data -BasePort $BasePort -ShutdownMode Restart -PassThru
         $nodes.Add($process)
         $index = $nodes.Count - 1
         Write-Host "Node $node (PID $($process.Id)): gRPC http://127.0.0.1:$($BasePort + $index) | REST http://127.0.0.1:$($BasePort + 3 + $index) | admin http://127.0.0.1:$($BasePort + 3 + $index)/admin/"

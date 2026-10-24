@@ -23,4 +23,8 @@ internal static partial class Log
 
     [LoggerMessage(7, LogLevel.Warning, "Durability repair inventory is unavailable; another pass is scheduled.")]
     public static partial void RepairInventoryUnavailable(this ILogger logger, Exception error);
+
+    [LoggerMessage(8, LogLevel.Warning,
+        "Shutdown cancellation ended the restart drain. Retain this node's database and WAL.")]
+    public static partial void RestartDrainCancelled(this ILogger logger);
 }
