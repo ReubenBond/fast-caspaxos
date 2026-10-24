@@ -14,7 +14,12 @@ public sealed class SqliteCommitBoundaryTests
         using var gate = new CommitGate();
         using var cancellation = new CancellationTokenSource();
         var server = await database.OpenAsync();
-        server.BeforeCommit = (_, _, count) => gate.ArriveAndWait(count);
+        server.BeforeCommit = (_, _, count) =>
+        {
+            // Only the accept transaction uses this single-use gate, not subsequent queued reads.
+            server.BeforeCommit = null;
+            gate.ArriveAndWait(count);
+        };
         try
         {
             var write = server.AcceptAsync("key", new(new(2, 1), new([7, 255]), new(3, 1))).AsTask();
