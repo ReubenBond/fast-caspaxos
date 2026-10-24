@@ -73,7 +73,8 @@ internal sealed class RepairHostCluster : IAsyncDisposable
     public NodeOptions Options { get; private set; } = null!;
     public RepairClock Clock { get; } = new();
 
-    public static async Task<RepairHostCluster> OpenAsync(TestDirectory directory, int target = 0)
+    public static async Task<RepairHostCluster> OpenAsync(
+        TestDirectory directory, int target = 0, NodeShutdownMode shutdownMode = NodeShutdownMode.Departure)
     {
         var cluster = new RepairHostCluster();
         try
@@ -98,6 +99,7 @@ internal sealed class RepairHostCluster : IAsyncDisposable
                 HttpEndpoint = $"http://127.0.0.1:{12 + index}"
             }));
             cluster.Options.TargetReplicationFactor = target;
+            cluster.Options.ShutdownMode = shutdownMode;
             cluster.Options.RepairPageSize = 2;
             cluster.Node = await NodeRuntime.OpenAsync(cluster.Options, timeProvider: cluster.Clock).WaitAsync(Watchdog);
             return cluster;

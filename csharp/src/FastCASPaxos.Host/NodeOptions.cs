@@ -10,6 +10,12 @@ public sealed class PeerOptions
     public string HttpEndpoint { get; set; } = "";
 }
 
+public enum NodeShutdownMode
+{
+    Departure,
+    Restart,
+}
+
 public sealed class NodeOptions
 {
     public string AcceptorId { get; set; } = "a";
@@ -38,6 +44,7 @@ public sealed class NodeOptions
     public int RepairPageSize { get; set; } = 128;
     public TimeSpan RepairInterval { get; set; } = TimeSpan.FromMinutes(1);
     public TimeSpan RepairRetryInterval { get; set; } = TimeSpan.FromSeconds(1);
+    public NodeShutdownMode ShutdownMode { get; set; } = NodeShutdownMode.Departure;
 
     public void Validate()
     {
@@ -69,6 +76,7 @@ public sealed class NodeOptions
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(RepairPageSize);
         ValidateDuration(RepairInterval, nameof(RepairInterval));
         ValidateDuration(RepairRetryInterval, nameof(RepairRetryInterval));
+        if (!Enum.IsDefined(ShutdownMode)) throw new ArgumentOutOfRangeException(nameof(ShutdownMode));
         ProposerModePolicy.Parse(Mode).Validate();
         ArgumentNullException.ThrowIfNull(Peers);
         var ids = new HashSet<string>(StringComparer.Ordinal);

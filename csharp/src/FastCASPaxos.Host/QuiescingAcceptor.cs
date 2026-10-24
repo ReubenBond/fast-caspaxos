@@ -4,7 +4,7 @@ using FastCASPaxos.Server;
 
 namespace FastCASPaxos.Host;
 
-/// <summary>Seals external protocol mutations and waits for their durable outcomes before the departure scan.</summary>
+/// <summary>Seals external protocol mutations and waits for their durable outcomes before shutdown.</summary>
 internal sealed class QuiescingAcceptor(IKeyedAcceptor inner) : IKeyedAcceptor
 {
     private readonly object _gate = new();

@@ -266,8 +266,9 @@ directory to retain values, acceptor identities, and proposer allocators.
 Use a separate directory and six separate ports for each concurrent cluster.
 
 Press **Ctrl+C once** in the launch terminal. The terminal interrupt reaches
-the hosts for graceful shutdown; the launcher waits for host completion,
-honoring the host's drain and shutdown-cancellation policy. A build failure
+the hosts, which use `ShutdownMode=Restart`: each node closes mutation admission,
+drains admitted writes to durable outcomes, and retains its files for restart.
+The launcher waits for all hosts to exit. A build failure
 exits before starting nodes. A node failure exits with an error and gives
 the invocation's remaining hosts a shared 10-second window to exit before
 force-stopping them. These emergency stops use SQLite crash recovery on
