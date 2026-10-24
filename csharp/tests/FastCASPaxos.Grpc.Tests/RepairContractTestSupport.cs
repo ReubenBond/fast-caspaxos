@@ -2,19 +2,22 @@ using FastCASPaxos.Server;
 using Google.Protobuf;
 using Grpc.Core;
 using Microsoft.Extensions.Logging.Abstractions;
+using ByteString = FastCASPaxos.Server.ByteString;
 using Wire = FastCASPaxos.Grpc.Wire;
 
 namespace FastCASPaxos.Grpc.Tests;
 
 // A repair-only extension of the existing in-process protobuf boundary test harness.
-internal sealed class RepairContractInvoker(IAcceptorDigestSource? source = null, IRepairScheduler? scheduler = null)
+internal sealed class RepairContractInvoker(IAcceptorDigestSource? source = null, IRepairScheduler? scheduler = null,
+    IKeyedAcceptor? acceptor = null)
     : TestCallInvoker
 {
     protected override async Task<TResponse> Invoke<TRequest, TResponse>(
         Method<TRequest, TResponse> method, TRequest request, CallOptions options)
     {
         var context = new TestServerCallContext(options);
-        var digests = new AcceptorDigestGrpcService(source!, NullLogger<AcceptorDigestGrpcService>.Instance);
+        var digests = new AcceptorDigestGrpcService(source!, acceptor ?? (IKeyedAcceptor)source!,
+            NullLogger<AcceptorDigestGrpcService>.Instance);
         var repair = new RepairGrpcService(scheduler!, NullLogger<RepairGrpcService>.Instance);
         object response = Copy(request) switch
         {
@@ -33,12 +36,12 @@ internal sealed class RepairContractInvoker(IAcceptorDigestSource? source = null
     }
 }
 
-internal sealed class DelegateDigests : IAcceptorDigestSource
+internal sealed class DelegateDigests : IAcceptorDigestSource, IKeyedAcceptor
 {
     public int Calls;
     public Func<string, string?, int, CancellationToken, ValueTask<AcceptorDigestPage>> List { get; set; } =
         (_, _, _, _) => throw new InvalidOperationException("Unexpected digest list.");
-    public Func<string, AcceptedDigest?, CancellationToken, ValueTask<ConditionalAcceptorState>> Fetch { get; set; } =
+    public Func<string, AcceptedDigest?, CancellationToken, ValueTask<AcceptorReadResult>> Fetch { get; set; } =
         (_, _, _) => throw new InvalidOperationException("Unexpected conditional fetch.");
 
     public ValueTask<AcceptorDigestPage> ListDigestsAsync(
@@ -48,12 +51,22 @@ internal sealed class DelegateDigests : IAcceptorDigestSource
         return List(prefix, afterKey, limit, cancellationToken);
     }
 
-    public ValueTask<ConditionalAcceptorState> FetchIfDifferentAsync(
-        string key, AcceptedDigest? known, CancellationToken cancellationToken = default)
+    public ValueTask<AcceptorReadResult> ReadAsync(
+        string key, AcceptedDigest? known = null, CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref Calls);
         return Fetch(key, known, cancellationToken);
     }
+
+    public ValueTask<FastCASPaxos.Protocol.AcceptorPrepareResult<ByteString?>> PrepareAsync(
+        string key, FastCASPaxos.Messages.PrepareRequest request, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("Unexpected prepare on digest fixture.");
+    public ValueTask<FastCASPaxos.Protocol.AcceptorAcceptResult> AcceptAsync(
+        string key, FastCASPaxos.Messages.AcceptRequest<ByteString> request, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("Unexpected accept on digest fixture.");
+    public ValueTask<KeyPage> ListKeysAsync(string prefix = "", string? afterKey = null,
+        int limit = 100, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("Unexpected inventory on digest fixture.");
 }
 
 internal sealed class CountingRepairScheduler : IRepairScheduler

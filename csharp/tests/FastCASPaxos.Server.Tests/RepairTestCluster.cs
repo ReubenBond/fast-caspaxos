@@ -18,7 +18,12 @@ internal sealed class RepairTestCluster(int count = 3)
 
     public DurabilityRepair Create(int target = 0, int pageSize = 2, int local = 0)
     {
-        if (Digests.Length == 0) Digests = Peers.Select(peer => new RepairDigestSource(peer.Inner)).ToArray();
+        if (Digests.Length == 0)
+        {
+            Digests = Peers.Select(peer => new RepairDigestSource(peer.Inner)).ToArray();
+            for (var index = 0; index < Peers.Length; index++)
+                Peers[index].Read = Digests[index].ReadAsync;
+        }
         return new($"peer-{local}", Peers.Select((peer, index) => new RepairPeer($"peer-{index}", peer, Digests[index])),
             Ballots, new()
             {
@@ -40,7 +45,7 @@ internal sealed class RepairTestCluster(int count = 3)
     {
         Peers[peer].GoOffline();
         Digests[peer].List = (_, _, _, _) => ValueTask.FromException<AcceptorDigestPage>(new IOException("offline"));
-        Digests[peer].Fetch = (_, _, _) => ValueTask.FromException<ConditionalAcceptorState>(new IOException("offline"));
+        Digests[peer].Fetch = (_, _, _) => ValueTask.FromException<AcceptorReadResult>(new IOException("offline"));
     }
 
     public void Online(int peer)
@@ -50,6 +55,7 @@ internal sealed class RepairTestCluster(int count = 3)
         Peers[peer].List = null;
         Digests[peer].List = null;
         Digests[peer].Fetch = null;
+        Peers[peer].Read = Digests[peer].ReadAsync;
     }
 
     public void AssertValue(string key, ByteString expected) =>
@@ -74,7 +80,7 @@ internal sealed class RepairDigestSource(MemoryAcceptor inner) : IAcceptorDigest
     public ConcurrentQueue<(string Prefix, string? After, int Limit)> Lists { get; } = new();
     public ConcurrentQueue<(string Key, AcceptedDigest? Known)> Fetches { get; } = new();
     public Func<string, string?, int, CancellationToken, ValueTask<AcceptorDigestPage>>? List { get; set; }
-    public Func<string, AcceptedDigest?, CancellationToken, ValueTask<ConditionalAcceptorState>>? Fetch { get; set; }
+    public Func<string, AcceptedDigest?, CancellationToken, ValueTask<AcceptorReadResult>>? Fetch { get; set; }
 
     public async ValueTask<AcceptorDigestPage> ListDigestsAsync(
         string prefix = "", string? afterKey = null, int limit = 100, CancellationToken cancellationToken = default)
@@ -85,18 +91,18 @@ internal sealed class RepairDigestSource(MemoryAcceptor inner) : IAcceptorDigest
         return new(page.Entries.Select(state => new KeyDigest(state.Key, Digest(state))).ToArray(), page.ContinuationKey);
     }
 
-    public ValueTask<ConditionalAcceptorState> FetchIfDifferentAsync(
-        string key, AcceptedDigest? known, CancellationToken cancellationToken = default)
+    public ValueTask<AcceptorReadResult> ReadAsync(
+        string key, AcceptedDigest? known = null, CancellationToken cancellationToken = default)
     {
         Fetches.Enqueue((key, known));
         if (Fetch is not null) return Fetch(key, known, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         var state = inner.Snapshot(key);
-        return ValueTask.FromResult(state is null
-            ? new ConditionalAcceptorState(ConditionalAcceptorStatus.Missing)
+        return ValueTask.FromResult<AcceptorReadResult>(state is null
+            ? new AcceptorMissing()
             : known == Digest(state)
-                ? new ConditionalAcceptorState(ConditionalAcceptorStatus.Unchanged)
-                : new ConditionalAcceptorState(ConditionalAcceptorStatus.Different, state));
+                ? new AcceptorUnchanged()
+                : state);
     }
 
     private static AcceptedDigest Digest(KeyedAcceptorState state) =>

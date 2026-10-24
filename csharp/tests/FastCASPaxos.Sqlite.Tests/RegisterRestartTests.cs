@@ -126,6 +126,11 @@ public sealed class RegisterRestartTests
     {
         public bool IsPartitioned { get; set; } = true;
 
+        public ValueTask<AcceptorReadResult> ReadAsync(string key, AcceptedDigest? known = null, CancellationToken cancellationToken = default) =>
+            IsPartitioned
+                ? ValueTask.FromException<AcceptorReadResult>(new IOException("Replica is partitioned."))
+                : inner.ReadAsync(key, known, cancellationToken);
+
         public ValueTask<AcceptorPrepareResult<ByteString?>> PrepareAsync(string key, PrepareRequest request, CancellationToken cancellationToken = default) =>
             IsPartitioned
                 ? ValueTask.FromException<AcceptorPrepareResult<ByteString?>>(new IOException("Replica is partitioned."))
@@ -146,6 +151,8 @@ public sealed class RegisterRestartTests
     {
         public PrepareRequest? Prepare;
         public AcceptRequest<ByteString>? Accept;
+        public ValueTask<AcceptorReadResult> ReadAsync(string key, AcceptedDigest? known = null, CancellationToken cancellationToken = default) =>
+            inner.ReadAsync(key, known, cancellationToken);
         public ValueTask<AcceptorPrepareResult<ByteString?>> PrepareAsync(string key, PrepareRequest request, CancellationToken cancellationToken = default)
         {
             Prepare = request;

@@ -39,31 +39,57 @@ public sealed class RepairContractTests
     }
 
     [Fact]
-    public async Task ConditionalFetchWire_DistinguishesMissingUnchangedAndDifferentIncludingEmptyBytes()
+    public async Task ReadWire_DistinguishesMissingUnchangedAndFullStateIncludingEmptyBytes()
     {
         using var directory = new TestDirectory();
         await using var store = await SqliteAcceptorServer.OpenAsync(directory.Database("fetch"));
         await store.PrepareAsync("promise", new(new(9, 2)));
         await store.AcceptAsync("", new(new(3, 0), ByteString.Empty, new(9, 2)));
-        var client = new GrpcAcceptorDigestSource(new RepairContractInvoker(store));
+        IKeyedAcceptor client = new GrpcKeyedAcceptor(new RepairContractInvoker(store));
         foreach (var key in new[] { "missing", "promise" })
         {
-            var missing = await client.FetchIfDifferentAsync(key, null);
-            Assert.Equal(ConditionalAcceptorStatus.Missing, missing.Status);
-            Assert.Null(missing.State);
+            var missing = await client.ReadAsync(key, null);
+            Assert.True(missing is AcceptorMissing);
         }
         var digest = new AcceptedDigest(new(3, 0), EmptyHash);
-        var unchanged = await client.FetchIfDifferentAsync("", digest);
-        Assert.Equal(ConditionalAcceptorStatus.Unchanged, unchanged.Status);
-        Assert.Null(unchanged.State);
+        var unchanged = await client.ReadAsync("", digest);
+        Assert.True(unchanged is AcceptorUnchanged);
         AcceptedDigest?[] different = [null, digest with { AcceptedBallot = new(2, 0) },
             digest with { ValueHash = new(new byte[32]) }];
         foreach (var known in different)
         {
-            var fetched = await client.FetchIfDifferentAsync("", known);
-            Assert.Equal(ConditionalAcceptorStatus.Different, fetched.Status);
-            Assert.Equal(new KeyedAcceptorState("", new(9, 2), new(3, 0), ByteString.Empty), fetched.State);
+            var fetched = await client.ReadAsync("", known);
+            Assert.Equal(new KeyedAcceptorState("", new(9, 2), new(3, 0), ByteString.Empty),
+                fetched switch { KeyedAcceptorState state => state, _ => null });
         }
+    }
+
+    [Fact]
+    public async Task ReadWire_RoutesToKeyedAcceptorRatherThanDigestListingSource()
+    {
+        var source = new DelegateDigests();
+        var known = new AcceptedDigest(new(3, 0), EmptyHash);
+        using var cancellation = new CancellationTokenSource();
+        var acceptor = new DelegateAcceptor
+        {
+            Read = (key, digest, token) =>
+            {
+                Assert.Equal("requested", key);
+                Assert.Equal(known, digest);
+                Assert.Equal(cancellation.Token, token);
+                return ValueTask.FromResult<AcceptorReadResult>(new AcceptorUnchanged());
+            }
+        };
+        IKeyedAcceptor client = new GrpcKeyedAcceptor(new RepairContractInvoker(source, acceptor: acceptor));
+
+        Assert.True(await client.ReadAsync("requested", known, cancellation.Token) is AcceptorUnchanged);
+
+        Assert.Equal(1, acceptor.Calls);
+        Assert.Equal(0, source.Calls);
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.ReadAsync("requested", known, cancellation.Token).AsTask());
+        Assert.Equal(1, acceptor.Calls);
+        Assert.Equal(0, source.Calls);
     }
 
     [Theory]
@@ -118,9 +144,9 @@ public sealed class RepairContractTests
             case "missing-promise": response.Different.PromisedBallot = null; break;
             case "different-but-matching": known = new(new(3, 1), EmptyHash); break;
         }
-        var client = new GrpcAcceptorDigestSource(StubCallInvoker.Reply(response));
+        var client = new GrpcKeyedAcceptor(StubCallInvoker.Reply(response));
 
-        var failure = await Assert.ThrowsAsync<RemoteCallException>(() => client.FetchIfDifferentAsync("key", known).AsTask());
+        var failure = await Assert.ThrowsAsync<RemoteCallException>(() => client.ReadAsync("key", known).AsTask());
 
         Assert.Equal(StatusCode.DataLoss, failure.StatusCode);
     }
@@ -165,20 +191,20 @@ public sealed class RepairContractTests
 
     [Theory]
     [InlineData("unchanged-without-known")]
-    [InlineData("missing-with-state")]
-    [InlineData("different-without-state")]
     [InlineData("different-wrong-key")]
-    [InlineData("invalid-status")]
+    [InlineData("default-union")]
+    [InlineData("zero-accepted-ballot")]
+    [InlineData("missing-bytes")]
     public async Task ConditionalFetchService_InvalidDomainResult_FailsInsteadOfSerializing(string scenario)
     {
         var state = new KeyedAcceptorState("other", new(9, 2), new(3, 1), ByteString.Empty);
-        var outcome = scenario switch
+        AcceptorReadResult outcome = scenario switch
         {
-            "unchanged-without-known" => new ConditionalAcceptorState(ConditionalAcceptorStatus.Unchanged),
-            "missing-with-state" => new(ConditionalAcceptorStatus.Missing, state),
-            "different-without-state" => new(ConditionalAcceptorStatus.Different),
-            "different-wrong-key" => new(ConditionalAcceptorStatus.Different, state),
-            _ => new((ConditionalAcceptorStatus)99)
+            "unchanged-without-known" => new AcceptorUnchanged(),
+            "different-wrong-key" => state,
+            "zero-accepted-ballot" => state with { Key = "key", AcceptedBallot = default },
+            "missing-bytes" => state with { Key = "key", AcceptedValue = null! },
+            _ => default
         };
         var source = new DelegateDigests { Fetch = (_, _, _) => ValueTask.FromResult(outcome) };
         var raw = new Wire.AcceptorDigests.AcceptorDigestsClient(new RepairContractInvoker(source));
@@ -208,11 +234,12 @@ public sealed class RepairContractTests
             return await cancelled.Task;
         });
         var source = new GrpcAcceptorDigestSource(invoker, TimeSpan.FromSeconds(7), clock);
+        var acceptor = new GrpcKeyedAcceptor(invoker, TimeSpan.FromSeconds(7), clock);
         var scheduler = new GrpcRepairScheduler(invoker, TimeSpan.FromSeconds(7), clock);
         var task = operation switch
         {
             "list" => (Task)source.ListDigestsAsync(cancellationToken: cancellation.Token).AsTask(),
-            "fetch" => source.FetchIfDifferentAsync("key", null, cancellation.Token).AsTask(),
+            "fetch" => acceptor.ReadAsync("key", null, cancellation.Token).AsTask(),
             _ => scheduler.StageRepairAsync(cancellation.Token)
         };
         await arrived.Task.WaitAsync(Watchdog);
@@ -234,10 +261,11 @@ public sealed class RepairContractTests
         var error = new RpcException(new Status(StatusCode.Unavailable, "offline"));
         var invoker = StubCallInvoker.Fail(error);
         var source = new GrpcAcceptorDigestSource(invoker);
+        var acceptor = new GrpcKeyedAcceptor(invoker);
         Task Invoke() => operation switch
         {
             "list" => source.ListDigestsAsync().AsTask(),
-            "fetch" => source.FetchIfDifferentAsync("key", null).AsTask(),
+            "fetch" => acceptor.ReadAsync("key", null).AsTask(),
             _ => new GrpcRepairScheduler(invoker).StageRepairAsync()
         };
 

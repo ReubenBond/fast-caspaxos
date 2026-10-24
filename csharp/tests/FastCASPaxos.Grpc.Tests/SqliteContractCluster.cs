@@ -2,6 +2,7 @@ using FastCASPaxos.Protocol;
 using FastCASPaxos.Server;
 using FastCASPaxos.Sqlite;
 using Grpc.Core;
+using Microsoft.Extensions.Logging.Abstractions;
 using static FastCASPaxos.Grpc.Tests.ContractTestSupport;
 
 namespace FastCASPaxos.Grpc.Tests;
@@ -27,12 +28,14 @@ internal sealed class SqliteContractCluster(TestDirectory directory) : IAsyncDis
                 cluster._sqlite.Add(sqlite);
                 var endpoint = new DelegateAcceptor
                 {
+                    Read = sqlite.ReadAsync,
                     Prepare = sqlite.PrepareAsync,
                     Accept = sqlite.AcceptAsync,
                     List = sqlite.ListKeysAsync,
                 };
                 cluster.Endpoints.Add(endpoint);
-                cluster.Clients.Add(new(new ContractCallInvoker(Service(endpoint))));
+                cluster.Clients.Add(new(new ContractCallInvoker(Service(endpoint), digests:
+                    new AcceptorDigestGrpcService(sqlite, endpoint, NullLogger<AcceptorDigestGrpcService>.Instance))));
             }
             return cluster;
         }

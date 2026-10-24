@@ -170,10 +170,9 @@ public sealed class RepairHostTests
             Assert.False(node.IsShutdownComplete);
             Assert.Equal("running", node.LastRepair!.State);
             Assert.True(node.LastRepair.Departing);
-            var surviving = await cluster.Stores[0].FetchIfDifferentAsync("local", null);
-            Assert.Equal(ConditionalAcceptorStatus.Different, surviving.Status);
-            Assert.Equal(Payload, Assert.IsType<KeyedAcceptorState>(surviving.State).AcceptedValue);
-            Assert.Equal(ConditionalAcceptorStatus.Missing, (await cluster.Stores[1].FetchIfDifferentAsync("local", null)).Status);
+            var surviving = await cluster.Stores[0].ReadAsync("local", null);
+            Assert.Equal(Payload, ReadState(surviving).AcceptedValue);
+            Assert.True(await cluster.Stores[1].ReadAsync("local") is AcceptorMissing);
             // This real HTTP/2 read must succeed while IHostedLifecycleService.StoppingAsync
             // is blocked. Calling node.StopAsync only after Kestrel.StopAsync would fail here.
             Assert.Equal("local", Assert.Single((await endpoint.Digests.ListDigestsAsync()).Entries).Key);
@@ -191,7 +190,7 @@ public sealed class RepairHostTests
             Assert.Equal(0, node.LastRepair.Pending);
             Assert.Equal(cluster.Clock.GetUtcNow(), node.LastRepair.Timestamp);
             foreach (var store in cluster.Stores)
-                Assert.Equal(Payload, (await store.FetchIfDifferentAsync("local", null)).State!.AcceptedValue);
+                Assert.Equal(Payload, ReadState(await store.ReadAsync("local")).AcceptedValue);
             Assert.Null(await node.Inspection.InspectAsync("late"));
             if (hosted)
                 Assert.Single(endpoint.App.Services.GetServices<IHostedService>().OfType<NodeRepairService>());
@@ -235,8 +234,8 @@ public sealed class RepairHostTests
             Assert.True(cluster.Node.IsShutdownComplete);
             foreach (var remote in cluster.Stores)
             {
-                Assert.Equal(Payload, (await remote.FetchIfDifferentAsync("in-flight", null)).State!.AcceptedValue);
-                Assert.Equal(ConditionalAcceptorStatus.Missing, (await remote.FetchIfDifferentAsync("too-late", null)).Status);
+                Assert.Equal(Payload, ReadState(await remote.ReadAsync("in-flight")).AcceptedValue);
+                Assert.True(await remote.ReadAsync("too-late") is AcceptorMissing);
             }
         }
         finally { release.Set(); store.BeforeCommit = null; }
@@ -273,7 +272,7 @@ public sealed class RepairHostTests
             store.BeforeCommit = null;
             release.Set();
             Assert.True((await accepted.WaitAsync(Watchdog)).IsAccepted);
-            Assert.Equal(Payload, (await store.FetchIfDifferentAsync("in-flight", null)).State!.AcceptedValue);
+            Assert.Equal(Payload, ReadState(await store.ReadAsync("in-flight")).AcceptedValue);
         }
         finally { release.Set(); store.BeforeCommit = null; }
     }
@@ -308,7 +307,7 @@ public sealed class RepairHostTests
             Assert.False(cluster.Node.IsShutdownComplete);
             Assert.False(release.Task.IsCompleted);
             Assert.Equal(0, cluster.Clock.GetTimestamp());
-            Assert.Equal(Payload, (await cluster.Node.Digests.FetchIfDifferentAsync("local", null)).State!.AcceptedValue);
+            Assert.Equal(Payload, ReadState(await cluster.Node.Acceptor.ReadAsync("local")).AcceptedValue);
             Assert.Throws<RegisterUnavailableException>(cluster.Node.StageRepair);
         }
         finally
@@ -334,7 +333,7 @@ public sealed class RepairHostTests
         var first = await NextCompleteAsync(cluster.Node, before);
         Assert.Equal(1, Assert.IsType<RepairObservation>(first.Data).Repaired);
         foreach (var store in cluster.Stores)
-            Assert.Equal(Payload, (await store.FetchIfDifferentAsync("local", null)).State!.AcceptedValue);
+            Assert.Equal(Payload, ReadState(await store.ReadAsync("local")).AcceptedValue);
 
         await cluster.Clock.WaitForTimerAsync(cluster.Options.RepairInterval);
         var calls = cluster.RemoteAcceptors.Select(peer => Volatile.Read(ref peer.Calls)).ToArray();
@@ -366,7 +365,7 @@ public sealed class RepairHostTests
         // Exactly one prepare/accept per remote: requests queued before the worker starts coalesce.
         Assert.All(cluster.RemoteAcceptors, peer => Assert.Equal(2, Volatile.Read(ref peer.Calls)));
         foreach (var store in cluster.Stores)
-            Assert.Equal(Payload, (await store.FetchIfDifferentAsync("local", null)).State!.AcceptedValue);
+            Assert.Equal(Payload, ReadState(await store.ReadAsync("local")).AcceptedValue);
     }
 
     [Fact]
@@ -377,19 +376,19 @@ public sealed class RepairHostTests
         await cluster.Node.Acceptor.AcceptAsync("key", new(new(1, 0), Payload, new()));
         await cluster.Node.StopAsync().WaitAsync(Watchdog);
         Assert.Equal(1, cluster.Node.LastRepair!.Repaired);
-        var before = (await cluster.Node.Digests.FetchIfDifferentAsync("key", null)).State!;
+        var before = ReadState(await cluster.Node.Acceptor.ReadAsync("key"));
         await cluster.Node.DisposeAsync().AsTask().WaitAsync(Watchdog);
 
         await using var reopened = await NodeRuntime.OpenAsync(cluster.Options, timeProvider: cluster.Clock);
         await reopened.StopAsync().WaitAsync(Watchdog);
         Assert.Equal(1, reopened.LastRepair!.Repaired);
 
-        var after = (await reopened.Digests.FetchIfDifferentAsync("key", null)).State!;
+        var after = ReadState(await reopened.Acceptor.ReadAsync("key"));
         Assert.True(after.AcceptedBallot > before.AcceptedBallot);
         Assert.Equal(cluster.Options.ProposerId, after.AcceptedBallot.Proposer);
         Assert.Equal(Payload, after.AcceptedValue);
         foreach (var store in cluster.Stores)
-            Assert.Equal(after.AcceptedBallot, (await store.FetchIfDifferentAsync("key", null)).State!.AcceptedBallot);
+            Assert.Equal(after.AcceptedBallot, ReadState(await store.ReadAsync("key")).AcceptedBallot);
     }
 
     [Fact]
@@ -405,7 +404,7 @@ public sealed class RepairHostTests
         Assert.All(cluster.Schedulers, scheduler => Assert.Equal(0, Volatile.Read(ref scheduler.Calls)));
         foreach (var store in cluster.Stores) Assert.Empty((await store.ListDigestsAsync()).Entries);
         await using var reopened = await SqliteAcceptorServer.OpenAsync(cluster.Options.AcceptorDatabase);
-        Assert.Equal(Payload, (await reopened.FetchIfDifferentAsync("retain", null)).State!.AcceptedValue);
+        Assert.Equal(Payload, ReadState(await reopened.ReadAsync("retain")).AcceptedValue);
     }
 
     [Theory]

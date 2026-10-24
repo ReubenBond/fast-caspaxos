@@ -20,7 +20,9 @@ public sealed class RegisterTests
         Assert.False(missing.IsPresent);
         Assert.Null(missing.Value);
         Assert.Null(missing.Version);
-        Assert.All(peers, peer => Assert.Equal(Absent, peer.Inner.Snapshot("key")!.AcceptedValue));
+        Assert.All(peers, peer => Assert.Null(peer.Inner.Snapshot("key")));
+        Assert.All(peers, peer => Assert.Empty(peer.Prepares));
+        Assert.All(peers, peer => Assert.Empty(peer.Accepts));
 
         var create = await service.CompareExchangeAsync("key", null, ByteString.Empty);
         Assert.Equal(CompareExchangeStatus.Applied, create.Status);
@@ -131,10 +133,12 @@ public sealed class RegisterTests
         Assert.Equal(CompareExchangeStatus.Mismatch, (await mismatch.WaitAsync(Watchdog)).Status);
         Assert.Equal(prepares, peers.Sum(peer => peer.Prepares.Count));
 
-        // No admitted references remain: the next read must recover instead of trusting a stale cache.
+        // No admitted references remain: fresh observations, not a stale engine cache, justify the read.
         var before = peers.Sum(peer => peer.Prepares.Count);
+        var readsBefore = peers.Sum(peer => peer.Reads.Count);
         Assert.Equal(created.Current, await service.ReadAsync("key"));
-        Assert.True(peers.Sum(peer => peer.Prepares.Count) > before);
+        Assert.Equal(before, peers.Sum(peer => peer.Prepares.Count));
+        Assert.True(peers.Sum(peer => peer.Reads.Count) > readsBefore);
     }
 
     [Theory]
@@ -172,6 +176,7 @@ public sealed class RegisterTests
     public async Task SharedFastBallot_ConcurrentSameBytesCasAppliesExactlyOnce()
     {
         var peers = Peers();
+        RequireRecovery(peers); // This test deliberately retains shared fast-round protocol history.
         var version = Version(9, 1);
         var initial = Envelope(version, Payload);
         foreach (var peer in peers)
@@ -232,6 +237,7 @@ public sealed class RegisterTests
     public async Task Read_PartialAcceptRecoversHighestEnvelopeWithoutChangingVersion()
     {
         var peers = Peers();
+        RequireRecovery(peers); // Test identity recovery, not the legal matching old-quorum observation.
         var old = Envelope(Version(9, 1), ByteString.Empty);
         var latest = Envelope(Version(9, 2), Payload);
         foreach (var peer in peers)
@@ -252,12 +258,164 @@ public sealed class RegisterTests
     public async Task Read_AcceptedBallotWithoutBytesIsInvalidEvenInRejection(bool rejected)
     {
         var peers = Peers();
+        RequireRecovery(peers);
         foreach (var peer in peers)
             peer.Prepare = (_, _, _) => ValueTask.FromResult(new AcceptorPrepareResult<ByteString?>(
                 new Ballot(2, 9), null, rejected ? new Ballot(3, 9) : Ballot.Zero));
         await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(1), Options());
         await Assert.ThrowsAsync<InvalidDataException>(() => service.ReadAsync("key").AsTask());
         Assert.All(peers, peer => Assert.Empty(peer.Accepts));
+    }
+
+    [Theory]
+    [InlineData("classic", false)]
+    [InlineData("classic", true)]
+    [InlineData("fast", false)]
+    [InlineData("fast", true)]
+    [InlineData("leader", false)]
+    [InlineData("leader", true)]
+    public async Task Read_RepeatedStableOrMissingState_DoesNotAllocateOrMutate(string mode, bool present)
+    {
+        var peers = Peers();
+        var value = Envelope(Version(9, 2), Payload);
+        if (present)
+            foreach (var peer in peers)
+                Assert.True((await peer.Inner.AcceptAsync("key",
+                    new(mode == "fast" ? new Ballot(3, 0) : new Ballot(3, 9), value, new Ballot(8, 9)))).IsAccepted);
+        var before = peers.Select(peer => peer.Inner.Snapshot("key")).ToArray();
+        var ballots = new TestBallots(1);
+        await using var service = new ReplicatedRegisterService(Routes(peers), ballots, Options(mode));
+
+        for (var iteration = 0; iteration < 3; iteration++)
+            Assert.Equal(present ? new RegisterValue(Payload, Version(9, 2)) : new(null, null),
+                await service.ReadAsync("key").AsTask().WaitAsync(Watchdog));
+
+        Assert.Empty(ballots.Reserved);
+        Assert.Equal(before, peers.Select(peer => peer.Inner.Snapshot("key")));
+        Assert.All(peers, peer =>
+        {
+            Assert.Equal(3, peer.Reads.Count);
+            Assert.All(peer.Reads, read => { Assert.Equal("key", read.Key); Assert.Null(read.Known); });
+            Assert.Empty(peer.Prepares);
+            Assert.Empty(peer.Accepts);
+        });
+    }
+
+    [Fact]
+    public async Task Read_ClassicMatchingMajority_IgnoresNewerMinorityAndDifferentPromises()
+    {
+        var peers = Peers();
+        var old = Envelope(Version(9, 1), ByteString.Empty);
+        var partial = Envelope(Version(9, 2), Payload);
+        for (var index = 0; index < peers.Length; index++)
+            Assert.True((await peers[index].Inner.AcceptAsync("key",
+                new(index == 0 ? new Ballot(4, 9) : new Ballot(2, 9), index == 0 ? partial : old,
+                    new Ballot(10 + index, 9)))).IsAccepted);
+        var before = peers.Select(peer => peer.Inner.Snapshot("key")).ToArray();
+        var ballots = new TestBallots(1);
+        await using var service = new ReplicatedRegisterService(Routes(peers), ballots, Options());
+
+        Assert.Equal(new RegisterValue(ByteString.Empty, Version(9, 1)), await service.ReadAsync("key"));
+
+        Assert.Equal(before, peers.Select(peer => peer.Inner.Snapshot("key")));
+        Assert.Empty(ballots.Reserved);
+        Assert.All(peers, peer => { Assert.Empty(peer.Prepares); Assert.Empty(peer.Accepts); });
+    }
+
+    [Theory]
+    [InlineData(3, "different-version")]
+    [InlineData(3, "different-payload")]
+    [InlineData(4, "different-version")]
+    [InlineData(4, "different-payload")]
+    public async Task Read_FastQuorum_RequiresFourOfFiveMatchingEnvelopes(int matching, string difference)
+    {
+        var peers = Peers(5);
+        var chosen = Envelope(Version(9, 1), Payload);
+        var other = difference == "different-version" ? Envelope(Version(9, 2), Payload)
+            : Envelope(Version(9, 1), ByteString.Empty);
+        for (var index = 0; index < peers.Length; index++)
+            Assert.True((await peers[index].Inner.AcceptAsync("key",
+                new(new Ballot(3, 0), index < matching ? chosen : other, Ballot.Zero))).IsAccepted);
+        var before = peers.Select(peer => peer.Inner.Snapshot("key")).ToArray();
+        var ballots = new TestBallots(1);
+        await using var service = new ReplicatedRegisterService(Routes(peers), ballots, Options());
+
+        Assert.Equal(new RegisterValue(Payload, Version(9, 1)), await service.ReadAsync("key").AsTask().WaitAsync(Watchdog));
+
+        if (matching == 4)
+        {
+            Assert.Empty(ballots.Reserved);
+            Assert.Equal(before, peers.Select(peer => peer.Inner.Snapshot("key")));
+            Assert.All(peers, peer => { Assert.Empty(peer.Prepares); Assert.Empty(peer.Accepts); });
+        }
+        else
+        {
+            Assert.NotEmpty(ballots.Reserved);
+            Assert.All(peers, peer =>
+            {
+                Assert.NotEmpty(peer.Prepares);
+                Assert.NotEmpty(peer.Accepts);
+                Assert.Equal(chosen, peer.Inner.Snapshot("key")!.AcceptedValue);
+                Assert.True(peer.Inner.Snapshot("key")!.AcceptedBallot > new Ballot(3, 0));
+            });
+        }
+    }
+
+    [Fact]
+    public async Task Read_MatchingBytesAtDifferentBallots_RequiresRecovery()
+    {
+        var peers = Peers();
+        var value = Envelope(Version(9, 1), Payload);
+        for (var index = 0; index < peers.Length; index++)
+            Assert.True((await peers[index].Inner.AcceptAsync("key",
+                new(new Ballot(2 + index, 9), value, Ballot.Zero))).IsAccepted);
+        var ballots = new TestBallots(1);
+        // Keep the recovery ballot above every seeded ballot so all synchronous peers can accept.
+        ballots.Reserve(10);
+        ballots.Reserved.Clear();
+        await using var service = new ReplicatedRegisterService(Routes(peers), ballots, Options());
+
+        Assert.Equal(new RegisterValue(Payload, Version(9, 1)), await service.ReadAsync("key").AsTask().WaitAsync(Watchdog));
+
+        Assert.NotEmpty(ballots.Reserved);
+        Assert.All(peers, peer =>
+        {
+            Assert.NotEmpty(peer.Prepares);
+            Assert.NotEmpty(peer.Accepts);
+            Assert.Equal(value, peer.Inner.Snapshot("key")!.AcceptedValue);
+            Assert.True(peer.Inner.Snapshot("key")!.AcceptedBallot > new Ballot(4, 9));
+        });
+    }
+
+    [Theory]
+    [InlineData("default-union")]
+    [InlineData("unchanged-without-known")]
+    [InlineData("wrong-key")]
+    [InlineData("zero-accepted-ballot")]
+    [InlineData("negative-accepted-round")]
+    [InlineData("negative-accepted-proposer")]
+    [InlineData("missing-bytes")]
+    public async Task Read_InvalidObservation_ThrowsWithoutMutation(string scenario)
+    {
+        var peers = Peers();
+        AcceptorReadResult result = scenario switch
+        {
+            "unchanged-without-known" => new AcceptorUnchanged(),
+            "wrong-key" => new KeyedAcceptorState("other", new(2, 1), new(2, 1), Envelope(Version(9, 1), Payload)),
+            "zero-accepted-ballot" => new KeyedAcceptorState("key", new(2, 1), default, Envelope(Version(9, 1), Payload)),
+            "negative-accepted-round" => new KeyedAcceptorState("key", new(2, 1), new(-1, 1), Envelope(Version(9, 1), Payload)),
+            "negative-accepted-proposer" => new KeyedAcceptorState("key", new(2, 1), new(2, -1), Envelope(Version(9, 1), Payload)),
+            "missing-bytes" => new KeyedAcceptorState("key", new(2, 1), new(2, 1), null!),
+            _ => default
+        };
+        foreach (var peer in peers) peer.Read = (_, _, _) => ValueTask.FromResult(result);
+        var ballots = new TestBallots(1);
+        await using var service = new ReplicatedRegisterService(Routes(peers), ballots, Options());
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => service.ReadAsync("key").AsTask());
+
+        Assert.Empty(ballots.Reserved);
+        Assert.All(peers, peer => { Assert.Empty(peer.Prepares); Assert.Empty(peer.Accepts); });
     }
 
     [Theory]
@@ -289,6 +447,7 @@ public sealed class RegisterTests
         await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(1), Options());
         await Assert.ThrowsAsync<InvalidDataException>(() => service.ReadAsync("bad").AsTask());
         Assert.All(peers, peer => Assert.Equal(malformed, peer.Inner.Snapshot("bad")!.AcceptedValue));
+        Assert.All(peers, peer => Assert.Empty(peer.Prepares));
         Assert.All(peers, peer => Assert.Empty(peer.Accepts));
     }
 }

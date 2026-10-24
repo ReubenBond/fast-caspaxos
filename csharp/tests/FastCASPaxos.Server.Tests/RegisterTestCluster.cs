@@ -27,6 +27,12 @@ internal static class TestSupport
         Enumerable.Range(0, count).Select(_ => new ControlledPeer()).ToArray();
     public static AcceptorPeer[] Routes(ControlledPeer[] peers) =>
         peers.Select((peer, index) => new AcceptorPeer($"peer-{index}", peer)).ToArray();
+    // Recovery-specific tests must not depend on an optimistic read entering Prepare.
+    public static void RequireRecovery(ControlledPeer[] peers)
+    {
+        foreach (var peer in peers)
+            peer.Read = (_, _, _) => ValueTask.FromException<AcceptorReadResult>(new IOException("inconclusive probe"));
+    }
     public static RegisterServiceOptions Options(string mode = "classic", TimeProvider? clock = null, int capacity = 32) =>
         new()
         {
@@ -45,13 +51,16 @@ internal sealed class TestBallots(int proposerId) : IProposerBallotSource, IDisp
     private int _round;
     public int ProposerId => proposerId;
     public bool Disposed { get; private set; }
+    public ConcurrentQueue<Ballot> Reserved { get; } = new();
     public Ballot Reserve(int minimumRound)
     {
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(Disposed, this);
             _round = Math.Max(checked(_round + 1), minimumRound);
-            return new(_round, proposerId);
+            var ballot = new Ballot(_round, proposerId);
+            Reserved.Enqueue(ballot);
+            return ballot;
         }
     }
     public void Dispose() => Disposed = true;
@@ -61,6 +70,18 @@ internal sealed class MemoryAcceptor : IKeyedAcceptor
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, AcceptorState<ByteString?>> _states = new(StringComparer.Ordinal);
+
+    public ValueTask<AcceptorReadResult> ReadAsync(
+        string key, AcceptedDigest? known = null, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        known?.Validate();
+        var state = Snapshot(key);
+        AcceptorReadResult result = state is null ? new AcceptorMissing()
+            : known == new AcceptedDigest(state.AcceptedBallot, AcceptedDigest.Hash(state.AcceptedValue))
+                ? new AcceptorUnchanged() : state;
+        return ValueTask.FromResult(result);
+    }
 
     public ValueTask<AcceptorPrepareResult<ByteString?>> PrepareAsync(
         string key, PrepareRequest request, CancellationToken cancellationToken = default)
@@ -124,11 +145,18 @@ internal sealed class ControlledPeer : IKeyedAcceptor, IAsyncDisposable
     public MemoryAcceptor Inner { get; } = new();
     public ConcurrentQueue<(string Key, PrepareRequest Request)> Prepares { get; } = new();
     public ConcurrentQueue<(string Key, AcceptRequest<ByteString> Request)> Accepts { get; } = new();
+    public ConcurrentQueue<(string Key, AcceptedDigest? Known)> Reads { get; } = new();
+    public Func<string, AcceptedDigest?, CancellationToken, ValueTask<AcceptorReadResult>>? Read { get; set; }
     public Func<string, PrepareRequest, CancellationToken, ValueTask<AcceptorPrepareResult<ByteString?>>>? Prepare { get; set; }
     public Func<string, AcceptRequest<ByteString>, CancellationToken, ValueTask<AcceptorAcceptResult>>? Accept { get; set; }
     public Func<string, string?, int, CancellationToken, ValueTask<KeyPage>>? List { get; set; }
     public bool Disposed { get; private set; }
 
+    public ValueTask<AcceptorReadResult> ReadAsync(string key, AcceptedDigest? known = null, CancellationToken cancellationToken = default)
+    {
+        Reads.Enqueue((key, known));
+        return Read is null ? Inner.ReadAsync(key, known, cancellationToken) : Read(key, known, cancellationToken);
+    }
     public ValueTask<AcceptorPrepareResult<ByteString?>> PrepareAsync(string key, PrepareRequest request, CancellationToken cancellationToken = default)
     {
         Prepares.Enqueue((key, request));
@@ -144,6 +172,7 @@ internal sealed class ControlledPeer : IKeyedAcceptor, IAsyncDisposable
     public ValueTask DisposeAsync() { Disposed = true; return ValueTask.CompletedTask; }
     public void GoOffline()
     {
+        Read = (_, _, _) => ValueTask.FromException<AcceptorReadResult>(new IOException("offline"));
         Prepare = (_, _, _) => ValueTask.FromException<AcceptorPrepareResult<ByteString?>>(new IOException("offline"));
         Accept = (_, _, _) => ValueTask.FromException<AcceptorAcceptResult>(new IOException("offline"));
         List = (_, _, _, _) => ValueTask.FromException<KeyPage>(new IOException("offline"));

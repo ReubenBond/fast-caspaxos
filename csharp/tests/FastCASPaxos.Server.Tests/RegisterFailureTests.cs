@@ -44,6 +44,7 @@ public sealed class RegisterFailureTests
     public async Task QuorumLoss_DeadlineBeforeMutationThrowsUnavailable(bool write)
     {
         var peers = Peers();
+        RequireRecovery(peers);
         var clock = new ManualTime();
         using var gate = new Gate();
         for (var i = 1; i < peers.Length; i++)
@@ -73,6 +74,7 @@ public sealed class RegisterFailureTests
         await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(1), Options(capacity: 3));
         canceled.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.ReadAsync("pre-canceled", canceled.Token).AsTask());
+        Assert.All(peers, peer => Assert.Empty(peer.Reads));
         Assert.All(peers, peer => Assert.Empty(peer.Prepares));
         using var runningCancellation = new CancellationTokenSource();
         var running = service.CompareExchangeAsync("key", null, Payload, runningCancellation.Token).AsTask();
@@ -290,6 +292,7 @@ public sealed class RegisterFailureTests
     public async Task LatePrepareReplies_CannotOverrideNewerRecovery()
     {
         var peers = Peers();
+        RequireRecovery(peers);
         var clock = new ManualTime();
         using var oldReplies = new Gate();
         using var newReplies = new Gate();
@@ -336,6 +339,7 @@ public sealed class RegisterFailureTests
     public async Task Capacity_IncludesQueuedCallsAndDoesNotSerializeIndependentKeys()
     {
         var peers = Peers();
+        RequireRecovery(peers);
         using var gate = new Gate();
         foreach (var peer in peers)
             peer.Prepare = async (key, request, token) =>
@@ -369,6 +373,7 @@ public sealed class RegisterFailureTests
     public async Task Dispose_CancelsWorkAndLeavesCollaboratorsOwnedByCaller()
     {
         var peers = Peers();
+        RequireRecovery(peers);
         using var gate = new Gate();
         foreach (var peer in peers)
             peer.Prepare = async (_, _, _) => { await gate.WaitAsync(); throw new IOException("late response"); };
@@ -415,5 +420,146 @@ public sealed class RegisterFailureTests
         Assert.Null(result.Current);
         Assert.IsAssignableFrom<OperationCanceledException>(result.Error);
         Assert.All(peers, peer => Assert.Equal(Payload.ToArray(), peer.Inner.Snapshot("key")!.AcceptedValue.ToArray()[13..]));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Read_MinorityFailureOrLateReply_DoesNotDelayMatchingQuorum(bool failure)
+    {
+        var peers = Peers();
+        var value = Envelope(Version(9, 1), Payload);
+        foreach (var peer in peers)
+            Assert.True((await peer.Inner.AcceptAsync("key", new(new Ballot(3, 9), value, Ballot.Zero))).IsAccepted);
+        using var late = new Gate();
+        peers[0].Read = async (key, known, _) =>
+        {
+            if (failure) throw new IOException("offline");
+            await late.WaitAsync();
+            return await peers[0].Inner.ReadAsync(key, known);
+        };
+        var ballots = new TestBallots(1);
+        await using var service = new ReplicatedRegisterService(Routes(peers), ballots, Options());
+
+        Assert.Equal(new RegisterValue(Payload, Version(9, 1)), await service.ReadAsync("key").AsTask().WaitAsync(Watchdog));
+
+        Assert.False(late.IsReleased);
+        Assert.Empty(ballots.Reserved);
+        Assert.All(peers, peer =>
+        {
+            Assert.Single(peer.Reads);
+            Assert.Empty(peer.Prepares);
+            Assert.Empty(peer.Accepts);
+            Assert.Equal(new Ballot(3, 9), peer.Inner.Snapshot("key")!.AcceptedBallot);
+        });
+    }
+
+    [Fact]
+    public async Task Read_CanceledProbe_DoesNotDispatchRecovery()
+    {
+        var peers = Peers();
+        using var cancellation = new CancellationTokenSource();
+        // Every response differs; cancellation arrives with the final observation, just before fallback.
+        for (var index = 0; index < peers.Length; index++)
+        {
+            var response = new KeyedAcceptorState("key", new(2 + index, 9), new(2 + index, 9),
+                Envelope(Version(9, index + 1), Payload));
+            var cancel = index == peers.Length - 1;
+            peers[index].Read = (_, _, _) =>
+            {
+                if (cancel) cancellation.Cancel();
+                return ValueTask.FromResult<AcceptorReadResult>(response);
+            };
+        }
+        var ballots = new TestBallots(1);
+        await using var service = new ReplicatedRegisterService(Routes(peers), ballots, Options());
+
+        var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            service.ReadAsync("key", cancellation.Token).AsTask());
+
+        Assert.Equal(cancellation.Token, error.CancellationToken);
+        Assert.Empty(ballots.Reserved);
+        Assert.All(peers, peer => { Assert.Empty(peer.Prepares); Assert.Empty(peer.Accepts); });
+    }
+
+    [Fact]
+    public async Task Read_LateObservationCannotCompleteAnotherCall()
+    {
+        var peers = Peers();
+        var old = Envelope(Version(9, 1), ByteString.Empty);
+        var current = Envelope(Version(9, 2), Payload);
+        foreach (var peer in peers)
+            Assert.True((await peer.Inner.AcceptAsync("key", new(new Ballot(2, 9), old, Ballot.Zero))).IsAccepted);
+        using var oldReplies = new Gate();
+        using var newReplies = new Gate();
+        var returned = Enumerable.Range(0, 2).Select(_ =>
+            new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
+        for (var index = 1; index < peers.Length; index++)
+        {
+            var peer = peers[index];
+            var completion = returned[index - 1];
+            var calls = 0;
+            peer.Read = async (key, known, _) =>
+            {
+                var response = await peer.Inner.ReadAsync(key, known);
+                if (Interlocked.Increment(ref calls) == 1)
+                {
+                    await oldReplies.WaitAsync();
+                    completion.TrySetResult();
+                }
+                else await newReplies.WaitAsync();
+                return response;
+            };
+        }
+        var ballots = new TestBallots(1);
+        await using var service = new ReplicatedRegisterService(Routes(peers), ballots, Options());
+        using var cancellation = new CancellationTokenSource();
+        var first = service.ReadAsync("key", cancellation.Token).AsTask();
+        await oldReplies.Arrived;
+        Assert.False(first.IsCompleted); // One peer cannot certify a majority.
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first.WaitAsync(Watchdog));
+        foreach (var peer in peers)
+            Assert.True((await peer.Inner.AcceptAsync("key", new(new Ballot(3, 9), current, Ballot.Zero))).IsAccepted);
+
+        var second = service.ReadAsync("key").AsTask();
+        await newReplies.Arrived;
+        oldReplies.Release();
+        await Task.WhenAll(returned.Select(completion => completion.Task)).WaitAsync(Watchdog);
+        Assert.False(second.IsCompleted); // Two old replies cannot join this call's single current reply.
+        newReplies.Release();
+        Assert.Equal(new RegisterValue(Payload, Version(9, 2)), await second.WaitAsync(Watchdog));
+        Assert.Empty(ballots.Reserved);
+        Assert.All(peers, peer =>
+        {
+            Assert.Equal(2, peer.Reads.Count);
+            Assert.Empty(peer.Prepares);
+            Assert.Empty(peer.Accepts);
+            Assert.Equal(current, peer.Inner.Snapshot("key")!.AcceptedValue);
+        });
+    }
+
+    [Fact]
+    public async Task Read_ProbeAndRecoveryShareOriginalDeadline()
+    {
+        var peers = Peers();
+        var clock = new ManualTime();
+        using var probes = new Gate();
+        using var recovery = new Gate();
+        foreach (var peer in peers)
+        {
+            peer.Read = async (_, _, _) => { await probes.WaitAsync(); return new AcceptorMissing(); };
+            peer.Prepare = async (_, _, _) => { await recovery.WaitAsync(); throw new IOException("late"); };
+        }
+        await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(1), Options(clock: clock));
+        var read = service.ReadAsync("key").AsTask();
+        await probes.Arrived;
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await recovery.Arrived;
+        Assert.False(read.IsCompleted);
+        clock.Advance(TimeSpan.FromSeconds(4));
+
+        await Assert.ThrowsAsync<RegisterUnavailableException>(() => read.WaitAsync(Watchdog));
+        Assert.All(peers, peer => Assert.Empty(peer.Accepts));
     }
 }

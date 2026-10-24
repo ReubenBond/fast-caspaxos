@@ -564,7 +564,7 @@ public sealed class DurabilityRepairTests
         var repair = cluster.Create();
         await cluster.SeedAsync(0, "key", Payload);
         var failure = new IOException("local conditional fetch failed");
-        cluster.Digests[0].Fetch = (_, _, _) => ValueTask.FromException<ConditionalAcceptorState>(failure);
+        cluster.Digests[0].Fetch = (_, _, _) => ValueTask.FromException<AcceptorReadResult>(failure);
 
         var error = await Assert.ThrowsAsync<IOException>(() => repair.RunPassAsync().WaitAsync(Watchdog));
 
@@ -589,7 +589,7 @@ public sealed class DurabilityRepairTests
         // Only the remote owns this key, so local-source preference cannot hide a failed remote fetch.
         await cluster.SeedAsync(1, "key", Payload);
         var failure = new IOException("remote conditional fetch failed");
-        cluster.Digests[1].Fetch = (_, _, _) => ValueTask.FromException<ConditionalAcceptorState>(failure);
+        cluster.Digests[1].Fetch = (_, _, _) => ValueTask.FromException<AcceptorReadResult>(failure);
 
         var result = await repair.RunPassAsync().WaitAsync(Watchdog);
 
@@ -615,7 +615,7 @@ public sealed class DurabilityRepairTests
         var repair = cluster.Create();
         await cluster.SeedAsync(0, "key", Payload);
         cluster.Digests[0].Fetch = (_, _, _) =>
-            ValueTask.FromResult(new ConditionalAcceptorState(ConditionalAcceptorStatus.Missing));
+            ValueTask.FromResult<AcceptorReadResult>(new AcceptorMissing());
 
         await Assert.ThrowsAsync<InvalidDataException>(() => repair.RunPassAsync().WaitAsync(Watchdog));
 

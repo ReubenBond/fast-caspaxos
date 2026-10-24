@@ -8,6 +8,40 @@ namespace FastCASPaxos.Server.Diagnostics;
 public sealed class ObservedAcceptor(
     IKeyedAcceptor inner, NodeEventJournal journal, string direction, string? peerId) : IKeyedAcceptor
 {
+    public async ValueTask<AcceptorReadResult> ReadAsync(
+        string key, AcceptedDigest? known = null, CancellationToken cancellationToken = default)
+    {
+        var previous = DiagnosticContext.Current;
+        var context = Begin(previous);
+        try
+        {
+            Record("read", RequestPhase, context, key, Ballot.Zero, Ballot.Zero);
+            var result = await inner.ReadAsync(key, known, cancellationToken).ConfigureAwait(false);
+            switch (result)
+            {
+                case KeyedAcceptorState state:
+                    Record("read", ResponsePhase, context, key, Ballot.Zero, Ballot.Zero, "present",
+                        state.PromisedBallot, state.AcceptedBallot, value: state.AcceptedValue);
+                    break;
+                case AcceptorMissing:
+                    Record("read", ResponsePhase, context, key, Ballot.Zero, Ballot.Zero, "missing");
+                    break;
+                case AcceptorUnchanged:
+                    Record("read", ResponsePhase, context, key, Ballot.Zero, Ballot.Zero, "unchanged");
+                    break;
+                default:
+                    throw new InvalidDataException("An acceptor read must return an explicit outcome.");
+            }
+            return result;
+        }
+        catch (Exception error)
+        {
+            Record("read", "fault-observed", context, key, Ballot.Zero, Ballot.Zero, error: error.GetType().Name);
+            throw;
+        }
+        finally { DiagnosticContext.Current = previous; }
+    }
+
     public async ValueTask<AcceptorPrepareResult<ByteString?>> PrepareAsync(
         string key, PrepareRequest request, CancellationToken cancellationToken = default)
     {

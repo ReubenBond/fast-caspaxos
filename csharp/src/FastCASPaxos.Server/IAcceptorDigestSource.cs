@@ -3,16 +3,12 @@ using FastCASPaxos.Model;
 
 namespace FastCASPaxos.Server;
 
-/// <summary>Reads durable accepted-state fingerprints and conditionally transfers accepted bytes.</summary>
+/// <summary>Lists durable accepted-state fingerprints.</summary>
 public interface IAcceptorDigestSource
 {
     /// <summary>Lists accepted keys in ordinal order, with an exclusive cursor and a positive limit.</summary>
     ValueTask<AcceptorDigestPage> ListDigestsAsync(
         string prefix = "", string? afterKey = null, int limit = 100, CancellationToken cancellationToken = default);
-
-    /// <summary>Returns accepted bytes only when their ballot or SHA-256 differs from the supplied digest.</summary>
-    ValueTask<ConditionalAcceptorState> FetchIfDifferentAsync(
-        string key, AcceptedDigest? known, CancellationToken cancellationToken = default);
 }
 
 public sealed record AcceptedDigest(Ballot AcceptedBallot, ByteString ValueHash)
@@ -34,11 +30,6 @@ public sealed record AcceptedDigest(Ballot AcceptedBallot, ByteString ValueHash)
 
 public sealed record KeyDigest(string Key, AcceptedDigest Digest);
 public sealed record AcceptorDigestPage(IReadOnlyList<KeyDigest> Entries, string? ContinuationKey);
-
-public enum ConditionalAcceptorStatus { Missing, Unchanged, Different }
-
-/// <summary>Different carries complete accepted state; Missing and Unchanged carry only their status.</summary>
-public sealed record ConditionalAcceptorState(ConditionalAcceptorStatus Status, KeyedAcceptorState? State = null);
 
 public sealed record RepairPeer(string Id, IKeyedAcceptor Acceptor, IAcceptorDigestSource Digests);
 

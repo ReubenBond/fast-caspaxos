@@ -4,6 +4,7 @@ using System.Text.Json;
 using FastCASPaxos.Grpc;
 using FastCASPaxos.Host;
 using FastCASPaxos.Server;
+using FastCASPaxos.Sqlite;
 using global::Grpc.Net.Client;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -17,6 +18,54 @@ namespace FastCASPaxos.Rest.Tests;
 
 public sealed class HttpIntegrationTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InspectorGet_RepeatedRefreshPreservesDurableBallotsAndDoesNotCreateMissingRows(bool present)
+    {
+        // Execute the real REST endpoint and register/SQLite stack in process, without a socket.
+        using var directory = new TestDirectory();
+        await using var a = await SqliteAcceptorServer.OpenAsync(System.IO.Path.Combine(directory.Path, "a.db"));
+        await using var b = await SqliteAcceptorServer.OpenAsync(System.IO.Path.Combine(directory.Path, "b.db"));
+        await using var c = await SqliteAcceptorServer.OpenAsync(System.IO.Path.Combine(directory.Path, "c.db"));
+        var stores = new[] { a, b, c };
+        var version = new ByteString([0, 0, 0, 9, 0, 0, 0, 1]);
+        var envelope = new ByteString([.. "FCR1"u8, 1, .. version.ToArray(), .. Payload.ToArray()]);
+        if (present)
+            foreach (var store in stores)
+                Assert.True((await store.AcceptAsync("inspect", new(new(3, 9), envelope, new(8, 9)))).IsAccepted);
+        using var ballots = new SqliteProposerBallotSource(System.IO.Path.Combine(directory.Path, "ballots.db"), 1);
+        Assert.Equal(new FastCASPaxos.Model.Ballot(1, 1), ballots.Reserve(1));
+        await using var registers = new ReplicatedRegisterService([new("a", a), new("b", b), new("c", c)], ballots);
+        var observed = new ControlledService { Read = registers.ReadAsync };
+        await using var endpoint = new EndpointHarness(observed);
+
+        for (var refresh = 0; refresh < 3; refresh++)
+        {
+            var request = endpoint.Request(query: "?key=inspect");
+            await endpoint.Invoke(request);
+            Assert.Equal(present ? 200 : 404, request.Response.StatusCode);
+            RestTestSupport.NoStore(request);
+            if (present) Assert.Equal(Payload.ToArray(), Bytes(request));
+            else Assert.Equal("missing", Problem(request, 404, "missing").GetProperty("code").GetString());
+            Assert.Equal(present ? Tag(version) : "", request.Response.Headers.ETag.ToString());
+        }
+
+        Assert.Equal(new[] { "read", "read", "read" }, observed.Calls.Select(call => call.Operation));
+        Assert.Equal(new FastCASPaxos.Model.Ballot(2, 1), ballots.Reserve(1)); // No hidden allocation during any GET.
+        foreach (var store in stores)
+        {
+            var state = await store.InspectAsync("inspect");
+            if (present)
+            {
+                Assert.Equal(new FastCASPaxos.Model.Ballot(8, 9), state!.PromisedBallot);
+                Assert.Equal(new FastCASPaxos.Model.Ballot(3, 9), state.AcceptedBallot);
+                Assert.Equal(envelope, state.AcceptedValue);
+            }
+            else Assert.Null(state);
+        }
+    }
+
     [Fact]
     public async Task Http1AndGrpc_ShareDurableStateAndRetainPayloadAndEtagAfterRestart()
     {

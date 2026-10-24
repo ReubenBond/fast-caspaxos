@@ -8,13 +8,13 @@ all node subscriptions remain active.
 
 ## Build and run
 
-Prerequisites: .NET 10 SDK and Node.js 24+ with npm.
+Prerequisites: .NET 11 RC2 SDK (pinned in `global.json`) and Node.js 24+ with npm.
 
 From the repository root in PowerShell:
 
 ```powershell
 dotnet build csharp\src\FastCASPaxos.Host -c Release
-dotnet run --project csharp\src\FastCASPaxos.Host -c Release --no-build
+dotnet run --project csharp\src\FastCASPaxos.Host -f net11.0 -c Release --no-build
 ```
 
 Open `http://127.0.0.1:5000/admin/`. For a cluster, use the existing
@@ -25,8 +25,8 @@ TypeScript checking and the Vite production build, and copies assets into
 `wwwroot/admin` beside the executable. Publish includes the same assets:
 
 ```powershell
-dotnet publish csharp\src\FastCASPaxos.Host -c Release
-Set-Location csharp\src\FastCASPaxos.Host\bin\Release\net10.0\publish
+dotnet publish csharp\src\FastCASPaxos.Host -f net11.0 -c Release
+Set-Location csharp\src\FastCASPaxos.Host\bin\Release\net11.0\publish
 dotnet .\FastCASPaxos.Host.dll
 ```
 
@@ -71,6 +71,10 @@ keys per page. Empty keys and empty continuation strings remain distinct from
 absence. Stream resets and broad key invalidations restart enumeration at the
 first page. Select a key for a quorum-established read and independent local
 acceptor snapshots.
+Quorum reads first observe accepted state through the read-only acceptor API.
+Matching classic or fast quorums return the value in one round trip while
+preserving ballots and stored state. Inconclusive observations use consensus
+recovery. The same path serves inspector refreshes and key-list candidate reads.
 
 **Values and edits:** the inspector shows complete bytes with their exact opaque
 ETag. UTF-8 decoding is strict; binary values use Base64. Switching representations
@@ -123,7 +127,7 @@ streams and cancels requests and timers.
 
 ```powershell
 npm --prefix admin test
-dotnet publish csharp\src\FastCASPaxos.Host -c Release
+dotnet publish csharp\src\FastCASPaxos.Host -f net11.0 -c Release
 Set-Location admin
 npx playwright install chromium
 npm run test:browser

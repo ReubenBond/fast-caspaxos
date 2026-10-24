@@ -8,6 +8,41 @@ namespace FastCASPaxos.Sqlite.Tests;
 public sealed class SqliteCommitBoundaryTests
 {
     [Fact]
+    public async Task Read_QueuedBehindAccept_ReturnsOnlyCommittedStateAndHonorsQueuedCancellation()
+    {
+        using var database = new TestDatabase();
+        using var gate = new CommitGate();
+        using var cancellation = new CancellationTokenSource();
+        var server = await database.OpenAsync();
+        server.BeforeCommit = (_, _, count) => gate.ArriveAndWait(count);
+        try
+        {
+            var write = server.AcceptAsync("key", new(new(2, 1), new([7, 255]), new(3, 1))).AsTask();
+            Assert.Equal(1, await gate.Entered.WaitAsync(TestDatabase.Timeout));
+            var read = server.ReadAsync("key").AsTask();
+            var canceled = server.ReadAsync("missing", cancellationToken: cancellation.Token).AsTask();
+            cancellation.Cancel();
+            Assert.False(read.IsCompleted);
+            using (var observer = database.Connect()) Assert.Empty(ReadRows(observer));
+
+            gate.Release();
+            Assert.True((await write.WaitAsync(TestDatabase.Timeout)).IsAccepted);
+            var result = await read.WaitAsync(TestDatabase.Timeout);
+            Assert.Equal(new KeyedAcceptorState("key", new(3, 1), new(2, 1), new([7, 255])),
+                result switch { KeyedAcceptorState state => state, _ => null });
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceled.WaitAsync(TestDatabase.Timeout));
+            Assert.Null(await server.InspectAsync("missing"));
+            using var committed = database.Connect();
+            AssertRow(Assert.Single(ReadRows(committed)), "key", new(3, 1), new(2, 1), [7, 255]);
+        }
+        finally
+        {
+            gate.Release();
+            await server.DisposeAsync().AsTask().WaitAsync(TestDatabase.Timeout);
+        }
+    }
+
+    [Fact]
     public async Task CancellationAfterSelection_AwaitsSuccessfulDurableCommit()
     {
         using var database = new TestDatabase();

@@ -446,9 +446,11 @@ public sealed class Http2IntegrationTests
                 server.Listen(IPAddress.Loopback, 0, listen => listen.Protocols = HttpProtocols.Http2));
             builder.Services.AddGrpc();
             builder.Services.AddSingleton(acceptor);
+            builder.Services.AddSingleton<IAcceptorDigestSource>(acceptor as IAcceptorDigestSource ?? new DelegateDigests());
             builder.Services.AddSingleton(registers);
             var app = builder.Build();
             app.MapGrpcService<AcceptorGrpcService>();
+            app.MapGrpcService<AcceptorDigestGrpcService>();
             app.MapGrpcService<RegisterGrpcService>();
             try
             {

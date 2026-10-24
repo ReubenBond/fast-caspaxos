@@ -163,6 +163,7 @@ export function App({ store }: { store: ClusterStore }) {
         </div> : <div className="inspector-body">
           <h3 className="selected-key" title={store.selected}>{keyName(store.selected)}</h3>
           <div className="section-label"><h3>Quorum-established value</h3><ResourceNotice state={current} /></div>
+          <p className="muted">Matching quorum observations establish the value in one read round. Divergent state is recovered through consensus.</p>
           {current?.value && <RegisterValue value={current.value} />}
           {current?.value && <WriteEditor key={`${store.origin}:${store.selected}`} store={store} registerKey={store.selected}
             initial={current.value} onGuardChange={setNavigationGuard} />}

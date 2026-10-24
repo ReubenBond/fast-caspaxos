@@ -149,6 +149,11 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
             await state.Gate.WaitAsync(call.Token).ConfigureAwait(false);
             acquired = true;
             call.Token.ThrowIfCancellationRequested();
+            if (operation.Payload is null
+                && await TryReadQuorumAsync(key, state.Engine, call).ConfigureAwait(false) is { } observed)
+            {
+                return observed;
+            }
             if (operation.Payload is not null)
             {
                 operation.Initialize(RegisterEncoding.Version(_ballots.Reserve(1)));
@@ -190,6 +195,63 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
                     state.Gate.Dispose();
                 }
             }
+        }
+    }
+
+    private async Task<RegisterValue?> TryReadQuorumAsync(string key, Engine engine, Call call)
+    {
+        using var phase = CancellationTokenSource.CreateLinkedTokenSource(call.Token);
+        var timeout = Task.Delay(_options.AttemptTimeout, _options.TimeProvider, phase.Token);
+        var pending = Enumerable.Range(0, _peers.Length).Select(index =>
+            InvokePeerAsync(index, (peer, token) => peer.ReadAsync(key, cancellationToken: token), phase.Token)).ToList();
+        var matching = new Dictionary<(Ballot Ballot, ByteString Value), int>();
+        var missing = 0;
+        try
+        {
+            while (pending.Count > 0)
+            {
+                var finished = await Task.WhenAny(pending.Cast<Task>().Append(timeout)).ConfigureAwait(false);
+                call.Token.ThrowIfCancellationRequested();
+                if (finished == timeout) break;
+                var task = (Task<PeerResult<AcceptorReadResult>>)finished;
+                pending.Remove(task);
+                var reply = await task.ConfigureAwait(false);
+                if (reply.Error is { } error)
+                {
+                    call.Errors[reply.Peer] = error;
+                    continue;
+                }
+
+                switch (reply.Value)
+                {
+                    case AcceptorMissing:
+                        if (++missing > _peers.Length / 2) return new RegisterValue(null, null);
+                        break;
+                    case KeyedAcceptorState accepted:
+                        if (accepted.Key != key || accepted.AcceptedBallot.Round <= 0
+                            || accepted.AcceptedBallot.Proposer < 0 || accepted.AcceptedValue is null)
+                        {
+                            throw new InvalidDataException("An accepted observation must identify the requested key, ballot, and bytes.");
+                        }
+                        var value = RegisterEncoding.Decode(accepted.AcceptedValue);
+                        var candidate = (accepted.AcceptedBallot, accepted.AcceptedValue);
+                        matching.TryGetValue(candidate, out var count);
+                        matching[candidate] = ++count;
+                        // A fast ballot can contain competing values, so its certificate needs the fast quorum.
+                        if (engine.HasQuorum(accepted.AcceptedBallot, count)) return value;
+                        break;
+                    case AcceptorUnchanged:
+                        throw new InvalidDataException("An unconditional acceptor read must return its accepted state.");
+                    default:
+                        throw new InvalidDataException("An acceptor read must return an explicit outcome.");
+                }
+            }
+            return null;
+        }
+        finally
+        {
+            // Every certificate uses observations from this request, including when late peers ignore cancellation.
+            phase.Cancel();
         }
     }
 

@@ -2,9 +2,9 @@ import { useSyncExternalStore } from 'react';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App, Timeline, WriteEditor } from './App';
-import type { NodeEvent, Register, WriteResult } from './contracts';
+import type { LocalState, NodeEvent, Register, WriteResult } from './contracts';
 import type { ClusterStore } from './store';
-import { advance, deferred, event, harness, key, peers } from './test-fixtures';
+import { advance, deferred, event, harness, key, peers, snapshot } from './test-fixtures';
 import type { Harness } from './test-fixtures';
 
 // These children normally receive updates from App's external-store subscription.
@@ -415,6 +415,49 @@ describe('Timeline and inventory interactions', () => {
   }
 
   function send(item: NodeEvent, source = 0) { act(() => h.sources[source]!.send(item)); }
+
+  it('inspects and refreshes a stable register with reads without issuing writes or self-invalidating', async () => {
+    const entry: LocalState = {
+      key: 'chosen', promisedBallot: { round: 8, proposer: 9 }, acceptedBallot: { round: 3, proposer: 9 },
+      acceptedValue: { length: 14, base64: 'RkNSMQEAAAAJAAAAAUE=', truncated: false },
+      register: { format: 'FCR1', isPresent: true, version: 'AAAACQAAAAE=', value: { length: 1, base64: 'QQ==', truncated: false } },
+    };
+    h.state.mockImplementation(async (origin) => snapshot(
+      peers.find((peer) => peer.httpEndpoint === origin)!.id, { entry }));
+    render(<App store={h.store} />);
+    await tick(400);
+    fireEvent.click(screen.getByRole('button', { name: 'chosen' }));
+    await tick(400);
+    const inspector = within(screen.getByRole('region', { name: 'Register inspector' }));
+    expect(inspector.getByLabelText('Current value')).toHaveTextContent('A');
+    expect(inspector.getByText(/Matching quorum observations establish the value in one read round/)).toBeInTheDocument();
+    expect(h.read).toHaveBeenCalledTimes(1);
+
+    for (let refresh = 0; refresh < 2; refresh++) {
+      fireEvent.click(inspector.getByRole('button', { name: 'Read current value' }));
+      await tick(400);
+      expect(h.read).toHaveBeenCalledTimes(refresh + 2);
+      expect(h.read.mock.calls.at(-1)!.slice(0, 2)).toEqual([h.store.origin, 'chosen']);
+      expect(inspector.getByLabelText('Current value')).toHaveTextContent('A');
+      send(event('operation', String(refresh + 1), {
+        operation: 'read', operationId: `inspection-${refresh}`, key: key(), outcome: 'present',
+        isPresent: true, version: 'AAAACQAAAAE=', value: { length: 1, base64: 'QQ==', truncated: false },
+      }));
+      await tick(400);
+      expect(h.read).toHaveBeenCalledTimes(refresh + 2); // Read diagnostics must not schedule another read.
+    }
+
+    expect(h.write).not.toHaveBeenCalled();
+    expect(h.store.current!.state).toMatchObject({
+      loading: false, stale: false, value: { present: true, bytes: new Uint8Array([65]), etag: '"v1"' },
+    });
+    const rows = within(inspector.getByRole('region', { name: 'Scrollable local acceptor observations' })).getAllByRole('row');
+    expect(rows).toHaveLength(3);
+    for (const row of rows.slice(1)) {
+      expect(row).toHaveTextContent('(8, 9)');
+      expect(row).toHaveTextContent('(3, 9)');
+    }
+  });
 
   it('shows advancing stale observations under continuous invalidation without enabling unknown-write reconciliation', async () => {
     render(<App store={h.store} />);

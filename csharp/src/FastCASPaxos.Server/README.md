@@ -36,8 +36,22 @@ copies input bytes and returns owned copies through `ToArray()`.
 Pass the exact opaque version from a read or successful write as
 `expectedVersion`. Null creates only an absent register. Every applied write
 receives a fresh version, including a write of identical payload bytes. Reads
-and failed conditions establish the recovered state through an identity accept
-quorum and preserve its logical version.
+first gather durable observations using `IKeyedAcceptor.ReadAsync`. Matching
+accepted ballots and complete versioned bytes establish the value at a classic
+majority or `ceil(3N/4)` for a fast ballot. A majority of never-accepted records
+establishes absence. These reads preserve acceptor state and consume no ballots.
+Inconclusive observations enter identity prepare/accept recovery. Failed CAS
+conditions also use identity acceptance. Both paths preserve the logical version.
+
+`ReadAsync(key, known: null)` returns an `AcceptorReadResult` union containing
+`AcceptorMissing` or `KeyedAcceptorState`. Supplying a matching `AcceptedDigest`
+returns `AcceptorUnchanged`. Each result is a fresh durable local observation;
+the register service combines distinct peer observations from one read attempt
+to establish a linearizable value. Promised ballots may differ.
+
+The projects target .NET 10 and .NET 11 using the .NET 11 RC2 SDK pinned in
+`global.json` and C# `latest`. The .NET 10 assembly includes the compiler's union
+metadata contract; .NET 11 uses the runtime-provided types.
 
 | Status | Established outcome |
 | --- | --- |

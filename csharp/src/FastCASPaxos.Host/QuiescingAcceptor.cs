@@ -12,6 +12,10 @@ internal sealed class QuiescingAcceptor(IKeyedAcceptor inner) : IKeyedAcceptor
     private bool _closed;
     private int _active;
 
+    public ValueTask<AcceptorReadResult> ReadAsync(
+        string key, AcceptedDigest? known = null, CancellationToken cancellationToken = default) =>
+        inner.ReadAsync(key, known, cancellationToken);
+
     public Task QuiesceAsync()
     {
         lock (_gate)

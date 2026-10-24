@@ -34,13 +34,19 @@ internal static class ContractTestSupport
     };
     public static AcceptorGrpcService Service(IKeyedAcceptor acceptor) => new(acceptor, NullLogger<AcceptorGrpcService>.Instance);
     public static RegisterGrpcService Service(IRegisterService registers) => new(registers, NullLogger<RegisterGrpcService>.Instance);
+    public static KeyedAcceptorState ReadState(AcceptorReadResult result) => result switch
+    {
+        KeyedAcceptorState state => state,
+        _ => throw new Xunit.Sdk.XunitException("Expected full accepted state.")
+    };
 }
 
 // This exercises real generated messages and public adapters, NOT Kestrel or HTTP/2.
 // Requests and replies cross protobuf serialization so optional-field presence is tested.
 internal sealed class ContractCallInvoker(
     Wire.Acceptor.AcceptorBase? acceptor = null,
-    Wire.Register.RegisterBase? register = null) : TestCallInvoker
+    Wire.Register.RegisterBase? register = null,
+    Wire.AcceptorDigests.AcceptorDigestsBase? digests = null) : TestCallInvoker
 {
     protected override async Task<TResponse> Invoke<TRequest, TResponse>(
         Method<TRequest, TResponse> method, TRequest request, CallOptions options)
@@ -51,6 +57,7 @@ internal sealed class ContractCallInvoker(
         {
             Wire.PrepareRequest value => await acceptor!.Prepare(value, context),
             Wire.AcceptRequest value => await acceptor!.Accept(value, context),
+            Wire.FetchIfDifferentRequest value => await digests!.FetchIfDifferent(value, context),
             Wire.ReadRequest value => await register!.Read(value, context),
             Wire.CompareExchangeRequest value => await register!.CompareExchange(value, context),
             Wire.ListKeysRequest value when method.ServiceName.EndsWith(".Acceptor", StringComparison.Ordinal) =>
@@ -127,6 +134,8 @@ internal sealed class TestServerCallContext(CallOptions options) : ServerCallCon
 
 internal sealed class DelegateAcceptor : IKeyedAcceptor
 {
+    public Func<string, AcceptedDigest?, CancellationToken, ValueTask<AcceptorReadResult>> Read { get; set; } =
+        (_, _, _) => ValueTask.FromException<AcceptorReadResult>(new IOException("inconclusive test probe"));
     public Func<string, PrepareRequest, CancellationToken, ValueTask<AcceptorPrepareResult<Bytes?>>> Prepare { get; set; } =
         (_, _, _) => ValueTask.FromException<AcceptorPrepareResult<Bytes?>>(new InvalidOperationException("Unexpected prepare."));
     public Func<string, AcceptRequest<Bytes>, CancellationToken, ValueTask<AcceptorAcceptResult>> Accept { get; set; } =
@@ -134,6 +143,11 @@ internal sealed class DelegateAcceptor : IKeyedAcceptor
     public Func<string, string?, int, CancellationToken, ValueTask<KeyPage>> List { get; set; } =
         (_, _, _, _) => ValueTask.FromException<KeyPage>(new InvalidOperationException("Unexpected list."));
     public int Calls;
+    public ValueTask<AcceptorReadResult> ReadAsync(string key, AcceptedDigest? known = null, CancellationToken cancellationToken = default)
+    {
+        Interlocked.Increment(ref Calls);
+        return Read(key, known, cancellationToken);
+    }
     public ValueTask<AcceptorPrepareResult<Bytes?>> PrepareAsync(string key, PrepareRequest request, CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref Calls);

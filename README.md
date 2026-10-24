@@ -215,6 +215,14 @@ This repository includes TLA+ and [Quint models](quint/README.md), plus a determ
 
 ## C# durable keyed acceptors
 
+Register reads first observe durable acceptor state in one round trip. Matching
+accepted ballots and versioned values establish a read at a classic majority
+or a fast quorum, according to the accepted ballot. A majority of unaccepted
+records establishes absence. Successful observations preserve acceptor state
+and consume no ballots. Inconclusive observations enter the existing identity
+prepare/accept recovery path. The Web UI uses these quorum reads for register
+inspection and listing.
+
 Hosts periodically compare persisted SHA-256/accepted-ballot digests and repair
 divergent replicas through consensus. Graceful shutdown waits for each local
 key to reach its target replication factor on the remaining hosts, bounded by
@@ -225,7 +233,9 @@ for repair staging, configuration, and storage migration.
 ### Run a local three-node cluster
 
 Install [Just](https://just.systems/) 1.44+ (1.59 tested), PowerShell 7 (`pwsh`),
-the .NET 10 SDK, and Node.js 24+ with npm. From the repository root:
+the .NET 11 RC2 SDK pinned in `global.json`, and Node.js 24+ with npm. The C#
+projects target .NET 10 and .NET 11 using the latest C# language version.
+From the repository root:
 
 ```powershell
 just cluster

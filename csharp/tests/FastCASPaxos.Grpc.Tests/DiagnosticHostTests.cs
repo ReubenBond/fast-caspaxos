@@ -623,6 +623,7 @@ internal sealed class DiagnosticHost(NodeRuntime node, WebApplication app, strin
         builder.Services.AddGrpc(grpc => grpc.Interceptors.Add<DiagnosticServerInterceptor>());
         builder.Services.AddAdminCors(options);
         builder.Services.AddSingleton(node.Acceptor);
+        builder.Services.AddSingleton(node.Digests);
         builder.Services.AddSingleton(node.Registers);
         var app = builder.Build();
         var completed = Channel.CreateUnbounded<string>();
@@ -639,6 +640,7 @@ internal sealed class DiagnosticHost(NodeRuntime node, WebApplication app, strin
         app.MapAdminApi(node);
         app.MapRegisterApi().RequireCors(AdminEndpoints.CorsPolicy);
         app.MapGrpcService<AcceptorGrpcService>();
+        app.MapGrpcService<AcceptorDigestGrpcService>();
         app.MapGrpcService<RegisterGrpcService>();
         app.MapGet("/health/live", () => Results.Text("Serving register requests."));
         try

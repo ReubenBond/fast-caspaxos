@@ -4,7 +4,8 @@ using Microsoft.Extensions.Logging;
 
 namespace FastCASPaxos.Grpc;
 
-public sealed class AcceptorDigestGrpcService(IAcceptorDigestSource source, ILogger<AcceptorDigestGrpcService> logger)
+public sealed class AcceptorDigestGrpcService(
+    IAcceptorDigestSource source, IKeyedAcceptor acceptor, ILogger<AcceptorDigestGrpcService> logger)
     : Wire.AcceptorDigests.AcceptorDigestsBase
 {
     public override Task<Wire.AcceptorDigestPage> ListDigests(Wire.ListKeysRequest request, ServerCallContext context) =>
@@ -29,13 +30,12 @@ public sealed class AcceptorDigestGrpcService(IAcceptorDigestSource source, ILog
         {
             var key = WireConvert.Key(request.Key, request.HasKey);
             var known = request.Known is null ? null : WireConvert.Digest(request.Known);
-            var result = await source.FetchIfDifferentAsync(key, known, context.CancellationToken);
+            var result = await acceptor.ReadAsync(key, known, context.CancellationToken);
             return RpcErrors.Response(() =>
             {
-                if (result.Status == ConditionalAcceptorStatus.Different)
+                if (result is KeyedAcceptorState state)
                 {
-                    WireConvert.Require(result.State is not null && result.State.Key == key, "Different must carry the requested key.");
-                    var state = result.State!;
+                    WireConvert.Require(state.Key == key, "Different must carry the requested key.");
                     WireConvert.Require(known is null || known != new AcceptedDigest(state.AcceptedBallot, AcceptedDigest.Hash(state.AcceptedValue)),
                         "Different must differ from the supplied digest.");
                     return new Wire.ConditionalAcceptorState { Different = new()
@@ -45,12 +45,11 @@ public sealed class AcceptorDigestGrpcService(IAcceptorDigestSource source, ILog
                         Accepted = WireConvert.Accepted(state.AcceptedBallot, state.AcceptedValue),
                     } };
                 }
-                WireConvert.Require(result.State is null, "Missing and Unchanged carry only their status.");
-                return result.Status switch
+                return result switch
                 {
-                    ConditionalAcceptorStatus.Missing => new Wire.ConditionalAcceptorState { Missing = new() },
-                    ConditionalAcceptorStatus.Unchanged when known is not null => new Wire.ConditionalAcceptorState { Unchanged = new() },
-                    _ => throw new ArgumentException("A valid explicit conditional-fetch outcome is required."),
+                    AcceptorMissing => new Wire.ConditionalAcceptorState { Missing = new() },
+                    AcceptorUnchanged when known is not null => new Wire.ConditionalAcceptorState { Unchanged = new() },
+                    _ => throw new ArgumentException("A valid explicit read outcome is required."),
                 };
             });
         }, context, logger);

@@ -83,6 +83,7 @@ internal sealed class RepairHostCluster : IAsyncDisposable
                 var store = cluster.Stores[index] = await SqliteAcceptorServer.OpenAsync(directory.Database($"remote-{index}"));
                 var acceptor = cluster.RemoteAcceptors[index] = new DelegateAcceptor
                 {
+                    Read = store.ReadAsync,
                     Prepare = store.PrepareAsync,
                     Accept = store.AcceptAsync,
                     List = store.ListKeysAsync

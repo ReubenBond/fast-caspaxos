@@ -87,6 +87,7 @@ public sealed class RegisterValidationTests
             await Assert.ThrowsAsync<ArgumentException>(() => service.CompareExchangeAsync("key", version, Payload).AsTask());
         Assert.All(peers, peer => Assert.Empty(peer.Prepares));
         Assert.All(peers, peer => Assert.Empty(peer.Accepts));
+        Assert.All(peers, peer => Assert.Empty(peer.Reads));
         // Empty key and payload are valid, unlike null.
         Assert.Equal(CompareExchangeStatus.Applied, (await service.CompareExchangeAsync("", null, ByteString.Empty)).Status);
         Assert.Equal(ByteString.Empty, (await service.ReadAsync("")).Value);

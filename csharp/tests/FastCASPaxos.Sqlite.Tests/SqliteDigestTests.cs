@@ -32,14 +32,13 @@ public sealed class SqliteDigestTests
                 """);
             Assert.True((await server.PrepareAsync("key", new(new(9, 2)))).IsPromised);
             Assert.True((await server.AcceptAsync("key", new(new(3, 1), Value, new(100, 1)))).IsAccepted);
-            var unchanged = await server.FetchIfDifferentAsync("key", expected);
-            Assert.Equal(ConditionalAcceptorStatus.Unchanged, unchanged.Status);
-            Assert.Null(unchanged.State);
+            var unchanged = await server.ReadAsync("key", expected);
+            Assert.True(unchanged is AcceptorUnchanged);
         }
         await using var reopened = await database.OpenAsync();
         Assert.Equal(expected, Assert.Single((await reopened.ListDigestsAsync()).Entries).Digest);
         Assert.Equal(new KeyedAcceptorState("key", new(9, 2), new(3, 1), Value),
-            (await reopened.FetchIfDifferentAsync("key", null)).State);
+            ReadState(await reopened.ReadAsync("key")));
         using var observer = database.Connect();
         Assert.Equal(AbcHash.ToArray(), ReadHash(observer));
     }
@@ -51,7 +50,7 @@ public sealed class SqliteDigestTests
     [InlineData("equal")]
     [InlineData("ballot-different")]
     [InlineData("hash-different")]
-    public async Task FetchIfDifferent_ReportsExactOutcomeAndTransfersBytesOnlyWhenDifferent(string scenario)
+    public async Task Read_ReportsExactOutcomeAndTransfersBytesOnlyWhenDifferent(string scenario)
     {
         using var database = new TestDatabase();
         await using var server = await database.OpenAsync();
@@ -62,15 +61,50 @@ public sealed class SqliteDigestTests
             new AcceptedDigest(scenario == "ballot-different" ? new(2, 0) : new(3, 0),
                 scenario == "hash-different" ? AbcHash : EmptyHash);
 
-        var result = await server.FetchIfDifferentAsync("", known);
+        var result = await server.ReadAsync("", known);
 
-        var expected = scenario is "missing" or "promise-only" ? ConditionalAcceptorStatus.Missing
-            : scenario == "equal" ? ConditionalAcceptorStatus.Unchanged : ConditionalAcceptorStatus.Different;
-        Assert.Equal(expected, result.Status);
-        if (expected == ConditionalAcceptorStatus.Different)
-            Assert.Equal(new KeyedAcceptorState("", new(4, 2), new(3, 0), ByteString.Empty), result.State);
-        else Assert.Null(result.State);
+        if (scenario is "missing" or "promise-only")
+            Assert.True(result is AcceptorMissing);
+        else if (scenario == "equal")
+            Assert.True(result is AcceptorUnchanged);
+        else
+            Assert.Equal(new KeyedAcceptorState("", new(4, 2), new(3, 0), ByteString.Empty), ReadState(result));
         Assert.Equal(scenario is "missing" or "promise-only" ? 0 : 1, (await server.ListDigestsAsync()).Entries.Count);
+    }
+
+    [Fact]
+    public async Task Read_RepeatedFullMissingAndUnchangedResults_NeverInsertOrUpdateRows()
+    {
+        using var database = new TestDatabase();
+        await using (var server = await database.OpenAsync())
+        {
+            await server.AcceptAsync("value", new(new(3, 1), Value, new(9, 2)));
+            await server.PrepareAsync("promise", new(new(8, 2)));
+            using var observer = database.Connect();
+            TestDatabase.Execute(observer, """
+                CREATE TRIGGER forbid_read_insert BEFORE INSERT ON acceptor_state
+                BEGIN SELECT RAISE(ABORT, 'read must not insert'); END;
+                CREATE TRIGGER forbid_read_update BEFORE UPDATE ON acceptor_state
+                BEGIN SELECT RAISE(ABORT, 'read must not update'); END;
+                """);
+            IKeyedAcceptor acceptor = server;
+            for (var iteration = 0; iteration < 3; iteration++)
+            {
+                Assert.Equal(new KeyedAcceptorState("value", new(9, 2), new(3, 1), Value),
+                    ReadState(await acceptor.ReadAsync("value")));
+                Assert.True(await acceptor.ReadAsync("value", new(new(3, 1), AbcHash)) is AcceptorUnchanged);
+                Assert.True(await acceptor.ReadAsync("promise") is AcceptorMissing);
+                Assert.True(await acceptor.ReadAsync("missing") is AcceptorMissing);
+                Assert.Equal(2L, Scalar(observer, "SELECT count(*) FROM acceptor_state;"));
+                Assert.Null(await server.InspectAsync("missing"));
+                Assert.Equal(new Ballot(8, 2), (await server.InspectAsync("promise"))!.PromisedBallot);
+            }
+        }
+        await using var reopened = await database.OpenAsync();
+        Assert.Equal(new KeyedAcceptorState("value", new(9, 2), new(3, 1), Value),
+            ReadState(await reopened.ReadAsync("value")));
+        Assert.True(await reopened.ReadAsync("promise") is AcceptorMissing);
+        Assert.Null(await reopened.InspectAsync("missing"));
     }
 
     [Fact]
@@ -112,14 +146,14 @@ public sealed class SqliteDigestTests
         var selected = 0;
         server.BeforeCommit = (_, _, _) => Interlocked.Increment(ref selected);
         await Assert.ThrowsAsync<ArgumentNullException>(() => server.ListDigestsAsync(prefix: null!).AsTask());
-        await Assert.ThrowsAsync<ArgumentNullException>(() => server.FetchIfDifferentAsync(null!, null).AsTask());
+        await Assert.ThrowsAsync<ArgumentNullException>(() => server.ReadAsync(null!, null).AsTask());
         foreach (var limit in new[] { 0, -1 })
             await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => server.ListDigestsAsync(limit: limit).AsTask());
-        await Assert.ThrowsAsync<ArgumentException>(() => server.FetchIfDifferentAsync("key", new(new(1, 1), ByteString.Empty)).AsTask());
+        await Assert.ThrowsAsync<ArgumentException>(() => server.ReadAsync("key", new(new(1, 1), ByteString.Empty)).AsTask());
         using var canceled = new CancellationTokenSource();
         canceled.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => server.ListDigestsAsync(cancellationToken: canceled.Token).AsTask());
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => server.FetchIfDifferentAsync("key", null, canceled.Token).AsTask());
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => server.ReadAsync("key", null, canceled.Token).AsTask());
         Assert.Equal(0, Volatile.Read(ref selected));
         Assert.Empty((await server.ListDigestsAsync()).Entries); // Invalid calls do not poison the writer.
     }
@@ -144,11 +178,11 @@ public sealed class SqliteDigestTests
         await using var reopened = await database.OpenAsync();
         Assert.Equal(new AcceptedDigest(new(3, 1), AbcHash), Assert.Single((await reopened.ListDigestsAsync()).Entries).Digest);
         Assert.Equal(new KeyedAcceptorState("key", new(4, 1), new(3, 1), Value),
-            (await reopened.FetchIfDifferentAsync("key", null)).State);
+            ReadState(await reopened.ReadAsync("key")));
     }
 
     [Fact]
-    public async Task FetchIfDifferent_CorruptPersistedHash_FailsRatherThanTransferringBytes()
+    public async Task Read_CorruptPersistedHash_FailsRatherThanTransferringBytes()
     {
         using var database = new TestDatabase();
         await using (var seed = await database.OpenAsync())
@@ -159,7 +193,7 @@ public sealed class SqliteDigestTests
         InvalidDataException? failure = null;
         try
         {
-            failure = await Assert.ThrowsAsync<InvalidDataException>(() => server.FetchIfDifferentAsync("key", null).AsTask());
+            failure = await Assert.ThrowsAsync<InvalidDataException>(() => server.ReadAsync("key", null).AsTask());
             Assert.Equal("Accepted bytes do not match their persisted SHA-256.", failure.Message);
         }
         finally
@@ -196,7 +230,7 @@ public sealed class SqliteDigestTests
             var result = await repair.RunPassAsync().WaitAsync(TestDatabase.Timeout);
 
             foreach (var index in new[] { 0, 2, 3, 4 })
-                Assert.Equal(Value, (await servers[index].FetchIfDifferentAsync("key", null)).State!.AcceptedValue);
+                Assert.Equal(Value, ReadState(await servers[index].ReadAsync("key")).AcceptedValue);
             integrityFailure = Assert.IsType<InvalidDataException>(Assert.Single(result.Errors));
             Assert.Equal((1L, 1L, 0L), (result.Examined, result.Repaired, result.Pending));
             using var observer = databases[1].Connect();
@@ -288,11 +322,11 @@ public sealed class SqliteDigestTests
             Assert.Equal(new AcceptedDigest(new(3, 0), AbcHash), page.Entries[0].Digest);
             Assert.Equal(new AcceptedDigest(new(4, 1), EmptyHash), page.Entries[1].Digest);
             Assert.Equal(new KeyedAcceptorState("abc", new(9, 2), new(3, 0), Value),
-                (await migrated.FetchIfDifferentAsync("abc", null)).State);
+                ReadState(await migrated.ReadAsync("abc")));
             Assert.Equal(new KeyedAcceptorState("empty", new(9, 2), new(4, 1), ByteString.Empty),
-                (await migrated.FetchIfDifferentAsync("empty", null)).State);
+                ReadState(await migrated.ReadAsync("empty")));
             Assert.Equal(new Ballot(9, 2), (await migrated.InspectAsync("promise"))!.PromisedBallot);
-            Assert.Equal(ConditionalAcceptorStatus.Missing, (await migrated.FetchIfDifferentAsync("promise", null)).Status);
+            Assert.True(await migrated.ReadAsync("promise") is AcceptorMissing);
         }
         using (var observer = database.Connect())
         {
@@ -301,8 +335,7 @@ public sealed class SqliteDigestTests
             Assert.Equal(1L, Scalar(observer, "SELECT count(*) FROM acceptor_state WHERE value_hash IS NULL AND accepted_round IS NULL;"));
         }
         await using var reopened = await database.OpenAsync();
-        Assert.Equal(ConditionalAcceptorStatus.Unchanged,
-            (await reopened.FetchIfDifferentAsync("abc", new(new(3, 0), AbcHash))).Status);
+        Assert.True(await reopened.ReadAsync("abc", new(new(3, 0), AbcHash)) is AcceptorUnchanged);
         Assert.True((await reopened.AcceptAsync("empty", new(new(10, 1), Value, new(11, 1)))).IsAccepted);
         Assert.Equal(new AcceptedDigest(new(10, 1), AbcHash),
             Assert.Single((await reopened.ListDigestsAsync(prefix: "empty")).Entries).Digest);
@@ -332,6 +365,12 @@ public sealed class SqliteDigestTests
         Assert.Equal(0L, Scalar(connection, "SELECT count(*) FROM sqlite_schema WHERE name='acceptor_state_v1';"));
         Assert.Equal(Value.ToArray(), (byte[])Scalar(connection, "SELECT value FROM acceptor_state WHERE key=X'006100620063';"));
     }
+
+    private static KeyedAcceptorState ReadState(AcceptorReadResult result) => result switch
+    {
+        KeyedAcceptorState state => state,
+        _ => throw new Xunit.Sdk.XunitException("Expected full accepted state.")
+    };
 
     private static void CreateV1(TestDatabase database)
     {

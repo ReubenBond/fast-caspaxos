@@ -3,16 +3,16 @@
 `FastCASPaxos.Grpc` exposes both the keyed acceptor protocol and the replicated
 register API over HTTP/2. `FastCASPaxos.Host` is an ASP.NET Core executable which
 owns a SQLite acceptor, a retained proposer allocator, and a register service
-over a configured fixed peer set. The transport library targets .NET 8 and
-.NET 10; the executable and smoke client target .NET 10.
+over a configured fixed peer set. All projects target .NET 10 and .NET 11,
+using the .NET 11 RC2 SDK and the latest C# language version.
 
 ## Build and run
 
-From the repository root, using the .NET 10 SDK:
+From the repository root, using the SDK pinned in `global.json`:
 
 ```powershell
 dotnet build csharp\FastCASPaxos.slnx -c Release
-dotnet run --project csharp\src\FastCASPaxos.Host -c Release --no-build
+dotnet run --project csharp\src\FastCASPaxos.Host -f net11.0 -c Release --no-build
 ```
 
 The default node listens on `http://127.0.0.1:5001`, serves both gRPC APIs,
@@ -52,7 +52,7 @@ Run a fresh-key smoke operation through all three endpoints:
 
 ```powershell
 $key = "smoke/$([Guid]::NewGuid().ToString('N'))"
-dotnet run --project csharp\samples\FastCASPaxos.Grpc.Smoke -c Release --no-build -- write $key http://127.0.0.1:5001 http://127.0.0.1:5002 http://127.0.0.1:5003
+dotnet run --project csharp\samples\FastCASPaxos.Grpc.Smoke -f net11.0 -c Release --no-build -- write $key http://127.0.0.1:5001 http://127.0.0.1:5002 http://127.0.0.1:5003
 ```
 
 The client creates an empty value, verifies a stale condition mismatches,
@@ -346,6 +346,10 @@ and reachable hosts retain their work. `repair` diagnostic events expose staging
 running, completion, pending replication, cancellation, and failures.
 
 The `AcceptorDigests` gRPC service exposes `ListDigests` and `FetchIfDifferent`.
+`GrpcKeyedAcceptor.ReadAsync` uses the existing `FetchIfDifferent` wire route
+and returns the `AcceptorReadResult` union. Its optional digest identifies
+previously observed accepted state. Register reads use this read-only operation
+before entering consensus recovery when quorum observations are inconclusive.
 `GrpcAcceptorDigestSource` implements the domain `IAcceptorDigestSource` client.
 Digest pages contain ordinal keys, accepted ballots, and 32-byte SHA-256 values.
 Conditional fetch has explicit `missing`, `unchanged`, and `different` outcomes;
@@ -392,7 +396,7 @@ and [register restart guide](../FastCASPaxos.Server/README.md#membership-ballots
 
 ## Verification
 
-The C# workflow runs the full solution, compiles the .NET 8 transports, and
+The C# workflow runs the full solution for .NET 10 and .NET 11, and
 executes the three-process REST/gRPC smoke/outage/restart script. Focused real HTTP/2
 integration coverage is available with:
 

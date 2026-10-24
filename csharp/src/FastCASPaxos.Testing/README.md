@@ -1,6 +1,6 @@
 # Shared deterministic register fixture
 
-`FastCASPaxos.Testing` is a framework-neutral `net10.0` library for both upstream
+`FastCASPaxos.Testing` is a framework-neutral `net10.0`/`net11.0` library for both upstream
 tests and downstream `IRegisterService` consumers (including Clog adapters).
 Its library closure contains **Simulation** and **Server**, transitively
 **Clockwork** and **Core**. Consumers supply their own assertion framework.

@@ -120,11 +120,13 @@ and 32-byte SHA-256; the query reads persisted fingerprints. Promise-only rows
 are excluded, and accepted empty bytes have the SHA-256 of the empty byte string.
 Promise updates retain the existing hash.
 
-`FetchIfDifferentAsync(key, known)` compares both accepted ballot and hash in
-one transaction. `Unchanged` carries only its status. `Different` carries the
-complete accepted state, including the current promise. `Missing` identifies
-a key with no accepted value. Passing null for `known` fetches any accepted
-state. A transfer verifies its bytes against the stored hash and reports an
+`IKeyedAcceptor.ReadAsync(key, known)` compares both accepted ballot and hash in
+one transaction. Its `AcceptorReadResult` union contains `AcceptorUnchanged`
+for a matching digest, `KeyedAcceptorState` for the complete accepted state
+including its current promise, or `AcceptorMissing` for a key with no accepted
+value. Omitting `known` fetches any accepted state. Reads preserve the stored
+ballots and bytes, including when the key has no row. A transfer verifies its
+bytes against the stored hash and reports an
 integrity failure through the writer's normal failure boundary.
 
 Protocol transitions, full-value inventory, and local inspection use the same

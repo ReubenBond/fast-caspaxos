@@ -192,12 +192,12 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         }, cancellationToken);
     }
 
-    public ValueTask<ConditionalAcceptorState> FetchIfDifferentAsync(
-        string key, AcceptedDigest? known, CancellationToken cancellationToken = default)
+    public ValueTask<AcceptorReadResult> ReadAsync(
+        string key, AcceptedDigest? known = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(key);
         known?.Validate();
-        return Enqueue((connection, transaction) =>
+        return Enqueue<AcceptorReadResult>((connection, transaction) =>
         {
             var encodedKey = EncodeKey(key);
             AcceptedDigest digest;
@@ -210,14 +210,13 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
                     """;
                 command.Parameters.AddWithValue("$key", encodedKey);
                 using var reader = command.ExecuteReader();
-                if (!reader.Read()) return new ConditionalAcceptorState(ConditionalAcceptorStatus.Missing);
+                if (!reader.Read()) return new AcceptorMissing();
                 digest = new(new(reader.GetInt32(0), reader.GetInt32(1)), new(reader.GetFieldValue<byte[]>(2)));
-                if (digest == known) return new ConditionalAcceptorState(ConditionalAcceptorStatus.Unchanged);
+                if (digest == known) return new AcceptorUnchanged();
             }
             var state = Load(connection, transaction, encodedKey, out _);
             Debug.Assert(state.AcceptedValue is not null);
-            return new ConditionalAcceptorState(ConditionalAcceptorStatus.Different,
-                new(key, state.PromisedBallot, state.AcceptedBallot, state.AcceptedValue));
+            return new KeyedAcceptorState(key, state.PromisedBallot, state.AcceptedBallot, state.AcceptedValue);
         }, cancellationToken);
     }
 

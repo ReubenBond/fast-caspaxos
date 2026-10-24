@@ -27,6 +27,9 @@ public sealed class RegisterListingTests
         await Seed(peers[0], "partial", 2); // Only one accepted copy; listing must resolve it.
         foreach (var peer in peers)
         {
+            peer.Read = (key, known, token) => key == "partial"
+                ? ValueTask.FromException<AcceptorReadResult>(new IOException("inconclusive partial probe"))
+                : peer.Inner.ReadAsync(key, known, token);
             await Seed(peer, "logical-absence", absent: true);
             await peer.Inner.PrepareAsync("promise-only", new(new Ballot(1, 1)));
         }
@@ -37,7 +40,7 @@ public sealed class RegisterListingTests
         Assert.Null(page.ContinuationKey);
         Assert.All(peers, peer => Assert.Equal(Envelope(Version(9, 2), Payload), peer.Inner.Snapshot("partial")!.AcceptedValue));
         Assert.All(peers, peer => Assert.Equal(Absent, peer.Inner.Snapshot("logical-absence")!.AcceptedValue));
-        Assert.All(peers, peer => Assert.Equal(Absent, peer.Inner.Snapshot("read-absence")!.AcceptedValue));
+        Assert.All(peers, peer => Assert.Null(peer.Inner.Snapshot("read-absence")));
         Assert.All(peers, peer => Assert.DoesNotContain(peer.Accepts, item => item.Key == "promise-only"));
     }
 
@@ -47,14 +50,16 @@ public sealed class RegisterListingTests
         var peers = Peers();
         await Seed(peers[2], "uncommitted");
         // Inventory sees the minority record on peer 2; resolution uses peers 0+1, which can
-        // legally seal absence. Listing raw inventory without an identity accept is incorrect.
+        // legally observe absence. Listing raw minority inventory without a read quorum is incorrect.
         peers[0].List = (_, _, _, _) => ValueTask.FromException<KeyPage>(new IOException("inventory unavailable"));
         await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(3), Options());
         var page = await service.ListKeysAsync().AsTask().WaitAsync(Watchdog);
         Assert.Empty(page.Keys);
         Assert.Null(page.ContinuationKey);
-        Assert.True(peers.Sum(peer => peer.Accepts.Count(item => item.Key == "uncommitted")) >= 2);
-        Assert.All(peers.Take(2), peer => Assert.Equal(Absent, peer.Inner.Snapshot("uncommitted")!.AcceptedValue));
+        Assert.All(peers, peer => Assert.Empty(peer.Accepts));
+        Assert.All(peers, peer => Assert.Empty(peer.Prepares));
+        Assert.All(peers.Take(2), peer => Assert.Null(peer.Inner.Snapshot("uncommitted")));
+        Assert.Equal(Envelope(Version(9, 1), Payload), peers[2].Inner.Snapshot("uncommitted")!.AcceptedValue);
         Assert.False((await service.ReadAsync("uncommitted")).IsPresent);
     }
 
@@ -174,6 +179,7 @@ public sealed class RegisterListingTests
     public async Task Listing_ResolutionCannotReturnInventoryWithoutAProtocolQuorum()
     {
         var peers = Peers();
+        RequireRecovery(peers);
         foreach (var peer in peers) await Seed(peer, "candidate");
         var clock = new ManualTime();
         using var gate = new Gate();
@@ -184,5 +190,37 @@ public sealed class RegisterListingTests
         await gate.Arrived;
         clock.Advance(TimeSpan.FromSeconds(5));
         await Assert.ThrowsAsync<RegisterUnavailableException>(() => listing.WaitAsync(Watchdog));
+    }
+
+    [Fact]
+    public async Task Listing_StableCandidatesUseReadQuorumWithoutAllocatingOrMutating()
+    {
+        var peers = Peers();
+        foreach (var peer in peers)
+        {
+            await Seed(peer, "a");
+            await Seed(peer, "b");
+            await Seed(peer, "absent", absent: true);
+        }
+        var before = peers.SelectMany(peer => new[] { "a", "absent", "b" }.Select(peer.Inner.Snapshot)).ToArray();
+        var ballots = new TestBallots(3);
+        await using var service = new ReplicatedRegisterService(Routes(peers), ballots, Options());
+
+        for (var iteration = 0; iteration < 2; iteration++)
+        {
+            var page = await service.ListKeysAsync().AsTask().WaitAsync(Watchdog);
+            Assert.Equal(new[] { "a", "b" }, page.Keys);
+            Assert.Null(page.ContinuationKey);
+        }
+
+        Assert.Empty(ballots.Reserved);
+        Assert.Equal(before, peers.SelectMany(peer => new[] { "a", "absent", "b" }.Select(peer.Inner.Snapshot)));
+        Assert.All(peers, peer =>
+        {
+            Assert.Equal(new[] { "a", "absent", "b", "a", "absent", "b" }, peer.Reads.Select(read => read.Key));
+            Assert.All(peer.Reads, read => Assert.Null(read.Known));
+            Assert.Empty(peer.Prepares);
+            Assert.Empty(peer.Accepts);
+        });
     }
 }

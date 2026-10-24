@@ -10,12 +10,46 @@ namespace FastCASPaxos.Grpc;
 public sealed class GrpcKeyedAcceptor : IKeyedAcceptor
 {
     private readonly Wire.Acceptor.AcceptorClient _client;
+    private readonly Wire.AcceptorDigests.AcceptorDigestsClient _reads;
     private readonly ClientCalls _calls;
 
     public GrpcKeyedAcceptor(CallInvoker callInvoker, TimeSpan? callTimeout = null, TimeProvider? timeProvider = null)
     {
         _client = new(callInvoker);
+        _reads = new(callInvoker);
         _calls = new(callTimeout, timeProvider ?? TimeProvider.System);
+    }
+
+    public async ValueTask<AcceptorReadResult> ReadAsync(
+        string key, AcceptedDigest? known = null, CancellationToken cancellationToken = default)
+    {
+        var request = new Wire.FetchIfDifferentRequest
+        {
+            Key = WireConvert.Text(key),
+            Known = known is null ? null : WireConvert.ToWire(known),
+        };
+        var response = await _calls.Invoke(o => _reads.FetchIfDifferentAsync(request, o), cancellationToken).ConfigureAwait(false);
+        return RpcErrors.Response<AcceptorReadResult>(() =>
+        {
+            switch (response.OutcomeCase)
+            {
+                case Wire.ConditionalAcceptorState.OutcomeOneofCase.Missing:
+                    return new AcceptorMissing();
+                case Wire.ConditionalAcceptorState.OutcomeOneofCase.Unchanged:
+                    WireConvert.Require(known is not null, "Unchanged requires a supplied digest.");
+                    return new AcceptorUnchanged();
+                case Wire.ConditionalAcceptorState.OutcomeOneofCase.Different:
+                    var entry = response.Different;
+                    WireConvert.Require(WireConvert.Key(entry.Key, entry.HasKey) == key, "The response must identify the requested key.");
+                    var (ballot, value) = WireConvert.Accepted(entry.Accepted);
+                    WireConvert.Require(value is not null, "Different requires accepted bytes.");
+                    WireConvert.Require(known is null || known != new AcceptedDigest(ballot, AcceptedDigest.Hash(value!)),
+                        "Different must differ from the supplied digest.");
+                    return new KeyedAcceptorState(key, WireConvert.Ballot(entry.PromisedBallot), ballot, value!);
+                default:
+                    throw new ArgumentException("An explicit read outcome is required.");
+            }
+        });
     }
 
     public async ValueTask<AcceptorPrepareResult<ByteString?>> PrepareAsync(

@@ -118,14 +118,14 @@ public sealed class DurabilityRepair
                     if (!departing && !divergent && matching >= commitQuorum && eligible >= TargetReplicas) continue;
 
                     var seed = await InvokeAsync(candidate.Source,
-                        (peer, token) => peer.Digests.FetchIfDifferentAsync(key, null, token), cancellationToken).ConfigureAwait(false);
+                        (peer, token) => peer.Acceptor.ReadAsync(key, cancellationToken: token), cancellationToken).ConfigureAwait(false);
                     if (seed.Error is { } seedError)
                     {
                         errors[candidate.Source] = seedError;
                         pending++;
                         continue;
                     }
-                    if (seed.Value is not { Status: ConditionalAcceptorStatus.Different, State: { } state })
+                    if (seed.Value is not KeyedAcceptorState state)
                         throw new InvalidDataException("A discovered accepted key must retain its accepted state.");
                     try
                     {
