@@ -28,14 +28,12 @@ public sealed class GrpcRegisterClient : IRegisterService, IDisposable
     private int _disposed;
 
     /// <summary>Creates and owns one channel per HTTP(S) origin, preserving its TLS authority.</summary>
-    public GrpcRegisterClient(ImmutableArray<Uri> endpoints, GrpcRegisterClientOptions? options = null,
+    public GrpcRegisterClient(ReadOnlySpan<Uri> endpoints, GrpcRegisterClientOptions? options = null,
         TimeProvider? timeProvider = null) : this(options, timeProvider)
     {
-        if (endpoints.IsDefault) throw new ArgumentNullException(nameof(endpoints));
-        var addresses = endpoints;
-        if (addresses.Length == 0) throw new ArgumentException("At least one endpoint is required.", nameof(endpoints));
+        if (endpoints.IsEmpty) throw new ArgumentException("At least one endpoint is required.", nameof(endpoints));
         var unique = new HashSet<Uri>();
-        foreach (var address in addresses)
+        foreach (var address in endpoints)
         {
             if (address is null || !address.IsAbsoluteUri || address.Scheme is not ("http" or "https")
                 || address.AbsolutePath != "/" || address.Query.Length != 0
@@ -45,7 +43,7 @@ public sealed class GrpcRegisterClient : IRegisterService, IDisposable
 
         try
         {
-            foreach (var address in addresses)
+            foreach (var address in endpoints)
             {
                 _channels.Add(GrpcChannel.ForAddress(address, new GrpcChannelOptions
                 {

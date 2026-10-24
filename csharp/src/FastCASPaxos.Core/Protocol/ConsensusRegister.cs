@@ -27,27 +27,32 @@ public sealed class ConsensusRegister<TValue, TRoute>
         TRoute acceptor,
         int proposerId,
         TValue initialValue,
-        ImmutableArray<TRoute> acceptors,
+        ReadOnlySpan<TRoute> acceptors,
         ProposerModePolicy modePolicy,
         AcceptorState<TValue>? acceptorState = null,
         ProposerRuntime? proposerRuntime = null)
     {
-        if (acceptors.IsDefault)
-        {
-            throw new ArgumentNullException(nameof(acceptors));
-        }
-
         ArgumentNullException.ThrowIfNull(modePolicy);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(proposerId, 0);
 
         _proposer = proposer;
         _acceptor = acceptor;
-        ImmutableArray<TRoute> acceptorList = [.. acceptors.Distinct()];
-        if (!acceptorList.Contains(acceptor))
+        var membership = ImmutableArray.CreateBuilder<TRoute>(acceptors.Length);
+        HashSet<TRoute> seen = [];
+        foreach (var route in acceptors)
         {
-            acceptorList = acceptorList.Add(acceptor);
+            if (seen.Add(route))
+            {
+                membership.Add(route);
+            }
         }
 
+        if (seen.Add(acceptor))
+        {
+            membership.Add(acceptor);
+        }
+
+        var acceptorList = membership.DrainToImmutable();
         Proposer = proposer;
         Acceptor = acceptor;
         ProposerId = proposerId;

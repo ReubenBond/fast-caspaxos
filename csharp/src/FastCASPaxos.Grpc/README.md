@@ -183,10 +183,11 @@ var current = await registers.ReadAsync("catalog/item");
 var result = await registers.CompareExchangeAsync("catalog/item", current.Version, ByteString.Empty);
 ```
 
-The constructor validates distinct HTTP(S) origins and owns one SDK channel per
-origin. Each channel uses the endpoint's HTTPS authority and normal certificate
-validation. The SDK manages each connection pool; separate channels preserve
-distinct TLS identities across endpoints. `Dispose` closes owned channels.
+The `ReadOnlySpan<Uri>` constructor consumes distinct HTTP(S) origins synchronously
+and owns one SDK channel per origin. Fixed-size collection expressions use inline
+input storage. Each channel uses the endpoint's HTTPS authority and normal
+certificate validation. The SDK manages each connection pool; separate channels
+preserve distinct TLS identities across endpoints. `Dispose` closes owned channels.
 The `ImmutableArray<CallInvoker>` overload accepts caller-owned channels for
 authentication or custom transport setup. Those invokers must enforce call
 deadlines and use application-controlled mutation retries.

@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
 using FastCASPaxos.Protocol;
@@ -8,6 +7,19 @@ namespace FastCASPaxos.Core.Tests.Protocol;
 
 public sealed class ConsensusRegisterTests
 {
+    [Fact]
+    public void ConstructorSnapshotsAndNormalizesSpanMembership()
+    {
+        Span<string> acceptors = ["a3", "a2", "a3"];
+        var register = new ConsensusRegister<TestValue, string>(
+            "p1", "a1", proposerId: 1, initialValue: default,
+            acceptors, ProposerModePolicy.StaticClassic);
+
+        acceptors[0] = "changed";
+
+        Assert.Equal<string>(["a3", "a2", "a1"], register.Acceptors);
+    }
+
     [Fact]
     public void LocalRegisterProcessesRequestWithoutExternalProtocolMessages()
     {
@@ -199,14 +211,14 @@ public sealed class ConsensusRegisterTests
         ProposerModePolicy? modePolicy = null,
         string proposerRoute = "p1",
         string acceptorRoute = "p1",
-        ImmutableArray<string>? acceptors = null)
+        ReadOnlySpan<string> acceptors = default)
     {
         return new ConsensusRegister<TestValue, string>(
             proposerRoute,
             acceptorRoute,
             proposerId: 1,
             initialValue: default,
-            acceptors ?? [acceptorRoute],
+            acceptors,
             modePolicy ?? ProposerModePolicy.StaticFast);
     }
 

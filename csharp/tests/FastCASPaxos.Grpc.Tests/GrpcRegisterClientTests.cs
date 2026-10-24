@@ -296,7 +296,7 @@ public sealed class GrpcRegisterClientTests
     [Fact]
     public void ConstructorsValidateEndpointSetAndBounds()
     {
-        Assert.Throws<ArgumentException>(() => new GrpcRegisterClient(ImmutableArray<Uri>.Empty));
+        Assert.Throws<ArgumentException>(() => new GrpcRegisterClient(ReadOnlySpan<Uri>.Empty));
         Assert.Throws<ArgumentException>(() => new GrpcRegisterClient([new Uri("relative", UriKind.Relative)]));
         Assert.Throws<ArgumentException>(() => new GrpcRegisterClient([(Uri)null!]));
         Assert.Throws<ArgumentException>(() => new GrpcRegisterClient(ImmutableArray<CallInvoker>.Empty));
