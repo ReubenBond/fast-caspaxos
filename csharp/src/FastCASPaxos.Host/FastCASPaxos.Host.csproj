@@ -16,7 +16,8 @@
     <MSBuild Projects="$(AdminRoot)\build.proj" Targets="Build"
              RemoveProperties="TargetFramework;TargetFrameworks" />
   </Target>
-  <Target Name="CopyAdminAssets" AfterTargets="Build" Condition="'$(BuildAdminConsole)' == 'true'">
+  <Target Name="CopyAdminAssets" AfterTargets="Build"
+          Condition="'$(BuildAdminConsole)' == 'true' And '$(TargetFramework)' != ''">
     <ItemGroup>
       <AdminAsset Include="$(AdminRoot)\dist\**\*" />
     </ItemGroup>
