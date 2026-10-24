@@ -6,14 +6,12 @@ namespace FastCASPaxos.Server.Tests;
 public sealed class AcceptedDigestTests
 {
     [Theory]
-    [InlineData("default")]
     [InlineData("empty")]
     [InlineData("abc")]
     public void Hash_KnownVector_ReturnsSha256(string caseId)
     {
         var value = caseId switch
         {
-            "default" => default,
             "empty" => ByteString.Empty,
             "abc" => new ByteString("abc"u8),
             _ => throw new ArgumentOutOfRangeException(nameof(caseId))
@@ -24,6 +22,10 @@ public sealed class AcceptedDigestTests
 
         Assert.Equal(Convert.FromHexString(expected), AcceptedDigest.Hash(value).ToArray());
     }
+
+    [Fact]
+    public void Hash_DefaultValue_Throws() =>
+        Assert.Throws<ArgumentException>(() => AcceptedDigest.Hash(default));
 
     [Theory]
     [InlineData(0, 1)]

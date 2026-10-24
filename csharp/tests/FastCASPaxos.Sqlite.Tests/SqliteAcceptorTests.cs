@@ -141,7 +141,7 @@ public sealed class SqliteAcceptorTests
             Assert.True(missing.IsPromised);
             Assert.Equal(Ballot.Zero, missing.AcceptedBallot);
             Assert.Null(missing.AcceptedValue);
-            Assert.True((await server.AcceptAsync("empty", new(Ballot.InitialFast(), default, Ballot.Zero))).IsAccepted);
+            Assert.True((await server.AcceptAsync("empty", new(Ballot.InitialFast(), ByteString.Empty, Ballot.Zero))).IsAccepted);
         }
 
         await using var reopened = await database.OpenAsync();

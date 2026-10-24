@@ -15,6 +15,8 @@ public sealed class ByteStringTests
         exported[2] = 0;
 
         Assert.Equal(3, value.Length);
+        Assert.False(value.IsDefault);
+        Assert.False(value.IsEmpty);
         Assert.Equal(new byte[] { 0, 42, 255 }, value.ToArray());
         Assert.NotSame(exported, value.ToArray());
         Assert.Empty(ByteString.Empty.ToArray());
@@ -42,11 +44,42 @@ public sealed class ByteStringTests
     }
 
     [Fact]
-    public void DefaultValue_RepresentsEmptyBytes()
+    public void DefaultValue_RepresentsMissingBytes()
     {
-        ByteString[] emptyValues = [default, new(), ByteString.Empty, new([])];
+        ByteString[] missingValues = [default, new()];
+        foreach (var value in missingValues)
+        {
+            Assert.True(value.IsDefault);
+            Assert.Throws<InvalidOperationException>(() => value.Length);
+            Assert.Throws<InvalidOperationException>(() => value.IsEmpty);
+            Assert.Throws<InvalidOperationException>(() => value.ToArray());
+            Assert.True(value.Equals(default(ByteString)));
+            Assert.True(value.Equals((object)default(ByteString)));
+            Assert.Equal(default(ByteString).GetHashCode(), value.GetHashCode());
+            Assert.True(value == default(ByteString));
+            Assert.False(value != default(ByteString));
+            Assert.False(value == ByteString.Empty);
+            Assert.False(ByteString.Empty == value);
+            Assert.True(value != ByteString.Empty);
+            Assert.True(ByteString.Empty != value);
+            Assert.False(value.Equals(ByteString.Empty));
+            Assert.False(ByteString.Empty.Equals(value));
+            Assert.False(value.Equals((object?)null));
+        }
+        Assert.Single(missingValues.ToHashSet());
+        var values = new Dictionary<ByteString, string> { [default] = "missing", [ByteString.Empty] = "empty" };
+        Assert.Equal("missing", values[new()]);
+        Assert.Equal("empty", values[new([])]);
+    }
+
+    [Fact]
+    public void ConstructedEmptyValues_AreInitializedAndEqual()
+    {
+        ByteString[] emptyValues = [ByteString.Empty, new([]), new(Array.Empty<byte>()), new(default(ReadOnlySpan<byte>))];
         foreach (var value in emptyValues)
         {
+            Assert.False(value.IsDefault);
+            Assert.True(value.IsEmpty);
             Assert.Equal(0, value.Length);
             Assert.Empty(value.ToArray());
             foreach (var other in emptyValues)
@@ -59,7 +92,7 @@ public sealed class ByteStringTests
             }
         }
         Assert.Single(emptyValues.ToHashSet());
-        Assert.Equal("empty", new Dictionary<ByteString, string> { [default] = "empty" }[new([])]);
+        Assert.Equal("empty", new Dictionary<ByteString, string> { [ByteString.Empty] = "empty" }[new([])]);
     }
 
     [Theory]
@@ -68,6 +101,7 @@ public sealed class ByteStringTests
     [InlineData("different-content", false)]
     [InlineData("different-order", false)]
     [InlineData("empty", false)]
+    [InlineData("missing", false)]
     public void EqualityOperators_UseByteContents(string caseId, bool equal)
     {
         var left = new ByteString([0, 42, 255]);
@@ -77,7 +111,8 @@ public sealed class ByteStringTests
             "different-length" => new ByteString([0, 42]),
             "different-content" => new ByteString([0, 42, 254]),
             "different-order" => new ByteString([255, 42, 0]),
-            "empty" => default,
+            "empty" => ByteString.Empty,
+            "missing" => default,
             _ => throw new ArgumentOutOfRangeException(nameof(caseId))
         };
 
@@ -90,11 +125,13 @@ public sealed class ByteStringTests
     }
 
     [Fact]
-    public void NullableEquality_DistinguishesAbsenceFromEmptyBytes()
+    public void NullableEquality_DistinguishesNullDefaultAndEmptyBytes()
     {
         ByteString? absent = null;
         ByteString? alsoAbsent = null;
-        ByteString? empty = default(ByteString);
+        ByteString? missing = default(ByteString);
+        ByteString? alsoMissing = new ByteString();
+        ByteString? empty = ByteString.Empty;
         ByteString? constructedEmpty = new ByteString([]);
         ByteString? value = new ByteString([42]);
         ByteString? sameValue = new ByteString([42]);
@@ -111,7 +148,16 @@ public sealed class ByteStringTests
         Assert.False(value != sameValue);
         Assert.True(value != empty);
         Assert.True(value != absent);
-        Assert.Equal(3, new HashSet<ByteString?> { absent, empty, constructedEmpty, value, sameValue }.Count);
+        Assert.True(missing == alsoMissing);
+        Assert.False(missing != alsoMissing);
+        Assert.False(missing == absent);
+        Assert.False(absent == missing);
+        Assert.True(missing != absent);
+        Assert.False(missing == empty);
+        Assert.False(empty == missing);
+        Assert.True(missing != empty);
+        Assert.Equal(4, new HashSet<ByteString?>
+            { absent, missing, alsoMissing, empty, constructedEmpty, value, sameValue }.Count);
     }
 
     [Fact]

@@ -50,6 +50,7 @@ internal static class WireConvert
 
     public static ProtoBytes ToWire(ByteString value)
     {
+        Require(!value.IsDefault, "Initialized bytes are required.");
         return ProtoBytes.CopyFrom(value.ToArray());
     }
 

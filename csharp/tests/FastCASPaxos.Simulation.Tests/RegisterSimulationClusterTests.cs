@@ -14,7 +14,7 @@ public sealed class RegisterSimulationClusterTests
         {
             var client = simulation.CreateClient();
             Assert.Equal(new RegisterValue(null, null), await client.ReadAsync("key"));
-            var created = await client.CompareExchangeAsync("key", null, default);
+            var created = await client.CompareExchangeAsync("key", null, ByteString.Empty);
             Assert.Equal(CompareExchangeStatus.Applied, created.Status);
             Assert.Equal(ByteString.Empty, created.Current!.Value);
             Assert.True(created.Current.IsPresent);
@@ -461,12 +461,13 @@ public sealed class RegisterSimulationClusterTests
             var result = await client.CompareExchangeAsync("key", null, new([42]));
             Assert.Equal(CompareExchangeStatus.Applied, result.Status);
             Assert.True(RegisterVersion.IsValid(result.Current!.Version!.Value));
-            foreach (var malformed in new[] { ByteString.Empty, new ByteString([1]), new ByteString(new byte[8]) })
+            foreach (var malformed in new[] { default(ByteString), ByteString.Empty, new ByteString([1]), new ByteString(new byte[8]) })
                 await Assert.ThrowsAsync<ArgumentException>(() =>
                     client.CompareExchangeAsync("key", malformed, new([99])).AsTask());
             Assert.Equal(result.Current, await client.ReadAsync("key"));
             await Assert.ThrowsAsync<ArgumentNullException>(() => client.ReadAsync(null!).AsTask());
             await Assert.ThrowsAsync<ArgumentNullException>(() => client.CompareExchangeAsync(null!, null, new([1])).AsTask());
+            await Assert.ThrowsAsync<ArgumentException>(() => client.CompareExchangeAsync("key", null, default).AsTask());
             await Assert.ThrowsAsync<ArgumentNullException>(() => client.ListKeysAsync(null!).AsTask());
         });
     }

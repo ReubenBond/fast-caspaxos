@@ -93,7 +93,7 @@ simulation.Run(async cluster =>
 {
     var registers = cluster.CreateClient();
     var result = await registers.CompareExchangeAsync("embedded", null, ByteString.Empty);
-    if (result.Status != CompareExchangeStatus.Applied || !RegisterVersion.IsValid(result.Current!.Version!))
+    if (result.Status != CompareExchangeStatus.Applied || !RegisterVersion.IsValid(result.Current!.Version!.Value))
         throw new InvalidOperationException("The embedded consumer must observe a native register write.");
     cluster.CrashNode(4);
     cluster.CrashNode(5);

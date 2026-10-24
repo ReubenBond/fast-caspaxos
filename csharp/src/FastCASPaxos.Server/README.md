@@ -32,13 +32,19 @@ before disposing those dependencies.
 `RegisterValue` uses null `Value` and `Version` for logical absence. A present
 empty payload has a zero-length `ByteString` and a non-null version. `ByteString`
 is a readonly struct with content-based `Equals`, `GetHashCode`, `==`, and `!=`.
-Its default value and `ByteString.Empty` both represent empty bytes.
 It copies input bytes and returns owned copies through `ToArray()`.
+`default(ByteString)` has `IsDefault == true` and represents uninitialized
+bytes. `ByteString.Empty` and `new ByteString([])` are initialized, empty values
+with `IsEmpty == true`. Equality and hashing support default values, and default
+compares unequal to initialized empty bytes. Reading `Length`, `IsEmpty`, or
+`ToArray()` on a default value throws `InvalidOperationException`.
 
 The class-to-struct API change requires rebuilding consumers. Use `ByteString?`
 for optional bytes and unwrap present values through `.Value` or a property
 pattern before passing them to APIs accepting `ByteString`. Nullable equality
 preserves the distinction between absent bytes and present empty bytes.
+Required payloads accept initialized values, including empty bytes, and reject
+default values with `ArgumentException` before mutation or network dispatch.
 Register envelopes, SQLite blobs, and protobuf bytes retain their existing
 encodings.
 

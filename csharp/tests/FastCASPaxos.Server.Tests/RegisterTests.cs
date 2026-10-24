@@ -24,7 +24,7 @@ public sealed class RegisterTests
         Assert.All(peers, peer => Assert.Empty(peer.Prepares));
         Assert.All(peers, peer => Assert.Empty(peer.Accepts));
 
-        var create = await service.CompareExchangeAsync("key", null, default);
+        var create = await service.CompareExchangeAsync("key", null, ByteString.Empty);
         Assert.Equal(CompareExchangeStatus.Applied, create.Status);
         Assert.Equal(ByteString.Empty, create.Current!.Value);
         Assert.Equal(8, create.Current.Version!.Value.Length);

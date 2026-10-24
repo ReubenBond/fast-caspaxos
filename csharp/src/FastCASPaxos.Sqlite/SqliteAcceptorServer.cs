@@ -89,6 +89,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         string key, AcceptRequest<ByteString> request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(key);
+        if (request.Value.IsDefault) throw new ArgumentException("Initialized bytes are required.", nameof(request));
         ValidateBallot(request.Ballot, nameof(request));
         if (!request.NextBallotToPrepare.IsZero)
         {

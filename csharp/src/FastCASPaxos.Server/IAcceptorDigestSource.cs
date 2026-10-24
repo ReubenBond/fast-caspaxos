@@ -15,6 +15,7 @@ public sealed record AcceptedDigest(Ballot AcceptedBallot, ByteString ValueHash)
 {
     public static ByteString Hash(ByteString value)
     {
+        if (value.IsDefault) throw new ArgumentException("Initialized bytes are required.", nameof(value));
         return new(SHA256.HashData(value.ToArray()));
     }
 
@@ -22,7 +23,8 @@ public sealed record AcceptedDigest(Ballot AcceptedBallot, ByteString ValueHash)
     {
         if (AcceptedBallot.Round <= 0 || AcceptedBallot.Proposer < 0)
             throw new ArgumentException("An accepted digest requires a positive round and nonnegative proposer.");
-        if (ValueHash.Length != 32) throw new ArgumentException("An accepted digest requires a 32-byte SHA-256.");
+        if (ValueHash.IsDefault || ValueHash.Length != 32)
+            throw new ArgumentException("An accepted digest requires a 32-byte SHA-256.");
     }
 }
 

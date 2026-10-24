@@ -11,7 +11,7 @@ public sealed class RegisterValidationTests
         Assert.False(RegisterVersion.IsValid(default));
         var peers = Peers();
         await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(1), Options());
-        ByteString[] invalid = [ByteString.Empty, new(new byte[7]), new(new byte[9]),
+        ByteString[] invalid = [default, ByteString.Empty, new(new byte[7]), new(new byte[9]),
             Version(0, 1), Version(-1, 1), Version(1, 0), Version(1, -1)];
         foreach (var version in invalid)
         {
@@ -77,17 +77,18 @@ public sealed class RegisterValidationTests
         await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(1), Options());
         await Assert.ThrowsAsync<ArgumentNullException>(() => service.ReadAsync(null!).AsTask());
         await Assert.ThrowsAsync<ArgumentNullException>(() => service.CompareExchangeAsync(null!, null, Payload).AsTask());
+        await Assert.ThrowsAsync<ArgumentException>(() => service.CompareExchangeAsync("key", null, default).AsTask());
         await Assert.ThrowsAsync<ArgumentNullException>(() => service.ListKeysAsync(null!).AsTask());
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.ListKeysAsync(limit: 0).AsTask());
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.ListKeysAsync(limit: -1).AsTask());
-        ByteString[] invalidVersions = [ByteString.Empty, new(new byte[7]), new(new byte[9]),
+        ByteString[] invalidVersions = [default, ByteString.Empty, new(new byte[7]), new(new byte[9]),
             Version(0, 1), Version(-1, 1), Version(1, 0), Version(1, -1)];
         foreach (var version in invalidVersions)
             await Assert.ThrowsAsync<ArgumentException>(() => service.CompareExchangeAsync("key", version, Payload).AsTask());
         Assert.All(peers, peer => Assert.Empty(peer.Prepares));
         Assert.All(peers, peer => Assert.Empty(peer.Accepts));
         Assert.All(peers, peer => Assert.Empty(peer.Reads));
-        Assert.Equal(CompareExchangeStatus.Applied, (await service.CompareExchangeAsync("", null, default)).Status);
+        Assert.Equal(CompareExchangeStatus.Applied, (await service.CompareExchangeAsync("", null, ByteString.Empty)).Status);
         Assert.Equal(ByteString.Empty, (await service.ReadAsync("")).Value);
     }
 }

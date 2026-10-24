@@ -323,6 +323,7 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
             string key, ByteString? expectedVersion, ByteString value, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(key);
+            if (value.IsDefault) throw new ArgumentException("An initialized payload is required.", nameof(value));
             if (expectedVersion is { } expected && !RegisterVersion.IsValid(expected))
                 throw new ArgumentException("A register version must be a token returned by this register cluster.", nameof(expectedVersion));
             owner.RequireContext();

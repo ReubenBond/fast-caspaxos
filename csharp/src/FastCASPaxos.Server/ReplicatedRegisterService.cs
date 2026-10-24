@@ -64,6 +64,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
         string key, ByteString? expectedVersion, ByteString value, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(key);
+        if (value.IsDefault) throw new ArgumentException("An initialized payload is required.", nameof(value));
         if (expectedVersion is { } expected) RegisterEncoding.ValidateVersion(expected);
         using var call = Enter(cancellationToken);
         var operation = new RegisterOperation(expectedVersion, value);
@@ -228,7 +229,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
                         break;
                     case KeyedAcceptorState accepted:
                         if (accepted.Key != key || accepted.AcceptedBallot.Round <= 0
-                            || accepted.AcceptedBallot.Proposer < 0)
+                            || accepted.AcceptedBallot.Proposer < 0 || accepted.AcceptedValue.IsDefault)
                         {
                             throw new InvalidDataException("An accepted observation must identify the requested key, ballot, and bytes.");
                         }
