@@ -124,18 +124,21 @@ td, th { padding: 9px 10px; border-bottom: 1px solid #dce3ec; vertical-align: to
 .timeline-toolbar > span { padding-bottom: 8px; }
 .event-table-wrap { max-height: 640px; overflow: auto; overflow-anchor: none; }
 .event-table { table-layout: fixed; }
-.event-table .time-column { width: 180px; }
-.event-table .lane-column { width: 120px; }
+.event-table .time-column { width: 170px; }
+.event-table .evidence-column { width: 230px; }
 .event-table thead { position: sticky; top: 0; z-index: 1; }
-.event-table td { overflow-wrap: anywhere; }
+.event-table td { overflow-wrap: anywhere; padding: 5px 8px; }
 .event-table time { display: block; font-size: .75rem; color: var(--muted); }
 .event-table pre { max-height: 300px; overflow: auto; }
-.sequence-time > span, .event-table th > span, .event-key, .event-fact { display: block; }
+.sequence-time > span, .event-table th > span, .event-fact { display: block; }
+.sequence-meta { font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .event-table .lane-heading { text-align: center; overflow-wrap: anywhere; }
-.event-table .sequence-path { position: relative; padding: 0; min-height: 80px; }
+.event-table .sequence-path { position: relative; padding: 0; }
 .lane-guides { position: absolute; inset: 0; display: grid; pointer-events: none; }
 .lane-guides > span::after { content: ''; display: block; height: 100%; margin-left: 50%; border-left: 1px dashed var(--border); }
-.sequence-glyph { display: block; width: 100%; height: 60px; margin-top: 9px; }
+.sequence-glyph { display: block; width: 100%; height: 48px; }
+.message-label { position: absolute; top: 3px; padding: 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: .8rem; line-height: 18px; background: var(--surface); }
+.reset-row .message-label { background: #fff8e8; }
 .sequence-glyph path { fill: none; stroke: currentColor; stroke-width: 2; vector-effect: non-scaling-stroke; }
 .sequence-glyph circle, .sequence-glyph rect { fill: currentColor; }
 .sequence-glyph .observer-dot { fill: #526176; }
@@ -145,11 +148,12 @@ td, th { padding: 9px 10px; border-bottom: 1px solid #dce3ec; vertical-align: to
 .sequence-path.local, .sequence-path.state, .legend-state { color: #40516a; }
 .sequence-path.fault, .legend-fault { color: #9e3026; }
 .sequence-path.reset { color: #704800; }
-.sequence-evidence { padding: 12px; }
-.sequence-evidence strong { font-weight: 600; }
+.sequence-evidence summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8rem; font-weight: 600; }
+.sequence-evidence details[open] summary { white-space: normal; }
 .event-fact { font-size: .8rem; color: var(--muted); margin-top: 3px; }
-.sequence-evidence details { margin-top: 6px; }
-.sequence-time .elapsed { color: #17603c; font-size: .78rem; margin-top: 5px; }
+.event-context { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.event-context .event-key { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sequence-time .elapsed { color: #17603c; }
 .trace-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .timeline-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 0 16px 12px; color: var(--muted); font-size: .8rem; }
 .timeline-legend > span { display: inline-flex; align-items: center; gap: 6px; }
@@ -160,7 +164,7 @@ td, th { padding: 9px 10px; border-bottom: 1px solid #dce3ec; vertical-align: to
 .timeline-toolbar .follow-control { display: flex; align-items: center; gap: 6px; padding-bottom: 8px; }
 .follow-control input { width: 16px; height: 16px; margin: 0; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.event-key { color: #37557c; margin-top: 3px; }
+.event-key { color: #37557c; }
 .event-kind { font-size: .78rem; color: #526682; }
 .reset-row { background: #fff8e8; }
 .timeline-foot { border-top: 1px solid var(--border); font-size: .78rem; color: var(--muted); padding: 8px 16px; }

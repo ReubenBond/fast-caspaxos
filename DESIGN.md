@@ -120,8 +120,10 @@ grid uses a 290px inventory and flexible inspector. At 1000px it uses 16px gutte
 and a 235px inventory; at 680px it becomes a vertical task sequence with 10px
 gutters. The mobile key list is bounded to 220px.
 
-The timeline has a 640px scroll region, sticky node headings, a 180px time column,
-120px node lanes, and at least 350px for event evidence. Local-state tables use a
+The timeline has a 640px scroll region, sticky node headings, a 170px time column,
+flexible node lanes at least 240px wide, and a 230px event-evidence column.
+Collapsed event rows fit within 56px; expanding a summary reveals full evidence.
+Local-state tables use a
 480px minimum. Both preserve columns through horizontal scrolling; current values
 and local/event tables accept keyboard focus.
 
@@ -154,10 +156,12 @@ provides explicit fresh-read and version-adoption controls.
 **Local observations:** a semantic table shows each node's promises and accepted
 ballot. Native details expose versions, payload previews, and snapshot cursors.
 
-**Timeline:** time flows down a bounded sequence diagram, with node lanes between
+**Timeline:** newest events appear at the top of a bounded sequence diagram, with node lanes between
 host timestamps and message/state evidence. Blue request arrows, green response
 arrows, local loops, state squares, and fault crosses pair with readable event
-labels. Dashed strokes distinguish initiated attempts; observing-host dots mark
+labels placed directly above the arrows. Short parameters print inline; long
+parameters and labels use ellipses with full tooltip and expanded evidence.
+Dashed strokes distinguish initiated attempts; observing-host dots mark
 each row's source. Committed ballot/version comparisons and same-host elapsed
 times expose change and cost. Node/kind/text filters and call/operation tracing
 narrow the evidence. Follow latest scrolls with arrivals; pause freezes displayed

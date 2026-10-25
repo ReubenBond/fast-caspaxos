@@ -1,5 +1,5 @@
 import { ballotText, exactKey } from './contracts';
-import type { AcceptorState, NodeEvent, Protocol } from './contracts';
+import type { AcceptorState, Ballot, NodeEvent, PayloadPreview, Protocol } from './contracts';
 
 export interface TimelineEntry {
   event: NodeEvent;
@@ -15,6 +15,71 @@ export interface TimelineEntry {
 export function endpoints(nodeId: string, data: Protocol): [string | null, string | null] {
   if (data.direction === 'local') return [nodeId, nodeId];
   return data.direction === 'inbound' ? [data.peerId, nodeId] : [nodeId, data.peerId];
+}
+
+export function formatMessage(event: NodeEvent): { text: string; full: string } {
+  let type: string = event.kind;
+  const full: string[] = [];
+  const short: string[] = [];
+  const add = (value: string, name = '') => {
+    const characters = Array.from(value);
+    full.push(name + value);
+    short.push(name + (characters.length > 24 ? characters.slice(0, 21).join('') + '...' : value));
+  };
+  const ballot = (value: Ballot, name: string) => add(`(${value.round},${value.proposer})`, name);
+  const payload = (value: PayloadPreview | null | undefined) => {
+    if (value) add(`${value.length} B${value.base64 ? ` b64:${value.base64}` : ''}${value.truncated ? ' [truncated]' : ''}`, 'value=');
+  };
+  if ('key' in event.data && event.data.key) {
+    const key = event.data.key;
+    add(`${JSON.stringify(key.text)}${key.truncated ? ' [truncated]' : ''}${key.lossy ? ' [lossy]' : ''}`);
+  }
+  switch (event.kind) {
+    case 'protocol': {
+      const data = event.data;
+      type = data.operation;
+      if (data.phase.startsWith('request-')) {
+        if (data.operation !== 'read') ballot(data.ballot, 'b=');
+        if (data.operation === 'accept') ballot(data.nextBallot, 'next=');
+      } else {
+        type += `:${data.outcome ?? (data.phase === 'fault-observed' ? 'fault' : 'response')}`;
+        if (data.operation !== 'read') ballot(data.ballot, 'b=');
+        if (data.promisedBallot) ballot(data.promisedBallot, 'p=');
+        if (data.acceptedBallot) ballot(data.acceptedBallot, 'a=');
+        if (data.conflictingBallot && (data.conflictingBallot.round !== 0 || data.conflictingBallot.proposer !== 0))
+          ballot(data.conflictingBallot, 'conflict=');
+      }
+      payload(data.value);
+      if (data.error) add(data.error, 'error=');
+      break;
+    }
+    case 'acceptor-state':
+      type = 'state';
+      ballot(event.data.promisedBallot, 'p=');
+      ballot(event.data.acceptedBallot, 'a=');
+      if (event.data.register?.version) add(event.data.register.version, 'v=');
+      break;
+    case 'operation':
+      type = `${event.data.operation}:${event.data.outcome}`;
+      if (event.data.version) add(event.data.version, 'v=');
+      payload(event.data.value);
+      if (event.data.error) add(event.data.error, 'error=');
+      break;
+    case 'storage':
+      type = `storage:${event.data.status}`;
+      if (event.data.error) add(event.data.error, 'error=');
+      break;
+    case 'repair':
+      type = `repair:${event.data.state}`;
+      add(String(event.data.examined), 'examined=');
+      add(String(event.data.repaired), 'repaired=');
+      add(String(event.data.pending), 'pending=');
+      if (event.data.error) add(event.data.error, 'error=');
+      break;
+    case 'reset': add(event.data.reason); break;
+    case 'heartbeat': add(event.data.storageStatus, 'storage='); break;
+  }
+  return { text: `${type}(${short.join(', ')})`, full: `${type}(${full.join(', ')})` };
 }
 
 function callKey(event: Extract<NodeEvent, { kind: 'protocol' }>): string {

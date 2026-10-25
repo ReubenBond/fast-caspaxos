@@ -50,7 +50,7 @@ test('real hosts stream changes, preserve conditional bytes, and recover one dis
     await expect(timeline.getByRole('columnheader', { name: 'Node b', exact: true })).toBeVisible();
     await expect(timeline.getByRole('img', { name: /Node a to Node [bc]: accept request-initiated/ }).first()).toBeAttached();
     await expect(timeline.getByText('Committed acceptor state', { exact: true }).first()).toBeAttached();
-    await expect(timeline.getByText(/ms host elapsed/).first()).toBeAttached();
+    await expect(timeline.getByTitle(/ms host elapsed/).first()).toBeAttached();
     await page.getByLabel('Event', { exact: true }).selectOption('protocol');
     await expect(page.locator('.event-table tbody')).toContainText('accept');
 
@@ -84,6 +84,15 @@ test('real hosts stream changes, preserve conditional bytes, and recover one dis
     await expect(mobile.getByRole('columnheader', { name: 'Message / state change' })).toBeVisible();
     for (const target of [page, mobile]) {
       expect(await target.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      const rows = target.locator('.event-table tbody tr:not(.reset-row)');
+      expect(await rows.count()).toBeGreaterThan(0);
+      const heights = await rows.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().height));
+      expect(Math.max(...heights)).toBeLessThanOrEqual(56);
+      const labels = target.locator('.message-label');
+      expect(await labels.count()).toBeGreaterThan(0);
+      const clipped = await labels.evaluateAll((elements) => elements.some((element) =>
+        element.scrollWidth > element.clientWidth && getComputedStyle(element).textOverflow === 'ellipsis'));
+      expect(clipped).toBe(true);
     }
     const desktopPath = testInfo.outputPath('desktop.png');
     const mobilePath = testInfo.outputPath('mobile.png');

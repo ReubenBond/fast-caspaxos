@@ -558,13 +558,13 @@ describe('Timeline and inventory interactions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Resume timeline' }));
     const rows = screen.getAllByRole('row');
     expect(rows).toHaveLength(4);
-    expect(rows[1]).toHaveTextContent('ready');
+    expect(rows[1]).toHaveTextContent('faulted');
     expect(rows[2]).toHaveTextContent('compare-exchange');
-    expect(rows[3]).toHaveTextContent('faulted');
+    expect(rows[3]).toHaveTextContent('ready');
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
-  it('renders only the latest 200 matching events with time flowing down', async () => {
+  it('renders the latest 200 matching events newest first without reordering retained history', async () => {
     await start();
     render(<TimelineHost store={h.store} />);
     act(() => {
@@ -575,8 +575,10 @@ describe('Timeline and inventory interactions', () => {
     await tick(100);
     const rows = screen.getAllByRole('row');
     expect(rows).toHaveLength(201);
-    expect(within(rows[1]!).getByText('#6')).toBeInTheDocument();
-    expect(within(rows[200]!).getByText('#205')).toBeInTheDocument();
+    expect(within(rows[1]!).getByText('#205')).toBeInTheDocument();
+    expect(within(rows[200]!).getByText('#6')).toBeInTheDocument();
+    expect(h.store.events[0]!.sequence).toBe('1');
+    expect(h.store.events.at(-1)!.sequence).toBe('205');
     expect(screen.queryByText('#5')).not.toBeInTheDocument();
     expect(screen.getByText('205 / 1000 retained · 0 evicted')).toBeInTheDocument();
   });
@@ -608,16 +610,18 @@ describe('Timeline and inventory interactions', () => {
       ballot: { round: 2, proposer: 1 }, nextBallot: { round: 0, proposer: 0 },
     };
     send(event('protocol', '1', data));
-    send({ ...event('protocol', '2', { ...data, phase: 'response-observed', outcome: 'promised' }),
+    send({ ...event('protocol', '2', { ...data, phase: 'response-observed', outcome: 'promised', promisedBallot: { round: 2, proposer: 1 } }),
       timestamp: '2026-10-23T20:00:00.012Z' });
     send(event('storage', '3', { status: 'ready' }));
     await tick(100);
     expect(screen.getByRole('img', { name: 'Node a to Node b: prepare request-initiated' })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Node b to Node a: prepare response-observed · promised' })).toBeInTheDocument();
-    expect(screen.getByText('12 ms host elapsed')).toBeInTheDocument();
+    expect(screen.getByTitle('12 ms host elapsed')).toHaveTextContent('12 ms');
+    expect(screen.getByText('prepare("alpha", b=(2,1))')).toBeInTheDocument();
+    expect(screen.getByText('prepare:promised("alpha", b=(2,1), p=(2,1))')).toBeInTheDocument();
     fireEvent.change(screen.getByRole('combobox', { name: 'Node' }), { target: { value: 'b' } });
     expect(screen.getAllByRole('row')).toHaveLength(3);
-    const details = screen.getAllByText('Inspect event')[1]!.closest('details')!;
+    const details = screen.getAllByLabelText('Inspect event')[1]!.closest('details')!;
     details.open = true;
     fireEvent(details, new Event('toggle'));
     fireEvent.click(within(details).getByRole('button', { name: 'Trace call' }));
@@ -640,6 +644,10 @@ describe('Timeline and inventory interactions', () => {
     await tick(100);
     fireEvent.change(screen.getByRole('textbox', { name: 'Filter messages' }), { target: { value: '"sequence":"2"' } });
     expect(screen.getAllByRole('row')).toHaveLength(2);
+    expect(screen.queryByText('Promised: (1, 1) -> (2, 1)')).not.toBeInTheDocument();
+    const details = screen.getByLabelText('Inspect event').closest('details')!;
+    details.open = true;
+    fireEvent(details, new Event('toggle'));
     expect(screen.getByText('Promised: (1, 1) -> (2, 1)')).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Node a: Committed acceptor state' })).toBeInTheDocument();
     expect(screen.queryByText('First retained state for this key and node generation')).not.toBeInTheDocument();
@@ -660,10 +668,13 @@ describe('Timeline and inventory interactions', () => {
     fireEvent.change(screen.getByRole('combobox', { name: 'Event' }), { target: { value: 'repair' } });
     expect(screen.getAllByRole('row')).toHaveLength(2);
     expect(screen.getByText('Repair complete')).toBeInTheDocument();
+    const details = screen.getByLabelText('Inspect event').closest('details')!;
+    details.open = true;
+    fireEvent(details, new Event('toggle'));
     expect(screen.getByText('Examined: 5 · Repaired: 3 · Pending: 0')).toBeInTheDocument();
   });
 
-  it('follows new arrivals until the operator scrolls up and resumes following explicitly', async () => {
+  it('follows new arrivals at the top until the operator scrolls down and resumes explicitly', async () => {
     await start();
     render(<TimelineHost store={h.store} />);
     const viewport = screen.getByRole('region', { name: 'Scrollable event timeline' });
@@ -673,21 +684,21 @@ describe('Timeline and inventory interactions', () => {
     });
     send(event('storage', '1', { status: 'ready' }));
     await tick(100);
-    expect(viewport.scrollTop).toBe(2000);
+    expect(viewport.scrollTop).toBe(0);
     fireEvent.scroll(viewport, { target: { scrollTop: 100 } });
     expect(screen.getByRole('checkbox', { name: 'Follow latest' })).not.toBeChecked();
     send(event('storage', '2', { status: 'stopped' }));
     await tick(100);
     expect(viewport.scrollTop).toBe(100);
     fireEvent.click(screen.getByRole('checkbox', { name: 'Follow latest' }));
-    expect(viewport.scrollTop).toBe(2000);
+    expect(viewport.scrollTop).toBe(0);
     fireEvent.click(screen.getByRole('button', { name: 'Pause timeline' }));
     viewport.scrollTop = 500;
     send(event('storage', '3', { status: 'ready' }));
     await tick(100);
     expect(viewport.scrollTop).toBe(500);
     fireEvent.click(screen.getByRole('button', { name: 'Resume timeline' }));
-    expect(viewport.scrollTop).toBe(2000);
+    expect(viewport.scrollTop).toBe(0);
   });
 
   it.each([

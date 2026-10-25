@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { NodeEvent, Protocol } from './contracts';
-import { buildTimeline } from './timeline-model';
+import { buildTimeline, formatMessage } from './timeline-model';
 import { event, key } from './test-fixtures';
 
 function protocol(sequence: string, changes: Partial<Protocol> = {}, nodeId = 'a', bootId = `${nodeId}-boot`) {
@@ -20,6 +20,44 @@ function state(sequence: string, round: number, nodeId = 'a', bootId = `${nodeId
 }
 
 describe('timeline evidence', () => {
+  it('prints short request and response parameters on message labels', () => {
+    expect(formatMessage(protocol('1', { key: key('dog') }))).toEqual({
+      text: 'accept("dog", b=(1,1), next=(2,1))',
+      full: 'accept("dog", b=(1,1), next=(2,1))',
+    });
+    expect(formatMessage(protocol('2', {
+      key: key('dog'), phase: 'response-observed', outcome: 'accepted', promisedBallot: { round: 2, proposer: 1 },
+      conflictingBallot: { round: 0, proposer: 0 },
+    })).text).toBe('accept:accepted("dog", b=(1,1), p=(2,1))');
+    expect(formatMessage(protocol('3', { key: key(''), operation: 'read' })).text).toBe('read("")');
+  });
+
+  it('abbreviates long parameters with ellipses while retaining full tooltip evidence', () => {
+    const data = protocol('1', {
+      key: key('abcdefghijklmnopqrstuvwxyz'),
+      value: { base64: 'A'.repeat(80), length: 300, truncated: true },
+    });
+    const label = formatMessage(data);
+    expect(label.text).toBe('accept("abcdefghijklmnopqrst..., b=(1,1), next=(2,1), value=300 B b64:AAAAAAAAAAA...)');
+    expect(label.full).toBe(`accept("abcdefghijklmnopqrstuvwxyz", b=(1,1), next=(2,1), value=300 B b64:${'A'.repeat(80)} [truncated])`);
+  });
+
+  it('keeps parameters at the display limit and escapes controls without splitting surrogate pairs', () => {
+    expect(formatMessage(protocol('1', { key: key('a'.repeat(22)), operation: 'read' })).text)
+      .toBe(`read("${'a'.repeat(22)}")`);
+    const label = formatMessage(protocol('1', { key: key('😀'.repeat(25) + '\n'), operation: 'read' }));
+    expect(label.text).toBe(`read("${'😀'.repeat(20)}...)`);
+    expect(label.full).toBe(`read("${'😀'.repeat(25)}\\n")`);
+  });
+
+  it('labels state changes, faults and empty payloads with their available parameters', () => {
+    expect(formatMessage(state('1', 2)).text).toBe('state("chosen", p=(2,1), a=(2,1), v=v2)');
+    expect(formatMessage(protocol('1', { phase: 'fault-observed', error: 'IOException' })).text)
+      .toBe('accept:fault("chosen", b=(1,1), error=IOException)');
+    expect(formatMessage(protocol('1', { value: { length: 0, base64: '', truncated: false } })).text)
+      .toBe('accept("chosen", b=(1,1), next=(2,1), value=0 B)');
+  });
+
   it.each([
     { name: 'outbound initiation', direction: 'outbound', phase: 'request-initiated', from: 'a', to: 'b', shape: 'request' },
     { name: 'inbound receipt', direction: 'inbound', phase: 'request-received', from: 'b', to: 'a', shape: 'request' },

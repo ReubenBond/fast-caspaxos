@@ -108,7 +108,7 @@ Truncated or lossy event keys invalidate broad views; exact lookup always uses
 the complete selected key.
 
 **Cluster timeline:** node lanes show the latest 200 matching observations with
-time flowing down the page, oldest to newest, from a retained window of 1,000
+the newest events at the top, from a retained window of 1,000
 events. Requests point toward acceptors; responses point back to callers. Dashed
 arrows mark initiated attempts, solid arrows mark received requests and completed
 responses, loops show local calls, and crosses mark faults at their observing
@@ -117,8 +117,12 @@ initiation, receipt, production, and completion rows sharing one call ID.
 The small dot identifies the observing host. Incoming calls without peer metadata
 use an **Unknown peer** lane.
 
-Committed acceptor transitions show promised/accepted ballots and logical
-versions alongside their previous retained values. Storage, quorum-operation,
+Compact rows label arrows with message types and parameters: keys, ballots,
+next promises, response outcomes, and value previews. Long parameters and labels
+use ellipses; hovering shows the full label, and expanding the event reveals the
+complete diagnostic envelope. The row's summary expands ballot/version changes
+and tracing controls. Committed acceptor transitions show promised/accepted ballots and logical
+versions alongside their previous retained values in the expanded evidence. Storage, quorum-operation,
 and repair lifecycle outcomes appear on their node's lane. Reset/history-gap
 markers and retention counts expose the available evidence. Comparisons start
 fresh after node restarts, stream resets, sequence gaps, or ambiguous key previews.
@@ -127,11 +131,12 @@ Snapshots above remain the authority for current local state.
 Node filters include both observed and peer endpoints. Event-kind and text filters
 narrow messages, keys, and outcomes. Expand an event for the complete diagnostic
 envelope, bounded Base64 previews, and **Trace call** / **Trace operation** actions.
-**Follow latest** scrolls with new arrivals; scrolling up releases it.
+**Follow latest** keeps new arrivals at the top; scrolling down releases it.
 **Pause timeline** freezes displayed history while subscriptions and state
 refreshes continue. Heartbeats update health.
 
-UTC timestamps retain the host's reported precision. **Host elapsed** pairs a
+UTC timestamps display milliseconds and retain full host precision in their
+tooltip and expanded event. **Host elapsed** pairs a
 request and its completion on the same node, boot, direction, peer, call,
 operation ID, and method, using millisecond-resolution host timestamps. This
 includes time spent at that invocation boundary; backwards clock movement is
