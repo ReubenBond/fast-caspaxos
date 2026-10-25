@@ -1,6 +1,55 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Api, endpoint, fromBase64, textBytes, toBase64, utf8 } from './api';
 import { status } from './test-fixtures';
+import type { ClusterAdminResult, ProposerSettings, ResetRequest } from './contracts';
+
+describe('cluster administration API requests', () => {
+  const outcome: ClusterAdminResult = {
+    state: 'incomplete', reset: null,
+    nodes: [{ nodeId: 'a', state: 'active', error: null }, { nodeId: 'b', state: 'unconfirmed', error: 'offline' }],
+  };
+  it('sends all proposer policy fields unchanged in one cluster settings request', async () => {
+    const settings: ProposerSettings = {
+      mode: 'adaptive', startInFastMode: false, enableForwarding: false,
+      conflictDebtIncrement: 2147483647, conflictDebtDecay: 2, fastReopenThreshold: 3, leaderMissThreshold: 5,
+    };
+    const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json(outcome));
+    const signal = new AbortController().signal;
+    expect(await new Api(request).applySettings('http://a.test', settings, signal)).toEqual(outcome);
+    expect(request).toHaveBeenCalledExactlyOnceWith('http://a.test/v1/admin/cluster/settings', {
+      method: 'POST', signal, cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+      body: '{"mode":"adaptive","startInFastMode":false,"enableForwarding":false,"conflictDebtIncrement":2147483647,"conflictDebtDecay":2,"fastReopenThreshold":3,"leaderMissThreshold":5}',
+    });
+  });
+
+  it('sends the reset operation identity and large decimal expected epoch unchanged', async () => {
+    const reset: ResetRequest = { operationId: '123456781234123412341234567890ab', expectedEpoch: '9007199254740993' };
+    const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ ...outcome, reset }));
+    const signal = new AbortController().signal;
+    expect(await new Api(request).resetCluster('http://a.test', reset, signal)).toEqual({ ...outcome, reset });
+    expect(request).toHaveBeenCalledExactlyOnceWith('http://a.test/v1/admin/cluster/reset', {
+      method: 'POST', signal, cache: 'no-store', headers: { 'Content-Type': 'application/json' },
+      body: '{"operationId":"123456781234123412341234567890ab","expectedEpoch":"9007199254740993"}',
+    });
+  });
+
+  it('fetches uncached control status and rejects unsupported administration schemas', async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ schemaVersion: 2 }));
+    const signal = new AbortController().signal;
+    await expect(new Api(request).administration('http://a.test', signal)).rejects.toThrow('Unsupported administration schema');
+    expect(request).toHaveBeenCalledExactlyOnceWith('http://a.test/v1/admin/control', { signal, cache: 'no-store' });
+  });
+
+  it.each([
+    { name: 'conflict', response: () => new Response('stale epoch', { status: 409 }), error: 'Administration response (409): stale epoch' },
+    { name: 'proxy failure', response: () => new Response('response lost', { status: 502 }), error: 'Administration response (502): response lost' },
+  ])('surfaces $name without automatically replaying a reset', async ({ response, error }) => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(response());
+    await expect(new Api(request).resetCluster('http://a.test',
+      { operationId: '123456781234123412341234567890ab', expectedEpoch: '0' }, new AbortController().signal)).rejects.toThrow(error);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('API requests', () => {
   it('calls native fetch without binding the Api instance as its receiver', async () => {

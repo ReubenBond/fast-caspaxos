@@ -503,6 +503,67 @@ describe('ClusterStore subscriptions, ordering and refreshes', () => {
     expect(h.store.nodes[0]!.storage).toEqual({ status: 'faulted', error: 'disk failed' });
   });
 
+  it.each(['success', 'failure'] as const)('fences late pre-reset %s after a same-boot cluster reset', async outcome => {
+    await start('chosen');
+    h.store.setQuery('', 'chosen');
+    await advance(300);
+    const logical = deferred<Register>();
+    const inventory = deferred<{ keys: string[]; continuation: string | null }>();
+    const locals = peers.map(() => deferred<ReturnType<typeof snapshot>>());
+    h.read.mockReturnValueOnce(logical.promise).mockResolvedValue({ present: false });
+    h.keys.mockReturnValueOnce(inventory.promise).mockResolvedValue({ keys: [], continuation: null });
+    h.state.mockImplementation((origin) => locals[peers.findIndex(peer => peer.httpEndpoint === origin)]!.promise);
+    h.store.refresh();
+    await advance(300);
+    const signals = [
+      h.read.mock.calls.at(-1)![2], h.keys.mock.calls.at(-1)![3],
+      ...h.state.mock.calls.slice(-2).map(call => call[2]),
+    ];
+    h.state.mockImplementation(async origin => {
+      const id = peers.find(peer => peer.httpEndpoint === origin)!.id;
+      return snapshot(id, { cursor: `${id}-boot:10` });
+    });
+    h.sources.forEach((source, index) => source.send(event('reset', '10', { reason: 'cluster-activate' }, peers[index]!.id)));
+    expect(signals.every(signal => signal.aborted)).toBe(true);
+    expect(h.store.after).toBeNull();
+    expect(h.store.nodes.map(node => node.boot)).toEqual(['a-boot', 'b-boot']);
+    if (outcome === 'success') {
+      logical.resolve({ present: true, bytes: new Uint8Array([99]), etag: '"pre-reset"' });
+      inventory.resolve({ keys: ['resurrected'], continuation: 'resurrected' });
+      locals.forEach((local, index) => local.resolve(snapshot(peers[index]!.id, {
+        cursor: `${peers[index]!.id}-boot:9`,
+        entry: { key: 'chosen', promisedBallot: { round: 9, proposer: 1 }, acceptedBallot: { round: 8, proposer: 1 },
+          acceptedValue: { base64: 'Yw==', length: 1, truncated: false },
+          register: { format: 'register', isPresent: true, version: '"pre-reset"', value: null } },
+      })));
+    } else {
+      logical.reject(new Error('pre-reset read failed'));
+      inventory.reject(new Error('pre-reset inventory failed'));
+      locals.forEach(local => local.reject(new Error('pre-reset snapshot failed')));
+    }
+    h.sources[0]!.send(accepted('9', key(), '"pre-reset"'));
+    // Check before the scheduled authoritative refresh, not just after it could
+    // conceal an incorrectly published old response.
+    await advance(0);
+    expect(h.store.current!.state).toEqual({ value: initialRegister(), loading: false, stale: true });
+    expect(h.store.inventory!.state.value).toBeUndefined();
+    for (const node of h.store.nodes)
+      expect(node.local!.state).toEqual({ value: snapshot(node.peer.id), loading: false, stale: true });
+    await advance(400);
+    expect(h.store.current!.state).toEqual({ value: { present: false }, loading: false, stale: false });
+    expect(h.store.inventory!.state).toEqual({ value: { keys: [], continuation: null }, loading: false, stale: false });
+    expect(h.keys.mock.calls.at(-1)!.slice(0, 3)).toEqual([peers[0]!.httpEndpoint, '', null]);
+    for (const node of h.store.nodes) {
+      expect(node.local!.state).toEqual({
+        value: snapshot(node.peer.id, { cursor: `${node.peer.id}-boot:10` }), loading: false, stale: false,
+      });
+      expect(node.acceptedEnvelopes.size).toBe(0);
+    }
+    expect(h.store.events.some(item => item.kind === 'acceptor-state' && item.sequence === '9')).toBe(false);
+    expect(h.streams).toHaveBeenCalledTimes(2);
+    h.sources.forEach(source => expect(source.close).not.toHaveBeenCalled());
+  });
+
   it('refreshes every observation intentionally without replacing the streams', async () => {
     await start('chosen');
     h.keys.mockClear();

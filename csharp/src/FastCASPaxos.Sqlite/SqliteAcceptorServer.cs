@@ -272,6 +272,18 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
             _changes.Add(AcceptorStateObservation.From(new(key, state.PromisedBallot, state.AcceptedBallot, state.AcceptedValue)));
     }
 
+    /// <summary>Clears all accepted values and promises after the owner has fenced and drained protocol traffic.</summary>
+    public async ValueTask ClearAsync(CancellationToken cancellationToken = default)
+    {
+        await Enqueue((connection, transaction) =>
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "DELETE FROM acceptor_state;";
+            return command.ExecuteNonQuery();
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>
     /// Stops admission and drains admitted work. Repeated calls await the same shutdown.
     /// A failed writer propagates its storage exception through disposal as well as its requests.

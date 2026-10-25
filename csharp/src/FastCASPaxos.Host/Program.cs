@@ -21,6 +21,7 @@ builder.Services.AddGrpc(grpc =>
     grpc.MaxSendMessageSize = options.MaxSendMessageBytes;
     grpc.EnableDetailedErrors = false;
     grpc.Interceptors.Add<DiagnosticServerInterceptor>();
+    grpc.Interceptors.Add<EpochServerInterceptor>();
 });
 builder.Services.AddAdminCors(options);
 builder.Services.Configure<HostOptions>(builder.Configuration.GetSection("HostOptions"));

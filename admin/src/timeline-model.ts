@@ -76,6 +76,11 @@ export function formatMessage(event: NodeEvent): { text: string; full: string } 
       add(String(event.data.pending), 'pending=');
       if (event.data.error) add(event.data.error, 'error=');
       break;
+    case 'administration':
+      type = `administration:${event.data.command}`;
+      add(event.data.nodeId, 'node=');
+      add(event.data.error, 'error=');
+      break;
     case 'reset': add(event.data.reason); break;
     case 'heartbeat': add(event.data.storageStatus, 'storage='); break;
   }
@@ -186,6 +191,11 @@ export function buildTimeline(events: readonly NodeEvent[]): TimelineEntry[] {
       case 'reset':
         entry.shape = 'reset';
         entry.summary = `Resynchronize: ${event.data.reason}`;
+        break;
+      case 'administration':
+        entry.shape = 'fault';
+        entry.summary = `Administration ${event.data.command} on ${event.data.nodeId}`;
+        entry.facts.push(event.data.error);
         break;
       case 'heartbeat':
         entry.summary = `Heartbeat · storage ${event.data.storageStatus}`;

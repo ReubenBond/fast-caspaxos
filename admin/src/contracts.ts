@@ -30,12 +30,30 @@ export interface Repair {
   state: string; departing: boolean; targetReplicas: number;
   examined: number; repaired: number; pending: number; error: string | null; timestamp: string;
 }
+export interface ProposerSettings {
+  mode: 'classic' | 'fast' | 'leader' | 'fast+leader' | 'adaptive';
+  startInFastMode: boolean;
+  enableForwarding: boolean;
+  conflictDebtIncrement: number;
+  conflictDebtDecay: number;
+  fastReopenThreshold: number;
+  leaderMissThreshold: number;
+}
+export interface ResetRequest { operationId: string; expectedEpoch: string }
+export interface AdminNodeResult { nodeId: string; state: string; error: string | null }
+export interface ClusterAdminResult { state: 'complete' | 'incomplete'; nodes: AdminNodeResult[]; reset: ResetRequest | null }
+export interface ResetProgress { request: ResetRequest; phase: string; nodes: AdminNodeResult[] }
+export interface NodeAdministration {
+  schemaVersion: 1; nodeId: string; coordinatorId: string; epoch: string; state: string;
+  settings: ProposerSettings; pendingReset: ResetRequest | null; clusterReset: ResetProgress | null;
+}
 interface EventData {
   protocol: Protocol;
   operation: Operation;
   'acceptor-state': AcceptorState;
   storage: Storage;
   repair: Repair;
+  administration: { nodeId: string; command: string; error: string };
   reset: { reason: string };
   heartbeat: { storageStatus: string };
 }
@@ -64,7 +82,7 @@ export type WriteResult =
   | { kind: 'unknown'; message: string; currentEtag?: string }
   | { kind: 'rejected'; message: string };
 
-export const eventKinds: EventKind[] = ['protocol', 'operation', 'acceptor-state', 'storage', 'repair', 'reset', 'heartbeat'];
+export const eventKinds: EventKind[] = ['protocol', 'operation', 'acceptor-state', 'storage', 'repair', 'administration', 'reset', 'heartbeat'];
 
 export function parseEvent(text: string, kind: EventKind, nodeId: string): NodeEvent {
   const item = JSON.parse(text) as NodeEvent;

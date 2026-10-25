@@ -6,6 +6,7 @@ import type { PayloadPreview, Register, WriteResult } from './contracts';
 import type { ResourceState } from './resource';
 import { ClusterStore } from './store';
 import { Timeline } from './Timeline';
+import { ClusterControls } from './ClusterControls';
 
 type NavigationGuard = 'pending' | 'draft' | 'uncertain' | null;
 
@@ -112,6 +113,11 @@ export function App({ store }: { store: ClusterStore }) {
       </article>)}
     </section>
 
+    <ClusterControls store={store} resetBlocked={navigationGuard !== null} onReset={() => {
+      setCreate(false);
+      store.select(null);
+      store.setQuery(store.prefix, null);
+    }} />
     <main id="registers" className="workbench">
       <section className="inventory panel" aria-labelledby="keys-title">
         <div className="panel-heading"><h2 id="keys-title">Registers</h2>

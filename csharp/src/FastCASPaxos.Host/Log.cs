@@ -2,6 +2,9 @@ namespace FastCASPaxos.Host;
 
 internal static partial class Log
 {
+    [LoggerMessage(9, LogLevel.Error, "Node administration failed; inspect durable progress before retrying.")]
+    public static partial void AdministrationFailed(this ILogger logger, Exception error);
+
     [LoggerMessage(1, LogLevel.Warning, "Cluster repair was only partially staged.")]
     public static partial void ClusterRepairPartiallyStaged(this ILogger logger, Exception error);
 

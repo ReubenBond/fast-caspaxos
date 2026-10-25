@@ -85,6 +85,14 @@ its outcome. Disposal closes admission, drains admitted work, and releases the
 connection. Further calls fail with `ObjectDisposedException`; repeated disposal
 awaits the same shutdown.
 
+`ClearAsync` deletes every accepted value and promise through the same serialized
+WAL/FULL writer transaction. Its owner first fences every protocol writer for
+this acceptor and drains admitted work. The
+[host cluster reset](../FastCASPaxos.Host/README.md#cluster-administration)
+establishes that boundary across every fixed member and advances a durable
+generation before serving new traffic. All instances sharing an acceptor
+database participate in the owner's fence.
+
 Any storage/transaction failure faults all affected requests and retires the
 writer. Pending and future operations report that failure; disposal reports it
 as well. Commit errors and process/transport failures can leave an unknown

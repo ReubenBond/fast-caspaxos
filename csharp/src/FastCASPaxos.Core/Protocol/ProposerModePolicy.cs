@@ -164,7 +164,7 @@ public sealed class ProposerModePolicy
             return;
         }
 
-        LeaderMisses = Math.Min(int.MaxValue, LeaderMisses + 1);
+        LeaderMisses = (int)Math.Min(int.MaxValue, (long)LeaderMisses + 1);
     }
 
     internal void RecordLeaderForwardSuccess()
@@ -186,7 +186,7 @@ public sealed class ProposerModePolicy
 
         if (maxConflictBallot.IsFastRoundBallot || currentBallot.IsFastRoundBallot)
         {
-            ConflictDebt = Math.Min(int.MaxValue, ConflictDebt + AdaptivePolicy.ConflictDebtIncrement);
+            ConflictDebt = (int)Math.Min(int.MaxValue, (long)ConflictDebt + AdaptivePolicy.ConflictDebtIncrement);
         }
 
         LeaderHintProposerId = proposerId;

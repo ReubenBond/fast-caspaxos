@@ -114,12 +114,12 @@ internal abstract class TestCallInvoker : CallInvoker
         Method<TRequest, TResponse> method, string? host, CallOptions options) => throw new NotSupportedException();
 }
 
-internal sealed class TestServerCallContext(CallOptions options) : ServerCallContext
+internal sealed class TestServerCallContext(CallOptions options, string method = "contract-test") : ServerCallContext
 {
     private readonly Metadata _trailers = new();
     private Status _status;
     private WriteOptions? _writeOptions;
-    protected override string MethodCore => "contract-test";
+    protected override string MethodCore => method;
     protected override string HostCore => "in-process";
     protected override string PeerCore => "in-process";
     protected override DateTime DeadlineCore => options.Deadline ?? DateTime.MaxValue;

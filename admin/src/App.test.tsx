@@ -278,6 +278,39 @@ describe('App editor navigation protection', () => {
     return event.defaultPrevented;
   }
 
+  it('completed cluster reset removes the old editor precondition and restarts inventory from the first page', async () => {
+    vi.spyOn(h.api, 'administration').mockImplementation(async origin => ({
+      schemaVersion: 1, nodeId: origin === peers[0]!.httpEndpoint ? 'a' : 'b', coordinatorId: 'a',
+      epoch: '0', state: 'active', pendingReset: null, clusterReset: null,
+      settings: { mode: 'adaptive', startInFastMode: true, enableForwarding: true,
+        conflictDebtIncrement: 4, conflictDebtDecay: 1, fastReopenThreshold: 0, leaderMissThreshold: 1 },
+    }));
+    const reset = vi.spyOn(h.api, 'resetCluster').mockResolvedValue({
+      state: 'complete', reset: { operationId: '123456781234123412341234567890ab', expectedEpoch: '0' },
+      nodes: peers.map(peer => ({ nodeId: peer.id, state: 'active', error: null })),
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await openEditor();
+    expect(draft()).toHaveValue('A');
+    act(() => h.store.setQuery('', 'chosen'));
+    await tick(400);
+    const details = screen.getByText('Cluster controls').closest('details')!;
+    act(() => { details.open = true; fireEvent(details, new Event('toggle')); });
+    await tick(0);
+    h.keys.mockResolvedValue({ keys: [], continuation: null });
+    fireEvent.click(screen.getByRole('button', { name: 'Clear entire cluster' }));
+    await tick(400);
+    expect(reset).toHaveBeenCalledTimes(1);
+    expect(h.store.selected).toBeNull();
+    expect(h.store.current).toBeUndefined();
+    expect(h.store.after).toBeNull();
+    expect(h.keys.mock.calls.at(-1)!.slice(0, 3)).toEqual([peers[0]!.httpEndpoint, '', null]);
+    expect(h.store.inventory!.state.value).toEqual({ keys: [], continuation: null });
+    expect(screen.queryByRole('textbox', { name: /^New complete value for/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Compare and swap' })).not.toBeInTheDocument();
+    expect(h.write).not.toHaveBeenCalled();
+  });
+
   it.each([
     { name: 'pending key', outcome: 'pending', destination: 'key' },
     { name: 'pending host', outcome: 'pending', destination: 'host' },
