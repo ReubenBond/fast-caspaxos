@@ -438,7 +438,6 @@ public abstract class ProposerEngine<TValue, TRoute>
             return;
         }
 
-        if (PreparedBallot is { } observedPromise) Ballot = Ballot.Max(Ballot, observedPromise);
         Ballot = CreateInitialBallot();
         if (_modePolicy.ShouldSkipInitialPrepare(ProposerId)
             && Ballot == Ballot.InitialFast()
@@ -454,7 +453,10 @@ public abstract class ProposerEngine<TValue, TRoute>
     {
         // New work stays on the fast path when enabled; otherwise it starts in this proposer's
         // classic ballot space. Retries are handled separately by RetryPrepare.
-        return ReserveBallot(_modePolicy.CreateProposalBallot(ProposerId, Ballot));
+        var candidate = _modePolicy.CreateProposalBallot(ProposerId, Ballot);
+        if (PreparedBallot is { } observedPromise && candidate <= observedPromise)
+            candidate = _modePolicy.CreateProposalBallot(ProposerId, observedPromise);
+        return ReserveBallot(candidate);
     }
 
     private void SendPrepareForCurrentBallot()
