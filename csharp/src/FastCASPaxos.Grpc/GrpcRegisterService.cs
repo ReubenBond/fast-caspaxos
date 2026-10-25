@@ -5,16 +5,10 @@ using Grpc.Core;
 namespace FastCASPaxos.Grpc;
 
 /// <summary>A remote register adapter. The caller owns the channel supplying the call invoker.</summary>
-public sealed class GrpcRegisterService : IRegisterService
+public sealed class GrpcRegisterService(CallInvoker callInvoker, TimeSpan? callTimeout = null, TimeProvider? timeProvider = null) : IRegisterService
 {
-    private readonly Wire.Register.RegisterClient _client;
-    private readonly ClientCalls _calls;
-
-    public GrpcRegisterService(CallInvoker callInvoker, TimeSpan? callTimeout = null, TimeProvider? timeProvider = null)
-    {
-        _client = new(callInvoker);
-        _calls = new(callTimeout, timeProvider ?? TimeProvider.System);
-    }
+    private readonly Wire.Register.RegisterClient _client = new(callInvoker);
+    private readonly ClientCalls _calls = new(callTimeout, timeProvider ?? TimeProvider.System);
 
     public async ValueTask<RegisterValue> ReadAsync(string key, CancellationToken cancellationToken = default)
     {

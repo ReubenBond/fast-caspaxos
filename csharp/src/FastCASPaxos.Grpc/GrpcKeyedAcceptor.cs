@@ -8,18 +8,11 @@ using Grpc.Core;
 namespace FastCASPaxos.Grpc;
 
 /// <summary>A remote acceptor adapter. The caller owns the channel supplying the call invoker.</summary>
-public sealed class GrpcKeyedAcceptor : IKeyedAcceptor
+public sealed class GrpcKeyedAcceptor(CallInvoker callInvoker, TimeSpan? callTimeout = null, TimeProvider? timeProvider = null) : IKeyedAcceptor
 {
-    private readonly Wire.Acceptor.AcceptorClient _client;
-    private readonly Wire.AcceptorDigests.AcceptorDigestsClient _reads;
-    private readonly ClientCalls _calls;
-
-    public GrpcKeyedAcceptor(CallInvoker callInvoker, TimeSpan? callTimeout = null, TimeProvider? timeProvider = null)
-    {
-        _client = new(callInvoker);
-        _reads = new(callInvoker);
-        _calls = new(callTimeout, timeProvider ?? TimeProvider.System);
-    }
+    private readonly Wire.Acceptor.AcceptorClient _client = new(callInvoker);
+    private readonly Wire.AcceptorDigests.AcceptorDigestsClient _reads = new(callInvoker);
+    private readonly ClientCalls _calls = new(callTimeout, timeProvider ?? TimeProvider.System);
 
     public async ValueTask<AcceptorReadResult> ReadAsync(
         string key, AcceptedDigest? known = null, CancellationToken cancellationToken = default)

@@ -38,12 +38,15 @@ public sealed class AcceptorDigestGrpcService(
                     WireConvert.Require(state.Key == key, "Different must carry the requested key.");
                     WireConvert.Require(known is null || known != new AcceptedDigest(state.AcceptedBallot, AcceptedDigest.Hash(state.AcceptedValue)),
                         "Different must differ from the supplied digest.");
-                    return new Wire.ConditionalAcceptorState { Different = new()
+                    return new Wire.ConditionalAcceptorState
                     {
-                        Key = WireConvert.Text(state.Key),
-                        PromisedBallot = WireConvert.ToWire(state.PromisedBallot),
-                        Accepted = WireConvert.Accepted(state.AcceptedBallot, state.AcceptedValue),
-                    } };
+                        Different = new()
+                        {
+                            Key = WireConvert.Text(state.Key),
+                            PromisedBallot = WireConvert.ToWire(state.PromisedBallot),
+                            Accepted = WireConvert.Accepted(state.AcceptedBallot, state.AcceptedValue),
+                        }
+                    };
                 }
                 return result switch
                 {

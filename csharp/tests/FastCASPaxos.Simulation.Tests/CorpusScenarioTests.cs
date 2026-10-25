@@ -154,7 +154,7 @@ public sealed class CorpusScenarioTests
         new(
             seed,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },

@@ -448,7 +448,8 @@ public sealed class DiagnosticHostTests
             await Frame(reader, "reset");
             using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
             {
-                DataSource = options.AcceptorDatabase, Pooling = false
+                DataSource = options.AcceptorDatabase,
+                Pooling = false
             }.ToString()))
             {
                 connection.Open();
@@ -509,7 +510,8 @@ public sealed class DiagnosticHostTests
         await using var host = await DiagnosticHost.Start(options);
         using var preflight = new HttpRequestMessage(HttpMethod.Options, path)
         {
-            Version = HttpVersion.Version20, VersionPolicy = HttpVersionPolicy.RequestVersionExact
+            Version = HttpVersion.Version20,
+            VersionPolicy = HttpVersionPolicy.RequestVersionExact
         };
         preflight.Headers.Add("Origin", origin);
         var repair = path == "/v1/admin/repair";
@@ -528,7 +530,8 @@ public sealed class DiagnosticHostTests
         Assert.False(response.Headers.Contains("Access-Control-Allow-Credentials"));
         using var request = new HttpRequestMessage(repair ? HttpMethod.Post : HttpMethod.Get, path)
         {
-            Version = HttpVersion.Version20, VersionPolicy = HttpVersionPolicy.RequestVersionExact
+            Version = HttpVersion.Version20,
+            VersionPolicy = HttpVersionPolicy.RequestVersionExact
         };
         request.Headers.Add("Origin", origin);
         using var actual = await host.Client.SendAsync(request);
@@ -600,13 +603,16 @@ internal sealed class DiagnosticHost(NodeRuntime node, WebApplication app, strin
     public Channel<string> CompletedStreams { get; } = completedStreams;
     public HttpClient Client { get; } = new()
     {
-        BaseAddress = new(address), Timeout = Watchdog,
-        DefaultRequestVersion = HttpVersion.Version20, DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact
+        BaseAddress = new(address),
+        Timeout = Watchdog,
+        DefaultRequestVersion = HttpVersion.Version20,
+        DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact
     };
 
     public static NodeOptions Options(TestDirectory directory, string id = "a", int proposer = 1) => new()
     {
-        AcceptorId = id, ProposerId = proposer,
+        AcceptorId = id,
+        ProposerId = proposer,
         AcceptorDatabase = directory.Database($"diagnostic-acceptor-{id}"),
         ProposerDatabase = directory.Database($"diagnostic-proposer-{id}"),
         Peers = [new() { Id = id, Endpoint = "http://127.0.0.1:1", HttpEndpoint = "http://127.0.0.1:11" }]
@@ -678,7 +684,8 @@ internal sealed class DiagnosticHost(NodeRuntime node, WebApplication app, strin
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, "/v1/admin/events" + suffix)
         {
-            Version = HttpVersion.Version20, VersionPolicy = HttpVersionPolicy.RequestVersionExact
+            Version = HttpVersion.Version20,
+            VersionPolicy = HttpVersionPolicy.RequestVersionExact
         };
         if (after is not null) request.Headers.Add("Last-Event-ID", after);
         if (testId is not null) request.Headers.Add("X-Test-Stream", testId);
@@ -702,7 +709,7 @@ internal sealed class DiagnosticHost(NodeRuntime node, WebApplication app, strin
 // A one-shot timer barrier makes heartbeat tests independent of scheduler speed and wall time.
 internal sealed class DiagnosticClock : TimeProvider
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly List<Timer> _timers = [];
     private long _ticks;
     public Channel<TimeSpan> TimerCreated { get; } = Channel.CreateUnbounded<TimeSpan>();

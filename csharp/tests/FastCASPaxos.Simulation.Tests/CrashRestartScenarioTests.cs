@@ -43,7 +43,7 @@ public sealed class CrashRestartScenarioTests
         new(
             seed: 555,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },

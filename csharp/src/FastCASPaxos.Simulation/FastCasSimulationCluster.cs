@@ -33,8 +33,6 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
     private readonly HashSet<FastCasAddress> _clientAddresses = [];
     private readonly Dictionary<FastCasAddress, FastCasAddress> _collocatedProposerClients = [];
     private readonly Dictionary<int, FastCasConsensusRegister<TValue>> _consensusRegisters = [];
-    private ImmutableArray<FastCasSimulationNode<TValue>> _proposerNodes = [];
-    private ImmutableArray<FastCasSimulationNode<TValue>> _acceptorNodes = [];
     private readonly List<string> _faultHistory = [];
     private int _nextClientRequestId;
 
@@ -78,9 +76,9 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
 
     public IReadOnlyDictionary<int, RoutedProposeResponse<TValue, FastCasAddress>> ClientResponses => _clientResponses;
 
-    public ImmutableArray<FastCasSimulationNode<TValue>> ProposerNodes => _proposerNodes;
+    public ImmutableArray<FastCasSimulationNode<TValue>> ProposerNodes { get; private set; } = [];
 
-    public ImmutableArray<FastCasSimulationNode<TValue>> AcceptorNodes => _acceptorNodes;
+    public ImmutableArray<FastCasSimulationNode<TValue>> AcceptorNodes { get; private set; } = [];
 
     public IReadOnlyDictionary<int, FastCasConsensusRegister<TValue>> ConsensusRegisters => _consensusRegisters;
 
@@ -88,24 +86,24 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
 
     public IReadOnlyDictionary<FastCasAddress, FastCasAddress> CollocatedProposerClients => _collocatedProposerClients;
 
-    public int AvailableAcceptorCount => _acceptorNodes.Count(node => node.IsRunning && !node.IsSuspended);
+    public int AvailableAcceptorCount => AcceptorNodes.Count(node => node.IsRunning && !node.IsSuspended);
 
     public FastCasConsensusRegister<TValue> GetConsensusRegister(int ordinal) =>
         _consensusRegisters.TryGetValue(ordinal, out var register)
             ? register
             : throw new InvalidOperationException($"Unknown FastCASPaxos consensus register ordinal '{ordinal}'.");
 
-    public bool CanFormClassicQuorum() => 2 * AvailableAcceptorCount > _acceptorNodes.Length;
+    public bool CanFormClassicQuorum() => 2 * AvailableAcceptorCount > AcceptorNodes.Length;
 
     public bool CanReachClassicQuorum(FastCasAddress proposer)
     {
-        var reachableAcceptors = _acceptorNodes.Count(node =>
+        var reachableAcceptors = AcceptorNodes.Count(node =>
             node.IsRunning
             && !node.IsSuspended
             && Network.CanDeliver(proposer.NetworkAddress, node.NetworkAddress)
             && Network.CanDeliver(node.NetworkAddress, proposer.NetworkAddress));
 
-        return 2 * reachableAcceptors > _acceptorNodes.Length;
+        return 2 * reachableAcceptors > AcceptorNodes.Length;
     }
 
     public FastCasSimulationNode<TValue> AddAcceptor(
@@ -124,7 +122,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
             CreateNodeLogger(nodeId));
 
         RegisterNode(node);
-        _acceptorNodes = _acceptorNodes.Add(node);
+        AcceptorNodes = AcceptorNodes.Add(node);
         ApplyCollocatedLinkLatencyFor(node.Host.Address);
         return node;
     }
@@ -134,7 +132,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         ImmutableArray<FastCasAddress>? acceptors = null)
     {
         if (acceptors is { IsDefault: true }) throw new ArgumentNullException(nameof(acceptors));
-        var resolvedAcceptors = acceptors ?? [.. _acceptorNodes.Select(node => node.Host.Address)];
+        var resolvedAcceptors = acceptors ?? [.. AcceptorNodes.Select(node => node.Host.Address)];
         if (resolvedAcceptors.Length == 0)
         {
             throw new InvalidOperationException("Add at least one acceptor before creating a proposer, or supply explicit acceptor addresses.");
@@ -152,7 +150,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
             CreateNodeLogger(nodeId));
 
         RegisterNode(node);
-        _proposerNodes = _proposerNodes.Add(node);
+        ProposerNodes = ProposerNodes.Add(node);
         ApplyCollocatedLinkLatencyFor(node.Host.Address);
         RegisterCollocatedClient(node.Host.Address);
         RefreshCommittedValueBroadcasters();
@@ -178,7 +176,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
 
         ImmutableArray<FastCasAddress> resolvedAcceptors = acceptors is { } explicitAcceptors
             ? [.. explicitAcceptors.Distinct()]
-            : [.. _acceptorNodes.Select(node => node.Host.Address)];
+            : [.. AcceptorNodes.Select(node => node.Host.Address)];
         if (!resolvedAcceptors.Contains(acceptorAddress))
         {
             resolvedAcceptors = resolvedAcceptors.Add(acceptorAddress);
@@ -211,9 +209,9 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
             CreateNodeLogger(register.ProposerHost.NodeId));
 
         RegisterNode(acceptorNode);
-        _acceptorNodes = _acceptorNodes.Add(acceptorNode);
+        AcceptorNodes = AcceptorNodes.Add(acceptorNode);
         RegisterNode(proposerNode);
-        _proposerNodes = _proposerNodes.Add(proposerNode);
+        ProposerNodes = ProposerNodes.Add(proposerNode);
         _consensusRegisters.Add(ordinal, register);
 
         ApplyCollocatedLinkLatencyFor(acceptorNode.Host.Address);
@@ -254,7 +252,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         switch (address.Role)
         {
             case FastCasParticipantRole.Proposer:
-                if (_acceptorNodes.FirstOrDefault(node => node.Host.Address.Ordinal == address.Ordinal) is { } acceptorNode)
+                if (AcceptorNodes.FirstOrDefault(node => node.Host.Address.Ordinal == address.Ordinal) is { } acceptorNode)
                 {
                     ApplyCollocatedLinkLatency(address, acceptorNode.Host.Address);
                 }
@@ -264,7 +262,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
                 }
                 break;
             case FastCasParticipantRole.Acceptor:
-                if (_proposerNodes.FirstOrDefault(node => node.Host.Address.Ordinal == address.Ordinal) is { } proposerNode)
+                if (ProposerNodes.FirstOrDefault(node => node.Host.Address.Ordinal == address.Ordinal) is { } proposerNode)
                 {
                     ApplyCollocatedLinkLatency(proposerNode.Host.Address, address);
                 }
@@ -274,7 +272,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
 
     private void ApplyAllCollocatedLinkLatencies()
     {
-        foreach (var proposerNode in _proposerNodes)
+        foreach (var proposerNode in ProposerNodes)
         {
             ApplyCollocatedLinkLatencyFor(proposerNode.Host.Address);
         }
@@ -501,7 +499,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
 
     private void RefreshCommittedValueBroadcasters()
     {
-        foreach (var proposerNode in _proposerNodes)
+        foreach (var proposerNode in ProposerNodes)
         {
             if (proposerNode.Host is IFastCasProposerNodeHost<TValue> proposerHost)
             {
@@ -516,7 +514,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         TValue value,
         Ballot preparedBallot)
     {
-        foreach (var proposerNode in _proposerNodes)
+        foreach (var proposerNode in ProposerNodes)
         {
             var targetProposer = proposerNode.Host.Address;
             if (targetProposer == sourceProposer
@@ -544,8 +542,8 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
 
     private void EnsureRoleAddressAvailable(FastCasAddress address)
     {
-        if (_proposerNodes.Any(node => node.Host.Address == address)
-            || _acceptorNodes.Any(node => node.Host.Address == address))
+        if (ProposerNodes.Any(node => node.Host.Address == address)
+            || AcceptorNodes.Any(node => node.Host.Address == address))
         {
             throw new InvalidOperationException($"A FastCASPaxos node is already registered for '{address}'.");
         }
@@ -570,7 +568,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
             }
         }
         builder.AppendLine(CultureInfo.InvariantCulture, $"classicQuorumAvailable: {CanFormClassicQuorum()}");
-        foreach (var proposer in _proposerNodes)
+        foreach (var proposer in ProposerNodes)
         {
             builder.AppendLine(CultureInfo.InvariantCulture, $"reachableQuorum[{proposer.Host.Address}]={CanReachClassicQuorum(proposer.Host.Address)}");
         }
@@ -663,7 +661,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
     }
 
     private FastCasAcceptorStateSnapshot<TValue>[] CreateAcceptorStateSnapshots() =>
-        [.. _acceptorNodes
+        [.. AcceptorNodes
             .OrderBy(node => node.Host.Address.ToString(), StringComparer.Ordinal)
             .Select(node =>
             {
@@ -881,12 +879,12 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
     /// </summary>
     public void ReinitializeForNewRegister()
     {
-        foreach (var proposerNode in _proposerNodes)
+        foreach (var proposerNode in ProposerNodes)
         {
             proposerNode.Restart();
         }
 
-        foreach (var acceptorNode in _acceptorNodes)
+        foreach (var acceptorNode in AcceptorNodes)
         {
             if (acceptorNode.Host is IFastCasAcceptorNodeHost<TValue> acceptorHost)
             {

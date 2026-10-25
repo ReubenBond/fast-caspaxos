@@ -13,7 +13,7 @@ public sealed class RandomizedScenarioTests
         await using var cluster = new FastCasSimulationCluster<StringValue>(
             seed: 333,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },

@@ -64,7 +64,7 @@ public sealed class NetworkFaultScenarioTests
         new(
             seed: 444,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },

@@ -30,7 +30,6 @@ public sealed partial class ProposerDiagnostics
     public const string FastRoundSuccessesMetricName = "fast_caspaxos.proposer.fast_round_successes";
 
     private readonly ILogger _logger;
-    private readonly DiagnosticSource _diagnosticSource;
     private readonly Counter<long> _attempts;
     private readonly Counter<long> _successes;
     private readonly Counter<long> _conflicts;
@@ -61,7 +60,7 @@ public sealed partial class ProposerDiagnostics
         ArgumentNullException.ThrowIfNull(meter);
 
         _logger = logger;
-        _diagnosticSource = diagnosticSource;
+        DiagnosticSource = diagnosticSource;
         _attempts = meter.CreateCounter<long>(AttemptsMetricName, description: "Number of proposals started");
         _successes = meter.CreateCounter<long>(SuccessesMetricName, description: "Number of proposals successfully completed");
         _conflicts = meter.CreateCounter<long>(ConflictsMetricName, description: "Number of ballot conflicts detected");
@@ -79,16 +78,16 @@ public sealed partial class ProposerDiagnostics
     }
 
     /// <summary>The underlying <see cref="DiagnosticSource"/> used to emit events.</summary>
-    public DiagnosticSource DiagnosticSource => _diagnosticSource;
+    public DiagnosticSource DiagnosticSource { get; }
 
     public void OnProposalStarted(object engine, int proposerId, Ballot ballot)
     {
         _attempts.Add(1, new KeyValuePair<string, object?>("proposer_id", proposerId));
         LogProposalStarted(proposerId, ballot);
 
-        if (_diagnosticSource.IsEnabled(ProposerEventNames.ProposalStarted))
+        if (DiagnosticSource.IsEnabled(ProposerEventNames.ProposalStarted))
         {
-            _diagnosticSource.Write(ProposerEventNames.ProposalStarted, new ProposalStartedEvent(engine));
+            DiagnosticSource.Write(ProposerEventNames.ProposalStarted, new ProposalStartedEvent(engine));
         }
     }
 
@@ -134,9 +133,9 @@ public sealed partial class ProposerDiagnostics
     {
         LogValueCommitted(proposerId, ballot);
 
-        if (_diagnosticSource.IsEnabled(ProposerEventNames.ValueCommitted))
+        if (DiagnosticSource.IsEnabled(ProposerEventNames.ValueCommitted))
         {
-            _diagnosticSource.Write(ProposerEventNames.ValueCommitted, new ValueCommittedEvent(engine, committedValue, ballot));
+            DiagnosticSource.Write(ProposerEventNames.ValueCommitted, new ValueCommittedEvent(engine, committedValue, ballot));
         }
     }
 
@@ -145,9 +144,9 @@ public sealed partial class ProposerDiagnostics
         _successes.Add(1, new KeyValuePair<string, object?>("proposer_id", proposerId));
         LogProposalCompleted(proposerId);
 
-        if (_diagnosticSource.IsEnabled(ProposerEventNames.ProposalCompleted))
+        if (DiagnosticSource.IsEnabled(ProposerEventNames.ProposalCompleted))
         {
-            _diagnosticSource.Write(ProposerEventNames.ProposalCompleted, new ProposalCompletedEvent(engine, committedValue));
+            DiagnosticSource.Write(ProposerEventNames.ProposalCompleted, new ProposalCompletedEvent(engine, committedValue));
         }
     }
 
@@ -156,9 +155,9 @@ public sealed partial class ProposerDiagnostics
         _conflicts.Add(1, new KeyValuePair<string, object?>("proposer_id", proposerId));
         LogConflictDetected(proposerId, conflictBallot);
 
-        if (_diagnosticSource.IsEnabled(ProposerEventNames.ConflictDetected))
+        if (DiagnosticSource.IsEnabled(ProposerEventNames.ConflictDetected))
         {
-            _diagnosticSource.Write(ProposerEventNames.ConflictDetected, new ConflictDetectedEvent(engine, conflictBallot));
+            DiagnosticSource.Write(ProposerEventNames.ConflictDetected, new ConflictDetectedEvent(engine, conflictBallot));
         }
     }
 
@@ -173,9 +172,9 @@ public sealed partial class ProposerDiagnostics
 
         LogPrepareRetried(proposerId, oldBallot, newBallot);
 
-        if (_diagnosticSource.IsEnabled(ProposerEventNames.PrepareRetried))
+        if (DiagnosticSource.IsEnabled(ProposerEventNames.PrepareRetried))
         {
-            _diagnosticSource.Write(ProposerEventNames.PrepareRetried, new PrepareRetriedEvent(engine, oldBallot, newBallot, conflictBallot));
+            DiagnosticSource.Write(ProposerEventNames.PrepareRetried, new PrepareRetriedEvent(engine, oldBallot, newBallot, conflictBallot));
         }
     }
 
@@ -184,9 +183,9 @@ public sealed partial class ProposerDiagnostics
         _recoveryAdoptions.Add(1, new KeyValuePair<string, object?>("proposer_id", proposerId));
         LogValueAdopted(proposerId);
 
-        if (_diagnosticSource.IsEnabled(ProposerEventNames.ValueAdopted))
+        if (DiagnosticSource.IsEnabled(ProposerEventNames.ValueAdopted))
         {
-            _diagnosticSource.Write(ProposerEventNames.ValueAdopted, new ValueAdoptedEvent(engine, adoptedValue));
+            DiagnosticSource.Write(ProposerEventNames.ValueAdopted, new ValueAdoptedEvent(engine, adoptedValue));
         }
     }
 

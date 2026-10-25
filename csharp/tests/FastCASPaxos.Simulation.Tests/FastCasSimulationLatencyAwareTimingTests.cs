@@ -51,7 +51,7 @@ public sealed class FastCasSimulationLatencyAwareTimingTests
         await using var cluster = new FastCasSimulationCluster<StringValue>(
             seed: 777,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
                 ProposerRetryBackoff = new FastCasSimulationProposerRetryBackoffOptions
@@ -83,7 +83,7 @@ public sealed class FastCasSimulationLatencyAwareTimingTests
         new(
             seed: 444,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },

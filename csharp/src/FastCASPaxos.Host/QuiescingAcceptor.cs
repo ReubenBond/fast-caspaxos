@@ -7,7 +7,7 @@ namespace FastCASPaxos.Host;
 /// <summary>Seals external protocol mutations and waits for their durable outcomes before shutdown.</summary>
 internal sealed class QuiescingAcceptor(IKeyedAcceptor inner) : IKeyedAcceptor
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool _closed;
     private int _active;

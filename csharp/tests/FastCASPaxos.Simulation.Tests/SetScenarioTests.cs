@@ -74,7 +74,7 @@ public sealed class SetScenarioTests
         new(
             seed: 222,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },

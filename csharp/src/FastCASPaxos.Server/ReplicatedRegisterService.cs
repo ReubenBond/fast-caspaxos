@@ -21,7 +21,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
     private readonly ILocalAcceptorInspection? _localAcceptor;
     private readonly NodeEventJournal? _diagnostics;
     private readonly BoundedReadExecutor _localReads;
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly Dictionary<string, KeyState> _keys = new(StringComparer.Ordinal);
     private readonly LinkedList<string> _idleKeys = new();
     private readonly CancellationTokenSource _stopping = new();
@@ -701,15 +701,14 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         }
     }
 
-    private sealed class Engine : ProposerEngine<ByteString, string>
+    private sealed class Engine(IProposerBallotSource source, ImmutableArray<string> peers, ProposerModePolicy mode) : ProposerEngine<ByteString, string>(new ProposerRuntime(), RegisterEncoding.Absent, peers, mode)
     {
-        private readonly IProposerBallotSource _source;
+        private readonly IProposerBallotSource _source = source;
         private Ballot _reservedBallot;
         public override int ProposerId => _source.ProposerId;
         public Outbound? Outgoing { get; private set; }
         public ByteString? Result { get; private set; }
-        public Engine(IProposerBallotSource source, ImmutableArray<string> peers, ProposerModePolicy mode)
-            : base(new ProposerRuntime(), RegisterEncoding.Absent, peers, mode) => _source = source;
+
         public void Start(RegisterOperation operation, LocalAcceptorBallots? local, bool recover)
         {
             Result = null;

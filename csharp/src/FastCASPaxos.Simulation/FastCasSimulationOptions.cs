@@ -8,23 +8,19 @@ public sealed class FastCasSimulationOptions
 {
     private static readonly FastCasSimulationProposerRetryBackoffOptions DefaultProposerRetryBackoff = new();
     private static readonly TimeSpan DefaultProposerResponseTimeout = TimeSpan.FromSeconds(1);
-
-    private FastCasSimulationProposerRetryBackoffOptions _proposerRetryBackoff = DefaultProposerRetryBackoff.Clone();
-    private TimeSpan _proposerResponseTimeout = DefaultProposerResponseTimeout;
     private TimeSpan _expectedOneWayLatency;
     private TimeSpan _expectedRoundTripLatency;
-    private ProposerModePolicy _proposerModePolicy = ProposerModePolicy.StaticClassic;
 
     public ProposerModePolicy ProposerModePolicy
     {
-        get => _proposerModePolicy;
+        get;
         init
         {
             ArgumentNullException.ThrowIfNull(value);
             value.Validate();
-            _proposerModePolicy = value;
+            field = value;
         }
-    }
+    } = ProposerModePolicy.StaticClassic;
 
     public ILoggerFactory? LoggerFactory { get; init; }
 
@@ -38,14 +34,14 @@ public sealed class FastCasSimulationOptions
 
     public FastCasSimulationProposerRetryBackoffOptions ProposerRetryBackoff
     {
-        get => _proposerRetryBackoff;
+        get;
         set
         {
             ArgumentNullException.ThrowIfNull(value);
             value.Validate();
-            _proposerRetryBackoff = value.Clone();
+            field = value.Clone();
         }
-    }
+    } = DefaultProposerRetryBackoff.Clone();
 
     /// <summary>
     /// Maximum simulated time the proposer waits for prepare/accept responses before
@@ -55,13 +51,13 @@ public sealed class FastCasSimulationOptions
     /// </summary>
     public TimeSpan ProposerResponseTimeout
     {
-        get => _proposerResponseTimeout;
+        get;
         set
         {
             ArgumentOutOfRangeException.ThrowIfLessThan(value, TimeSpan.Zero);
-            _proposerResponseTimeout = value;
+            field = value;
         }
-    }
+    } = DefaultProposerResponseTimeout;
 
     public FastCasCrashRestartStateModel CrashRestartStateModel { get; init; } =
         FastCasCrashRestartStateModel.PreserveDurableAcceptorState;
@@ -76,9 +72,9 @@ public sealed class FastCasSimulationOptions
     internal TimeSpan GetEffectiveForwardingResponseTimeout() =>
         ForwardingResponseTimeout > TimeSpan.Zero
             ? ForwardingResponseTimeout
-            : _proposerResponseTimeout == TimeSpan.Zero
+            : ProposerResponseTimeout == TimeSpan.Zero
                 ? TimeSpan.Zero
-                : TimeSpan.FromTicks(_proposerResponseTimeout.Ticks * 4);
+                : TimeSpan.FromTicks(ProposerResponseTimeout.Ticks * 4);
 
     /// <summary>
     /// Updates the observed one-way and round-trip latency estimates.
@@ -101,10 +97,10 @@ public sealed class FastCasSimulationOptions
             Source: "fixed-defaults",
             ExpectedOneWayLatency: _expectedOneWayLatency,
             ExpectedRoundTripLatency: _expectedRoundTripLatency,
-            RetryBackoffEnabled: _proposerRetryBackoff.Enabled,
-            RetryStartAfterFailures: _proposerRetryBackoff.StartAfterFailures,
-            RetryBaseDelay: _proposerRetryBackoff.BaseDelay,
-            RetryMaxDelay: _proposerRetryBackoff.MaxDelay,
-            RetryJitterRatio: _proposerRetryBackoff.JitterRatio,
-            ResponseTimeout: _proposerResponseTimeout);
+            RetryBackoffEnabled: ProposerRetryBackoff.Enabled,
+            RetryStartAfterFailures: ProposerRetryBackoff.StartAfterFailures,
+            RetryBaseDelay: ProposerRetryBackoff.BaseDelay,
+            RetryMaxDelay: ProposerRetryBackoff.MaxDelay,
+            RetryJitterRatio: ProposerRetryBackoff.JitterRatio,
+            ResponseTimeout: ProposerResponseTimeout);
 }

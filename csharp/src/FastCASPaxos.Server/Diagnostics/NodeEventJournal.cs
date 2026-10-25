@@ -20,8 +20,6 @@ public sealed class NodeEventJournal : IDisposable
     private TaskCompletionSource _changed = NewSignal();
     private long _sequence;
     private bool _stopped;
-    private StorageObservation _storage = new("starting");
-    private NodeEvent? _lastOperation;
 
     public NodeEventJournal(string nodeId, int capacity = 1024, TimeProvider? timeProvider = null)
     {
@@ -40,19 +38,29 @@ public sealed class NodeEventJournal : IDisposable
     public TimeProvider Clock { get; }
     public int Capacity => _events.Length;
     public string Cursor { get { lock (_gate) return Id(_sequence); } }
-    public StorageObservation Storage { get { lock (_gate) return _storage; } }
-    public NodeEvent? LastOperation { get { lock (_gate) return _lastOperation; } }
+    public StorageObservation Storage
+    {
+        get { lock (_gate) return field; }
+
+        private set;
+    } = new("starting");
+    public NodeEvent? LastOperation
+    {
+        get { lock (_gate) return field; }
+
+        private set;
+    }
 
     public void Publish(string kind, object data)
     {
         lock (_gate)
         {
             if (_stopped) return;
-            if (data is StorageObservation storage) _storage = storage;
+            if (data is StorageObservation storage) Storage = storage;
             var sequence = ++_sequence;
             var observation = Event(sequence, kind, data);
             _events[(sequence - 1) % _events.Length] = observation;
-            if (data is OperationObservation) _lastOperation = observation;
+            if (data is OperationObservation) LastOperation = observation;
             var changed = _changed;
             _changed = NewSignal();
             changed.TrySetResult();
@@ -119,7 +127,7 @@ public sealed class NodeEventJournal : IDisposable
         {
             _stopped = true;
             Array.Clear(_events);
-            _lastOperation = null;
+            LastOperation = null;
             _changed.TrySetResult();
         }
     }

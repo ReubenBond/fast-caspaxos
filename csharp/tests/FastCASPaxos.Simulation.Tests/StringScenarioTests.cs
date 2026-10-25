@@ -80,7 +80,7 @@ public sealed class StringScenarioTests
         new(
             seed: 111,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },

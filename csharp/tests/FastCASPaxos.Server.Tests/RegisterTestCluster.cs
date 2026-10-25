@@ -90,7 +90,7 @@ internal static class TestSupport
 
 internal sealed class TestBallots(int proposerId) : IProposerBallotSource, IDisposable
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private int _round;
     public int ProposerId => proposerId;
     public bool Disposed { get; private set; }
@@ -111,7 +111,7 @@ internal sealed class TestBallots(int proposerId) : IProposerBallotSource, IDisp
 
 internal sealed class MemoryAcceptor : IKeyedAcceptor, ILocalAcceptorInspection
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly Dictionary<string, AcceptorState<ByteString?>> _states = new(StringComparer.Ordinal);
     public ConcurrentQueue<(string Key, LocalAcceptorState? State)> Inspections { get; } = new();
 
@@ -272,7 +272,7 @@ internal sealed class Gate : IDisposable
 
 internal sealed class ManualTime : TimeProvider
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly List<ManualTimer> _timers = [];
     private readonly Channel<TimeSpan> _scheduled = Channel.CreateUnbounded<TimeSpan>();
     private long _ticks;

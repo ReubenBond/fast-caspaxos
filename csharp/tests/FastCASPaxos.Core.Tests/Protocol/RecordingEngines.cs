@@ -166,12 +166,9 @@ public sealed class RecordingProposerEngine<TValue, TRoute> : ValueTrackingPropo
 /// Recording subclass of <see cref="OperationDriver{TValue,TRoute}"/> that captures callback
 /// invocations for test assertions.
 /// </summary>
-public sealed class RecordingOperationDriver<TValue, TRoute> : OperationDriver<TValue, TRoute>
+public sealed class RecordingOperationDriver<TValue, TRoute>(TRoute caller, ImmutableArray<TRoute> proposers) : OperationDriver<TValue, TRoute>(caller, proposers)
     where TRoute : notnull
 {
-    public RecordingOperationDriver(TRoute caller, ImmutableArray<TRoute> proposers)
-        : base(caller, proposers) { }
-
     public List<ScheduledProposal<TValue, TRoute>> SentProposals { get; } = [];
     public OperationDriverCompletion<TValue, TRoute>? LastCompletion { get; private set; }
 

@@ -16,7 +16,6 @@ public abstract class ProposerEngine<TValue, TRoute>
     private readonly Dictionary<TRoute, PrepareResponse> _prepareResponses = [];
     private readonly Dictionary<TRoute, AcceptResponse> _acceptResponses = [];
     private readonly ProposerRuntime _runtime;
-    private readonly ProposerModePolicy _modePolicy;
     private protected readonly TValue _initialValue;
     private Ballot _preparedBallot;
     private PreparedBallotState _preparedBallotState;
@@ -37,7 +36,7 @@ public abstract class ProposerEngine<TValue, TRoute>
         modePolicy.Validate();
 
         _runtime = runtime;
-        _modePolicy = modePolicy.CreateRuntimeCopy();
+        ModePolicy = modePolicy.CreateRuntimeCopy();
         _initialValue = initialValue;
         CurrentValue = initialValue;
         _acceptors = acceptors;
@@ -47,19 +46,19 @@ public abstract class ProposerEngine<TValue, TRoute>
 
     public abstract int ProposerId { get; }
 
-    public ProposerModePolicy ModePolicy => _modePolicy;
+    public ProposerModePolicy ModePolicy { get; }
 
     public bool HasPendingProposal => CurrentOperation is not null;
 
     public Ballot Ballot { get; private set; }
 
-    public int ConflictDebt => _modePolicy.ConflictDebt;
+    public int ConflictDebt => ModePolicy.ConflictDebt;
 
-    public int LeaderMisses => _modePolicy.LeaderMisses;
+    public int LeaderMisses => ModePolicy.LeaderMisses;
 
-    public int? LeaderHintProposerId => _modePolicy.LeaderHintProposerId;
+    public int? LeaderHintProposerId => ModePolicy.LeaderHintProposerId;
 
-    public bool ShouldForwardToLeader => _modePolicy.ShouldForwardToLeader(ProposerId);
+    public bool ShouldForwardToLeader => ModePolicy.ShouldForwardToLeader(ProposerId);
 
     public Ballot? PreparedBallot
     {
@@ -183,7 +182,7 @@ public abstract class ProposerEngine<TValue, TRoute>
             ? Ballot.Max(existingPreparedBallot, preparedBallot)
             : preparedBallot;
         PreparedBallot = nextPreparedBallot > Ballot ? nextPreparedBallot : null;
-        _modePolicy.LearnCommittedValue(acceptedBallot, preparedBallot);
+        ModePolicy.LearnCommittedValue(acceptedBallot, preparedBallot);
     }
 
     public void HandlePreparePromised(PreparePromise<TValue, TRoute> message)
@@ -287,7 +286,7 @@ public abstract class ProposerEngine<TValue, TRoute>
         else
         {
             // In prepare phase
-            var (successResponses, failureResponses, _, maxConflictBallot) = AggregatePrepareResponses();
+            var (successResponses, _, _, maxConflictBallot) = AggregatePrepareResponses();
             if (HasQuorum(Ballot, successResponses))
             {
                 return false; // Already reached quorum
@@ -350,7 +349,7 @@ public abstract class ProposerEngine<TValue, TRoute>
                 PreparedBallot = requestedNextBallot;
             }
 
-            _modePolicy.RecordAcceptQuorumSucceeded(Ballot, ProposerId);
+            ModePolicy.RecordAcceptQuorumSucceeded(Ballot, ProposerId);
 
             _runtime.Diagnostics.OnAcceptSucceeded(this, ProposerId, Ballot);
             _runtime.Diagnostics.OnValueCommitted(this, committedValue, ProposerId, Ballot);
@@ -403,7 +402,7 @@ public abstract class ProposerEngine<TValue, TRoute>
     /// </summary>
     protected virtual Ballot ReserveBallot(Ballot candidate) => candidate;
     /// <summary>Hosted engines also establish ownership of a learned classic reservation.</summary>
-    protected virtual bool CanReusePreparedBallot(Ballot ballot) => _modePolicy.CanReusePreparedBallot(ballot, ProposerId);
+    protected virtual bool CanReusePreparedBallot(Ballot ballot) => ModePolicy.CanReusePreparedBallot(ballot, ProposerId);
     protected virtual void OnCachedValueChanged(TValue value) { }
     protected virtual void OnPendingAcceptValueStarted(TValue value) { }
     protected virtual void OnPendingAcceptValueCommitted(TValue value) { }
@@ -417,12 +416,12 @@ public abstract class ProposerEngine<TValue, TRoute>
     protected virtual void OnRetryPrepare(Ballot conflictBallot) { }
 
     public void RecordLeaderForwardFailure()
-        => _modePolicy.RecordLeaderForwardFailure();
+        => ModePolicy.RecordLeaderForwardFailure();
 
     public void RecordLeaderForwardSuccess()
-        => _modePolicy.RecordLeaderForwardSuccess();
+        => ModePolicy.RecordLeaderForwardSuccess();
 
-    public bool ShouldAttemptLeaderTakeover() => _modePolicy.ShouldAttemptLeaderTakeover(ProposerId);
+    public bool ShouldAttemptLeaderTakeover() => ModePolicy.ShouldAttemptLeaderTakeover(ProposerId);
 
     private void BeginOperation()
     {
@@ -454,7 +453,7 @@ public abstract class ProposerEngine<TValue, TRoute>
 
         Ballot = CreateInitialBallot();
         PreparedBallot = null;
-        if (_modePolicy.ShouldSkipInitialPrepare(ProposerId)
+        if (ModePolicy.ShouldSkipInitialPrepare(ProposerId)
             && Ballot == Ballot.InitialFast()
             && TryStartInitialFastAccept())
         {
@@ -468,9 +467,9 @@ public abstract class ProposerEngine<TValue, TRoute>
     {
         // New work stays on the fast path when enabled; otherwise it starts in this proposer's
         // classic ballot space. Retries are handled separately by RetryPrepare.
-        var candidate = _modePolicy.CreateProposalBallot(ProposerId, Ballot);
+        var candidate = ModePolicy.CreateProposalBallot(ProposerId, Ballot);
         if (PreparedBallot is { } observedPromise && candidate <= observedPromise)
-            candidate = _modePolicy.CreateProposalBallot(ProposerId, observedPromise);
+            candidate = ModePolicy.CreateProposalBallot(ProposerId, observedPromise);
         return ReserveBallot(candidate);
     }
 
@@ -701,7 +700,7 @@ public abstract class ProposerEngine<TValue, TRoute>
             _runtime.Diagnostics.OnConflictDetected(this, ProposerId, maxConflict);
         }
 
-        _modePolicy.RecordConflictObserved(Ballot, maxConflict, ProposerId);
+        ModePolicy.RecordConflictObserved(Ballot, maxConflict, ProposerId);
 
         // Retries always move into a proposer-owned classic ballot and then jump above any
         // conflicting ballot we learned about, ensuring the retry does not immediately lose again.
@@ -724,7 +723,7 @@ public abstract class ProposerEngine<TValue, TRoute>
         // Piggybacked prepare is purely a latency optimization. Fast mode keeps asking acceptors
         // to line up the next shared fast ballot; leader mode lines up this proposer's next
         // classic ballot so consecutive operations can remain leader-owned.
-        var candidate = _modePolicy.ChooseNextPrepareBallot(Ballot, ProposerId);
+        var candidate = ModePolicy.ChooseNextPrepareBallot(Ballot, ProposerId);
         return candidate.IsZero ? candidate : ReserveBallot(candidate);
     }
 

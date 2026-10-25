@@ -129,7 +129,7 @@ public sealed class FailurePhaseTests
         else
         {
             Assert.Equal(cause switch
-                { Cause.Cancelled or Cause.TaskCancelled => "cancelled", Cause.Deadline or Cause.Unavailable => "deadline", _ => "internal" },
+            { Cause.Cancelled or Cause.TaskCancelled => "cancelled", Cause.Deadline or Cause.Unavailable => "deadline", _ => "internal" },
                 problem.GetProperty("cause").GetString());
             Assert.Contains(harness.Logs.Entries,
                 entry => entry.Level == LogLevel.Warning && ReferenceEquals(entry.Exception, error));

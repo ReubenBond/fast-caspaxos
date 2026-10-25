@@ -306,7 +306,9 @@ public sealed class Http2IntegrationTests
         var invalidBallot = await Assert.ThrowsAsync<RpcException>(() =>
             protocol.AcceptAsync(new Wire.AcceptRequest
             {
-                Key = "invalid", Ballot = new() { Round = -1 }, Value = Google.Protobuf.ByteString.Empty,
+                Key = "invalid",
+                Ballot = new() { Round = -1 },
+                Value = Google.Protobuf.ByteString.Empty,
             }).ResponseAsync);
         Assert.Equal(StatusCode.InvalidArgument, invalidBallot.StatusCode);
         var missingValue = await Assert.ThrowsAsync<RpcException>(() =>

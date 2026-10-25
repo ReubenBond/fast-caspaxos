@@ -135,7 +135,7 @@ public sealed class GrpcRegisterClient : IRegisterService, IDisposable
     private static bool CanRetry(Exception error, bool readOnly) =>
         error is RegisterUnavailableException
         || (readOnly && error is RemoteCallException
-            { StatusCode: StatusCode.Unavailable or StatusCode.DeadlineExceeded });
+        { StatusCode: StatusCode.Unavailable or StatusCode.DeadlineExceeded });
 
     private static void ValidateTimeout(TimeSpan timeout, string name)
     {

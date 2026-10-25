@@ -13,7 +13,7 @@ public sealed class ChaosScenarioTests
         await using var cluster = new FastCasSimulationCluster<StringValue>(
             seed: 777,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },

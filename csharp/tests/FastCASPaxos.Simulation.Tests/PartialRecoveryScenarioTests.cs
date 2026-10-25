@@ -13,7 +13,7 @@ public sealed class PartialRecoveryScenarioTests
         await using var cluster = new FastCasSimulationCluster<StringValue>(
             seed: 9841,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },

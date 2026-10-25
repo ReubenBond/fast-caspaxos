@@ -17,7 +17,7 @@ public sealed class FastCasSimulationClusterTests
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 123,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },
@@ -37,7 +37,7 @@ public sealed class FastCasSimulationClusterTests
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 456,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },
@@ -58,7 +58,7 @@ public sealed class FastCasSimulationClusterTests
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 457,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticFast,
                 HistoryObserver = history,
@@ -96,7 +96,7 @@ public sealed class FastCasSimulationClusterTests
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 458,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticLeader,
                 HistoryObserver = history,
@@ -129,7 +129,7 @@ public sealed class FastCasSimulationClusterTests
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 459,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.Adaptive(new AdaptiveProposerPolicy
                 {
@@ -174,7 +174,7 @@ public sealed class FastCasSimulationClusterTests
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 460,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.Adaptive(new AdaptiveProposerPolicy
                 {
@@ -219,7 +219,7 @@ public sealed class FastCasSimulationClusterTests
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 789,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },
@@ -250,7 +250,7 @@ public sealed class FastCasSimulationClusterTests
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 246,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },
@@ -272,7 +272,7 @@ public sealed class FastCasSimulationClusterTests
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 741,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },
@@ -297,7 +297,7 @@ public sealed class FastCasSimulationClusterTests
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 742,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },
@@ -345,7 +345,7 @@ public sealed class FastCasSimulationClusterTests
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 743,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },
@@ -371,7 +371,7 @@ public sealed class FastCasSimulationClusterTests
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 744,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticFast,
             },
@@ -400,7 +400,7 @@ public sealed class FastCasSimulationClusterTests
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 135,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },
@@ -423,7 +423,7 @@ public sealed class FastCasSimulationClusterTests
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 654,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },
@@ -446,7 +446,7 @@ public sealed class FastCasSimulationClusterTests
         await using var cluster = new FastCasSimulationCluster<TestValue>(
             seed: 987,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },

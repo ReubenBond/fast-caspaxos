@@ -4,16 +4,10 @@ using Grpc.Core;
 
 namespace FastCASPaxos.Grpc;
 
-public sealed class GrpcAcceptorDigestSource : IAcceptorDigestSource
+public sealed class GrpcAcceptorDigestSource(CallInvoker callInvoker, TimeSpan? callTimeout = null, TimeProvider? timeProvider = null) : IAcceptorDigestSource
 {
-    private readonly Wire.AcceptorDigests.AcceptorDigestsClient _client;
-    private readonly ClientCalls _calls;
-
-    public GrpcAcceptorDigestSource(CallInvoker callInvoker, TimeSpan? callTimeout = null, TimeProvider? timeProvider = null)
-    {
-        _client = new(callInvoker);
-        _calls = new(callTimeout, timeProvider ?? TimeProvider.System);
-    }
+    private readonly Wire.AcceptorDigests.AcceptorDigestsClient _client = new(callInvoker);
+    private readonly ClientCalls _calls = new(callTimeout, timeProvider ?? TimeProvider.System);
 
     public async ValueTask<AcceptorDigestPage> ListDigestsAsync(
         string prefix = "", string? afterKey = null, int limit = 100, CancellationToken cancellationToken = default)

@@ -38,7 +38,7 @@ public sealed partial class NodeRuntime : IRepairScheduler, IRegisterLearner, IR
     private Task? _shutdown;
     private bool _stopping;
     private RepairObservation? _lastRepair;
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private Task? _disposal;
     private readonly NodeOptions _options;
     private NodeAdminStateStore? _admin;

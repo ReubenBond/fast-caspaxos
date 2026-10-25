@@ -123,7 +123,8 @@ internal sealed class RepairHostCluster : IAsyncDisposable
             cluster.Options = DiagnosticHost.Options(directory);
             cluster.Options.Peers.AddRange(cluster.Endpoints.Select((endpoint, index) => new PeerOptions
             {
-                Id = index == 0 ? "b" : "c", Endpoint = endpoint.Address,
+                Id = index == 0 ? "b" : "c",
+                Endpoint = endpoint.Address,
                 HttpEndpoint = $"http://127.0.0.1:{12 + index}"
             }));
             cluster.Options.TargetReplicationFactor = target;

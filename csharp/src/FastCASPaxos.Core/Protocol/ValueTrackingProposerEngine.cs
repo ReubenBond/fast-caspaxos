@@ -6,23 +6,16 @@ namespace FastCASPaxos.Protocol;
 /// Optional proposer base class that recreates the old split-value view on top of the slimmer
 /// single-slot <see cref="ProposerEngine{TValue,TRoute}"/>.
 /// </summary>
-public abstract class ValueTrackingProposerEngine<TValue, TRoute> : ProposerEngine<TValue, TRoute>
+public abstract class ValueTrackingProposerEngine<TValue, TRoute>(
+    ProposerRuntime runtime,
+    TValue initialValue,
+    ImmutableArray<TRoute> acceptors,
+    ProposerModePolicy modePolicy) : ProposerEngine<TValue, TRoute>(runtime, initialValue, acceptors, modePolicy)
     where TRoute : notnull
 {
-    protected ValueTrackingProposerEngine(
-        ProposerRuntime runtime,
-        TValue initialValue,
-        ImmutableArray<TRoute> acceptors,
-        ProposerModePolicy modePolicy)
-        : base(runtime, initialValue, acceptors, modePolicy)
-    {
-        CachedValue = initialValue;
-        PendingAcceptValue = initialValue;
-    }
+    public TValue CachedValue { get; private set; } = initialValue;
 
-    public TValue CachedValue { get; private set; }
-
-    public TValue PendingAcceptValue { get; private set; }
+    public TValue PendingAcceptValue { get; private set; } = initialValue;
 
     protected override void OnCachedValueChanged(TValue value) => CachedValue = value;
 

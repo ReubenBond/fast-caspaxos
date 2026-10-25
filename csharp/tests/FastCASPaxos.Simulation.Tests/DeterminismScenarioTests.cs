@@ -31,7 +31,7 @@ public sealed class DeterminismScenarioTests
         await using var cluster = new FastCasSimulationCluster<StringValue>(
             seed,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },

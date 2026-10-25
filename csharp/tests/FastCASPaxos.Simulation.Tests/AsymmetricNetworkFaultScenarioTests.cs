@@ -62,7 +62,7 @@ public sealed class AsymmetricNetworkFaultScenarioTests
         new(
             seed,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticClassic,
             },

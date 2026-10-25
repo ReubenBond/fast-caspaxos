@@ -12,7 +12,7 @@ namespace FastCASPaxos.Sqlite;
 /// </summary>
 public sealed class SqliteProposerBallotSource : IProposerBallotSource, IDisposable
 {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly SqliteConnection _connection;
     private bool _disposed;
     public int ProposerId { get; }

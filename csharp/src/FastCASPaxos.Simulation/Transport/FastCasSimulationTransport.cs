@@ -3,20 +3,14 @@ using FastCASPaxos.Simulation.Contracts;
 
 namespace FastCASPaxos.Simulation.Transport;
 
-public sealed class FastCasSimulationTransport<TValue>
+public sealed class FastCasSimulationTransport<TValue>(
+    SimulationNetwork network,
+    IFastCasSimulationTransportObserver? observer = null)
 {
     private readonly Dictionary<FastCasAddress, FastCasTransportEndpointRegistration<TValue>> _endpoints = [];
-    private readonly IFastCasSimulationTransportObserver? _observer;
+    private readonly IFastCasSimulationTransportObserver? _observer = observer;
 
-    public FastCasSimulationTransport(
-        SimulationNetwork network,
-        IFastCasSimulationTransportObserver? observer = null)
-    {
-        Network = network ?? throw new ArgumentNullException(nameof(network));
-        _observer = observer;
-    }
-
-    public SimulationNetwork Network { get; }
+    public SimulationNetwork Network { get; } = network ?? throw new ArgumentNullException(nameof(network));
 
     public IReadOnlyCollection<FastCasAddress> RegisteredAddresses => _endpoints.Keys;
 

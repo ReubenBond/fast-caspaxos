@@ -27,26 +27,17 @@ public sealed class FastCasProposerHost<TValue> : IFastCasProposerNodeHost<TValu
         IOperation<TValue> Operation,
         bool IsForwardedExecution);
 
-    private sealed class ActiveRequestState
+    private sealed class ActiveRequestState(FastCasProposerHost<TValue>.PendingRequest request)
     {
-        public ActiveRequestState(PendingRequest request)
-        {
-            RequestId = request.RequestId;
-            ReplyTo = request.ReplyTo;
-            OriginalCaller = request.OriginalCaller;
-            Operation = request.Operation;
-            IsForwardedExecution = request.IsForwardedExecution;
-        }
+        public int RequestId { get; } = request.RequestId;
 
-        public int RequestId { get; }
+        public FastCasAddress ReplyTo { get; } = request.ReplyTo;
 
-        public FastCasAddress ReplyTo { get; }
+        public FastCasAddress OriginalCaller { get; } = request.OriginalCaller;
 
-        public FastCasAddress OriginalCaller { get; }
+        public IOperation<TValue> Operation { get; } = request.Operation;
 
-        public IOperation<TValue> Operation { get; }
-
-        public bool IsForwardedExecution { get; }
+        public bool IsForwardedExecution { get; } = request.IsForwardedExecution;
 
         public FastCasAddress? PendingForwardTarget { get; set; }
     }

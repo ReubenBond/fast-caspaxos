@@ -12,7 +12,7 @@ public sealed class FastLeaderContentionScenarioTests
         await using var cluster = new FastCasSimulationCluster<StringValue>(
             seed: 9831,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticFastLeader,
             },

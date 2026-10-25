@@ -138,8 +138,8 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
     {
         ValidatePair(first, second);
         foreach (var from in Addresses(first))
-        foreach (var to in Addresses(second))
-            _runtime.Network.CreateBidirectionalPartition(from.NetworkAddress, to.NetworkAddress);
+            foreach (var to in Addresses(second))
+                _runtime.Network.CreateBidirectionalPartition(from.NetworkAddress, to.NetworkAddress);
         Record($"partition nodes={first},{second}");
     }
 
@@ -157,8 +157,8 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
         ValidatePair(first, second);
         ArgumentOutOfRangeException.ThrowIfLessThan(delay, TimeSpan.Zero);
         foreach (var from in Addresses(first))
-        foreach (var to in Addresses(second))
-            _runtime.Network.SetBidirectionalLinkLatency(from.NetworkAddress, to.NetworkAddress, delay, TimeSpan.Zero);
+            foreach (var to in Addresses(second))
+                _runtime.Network.SetBidirectionalLinkLatency(from.NetworkAddress, to.NetworkAddress, delay, TimeSpan.Zero);
         Record($"delay nodes={first},{second} ticks={delay.Ticks}");
     }
 
@@ -403,7 +403,8 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
             owner.Record($"transport kind={kind} status={status}");
 
         public void OnProposalSent<TValue>(DateTimeOffset timestamp, FastCasAddress proposer,
-            int requestId, IOperation<TValue> operation) where TValue : IVersionedValue<TValue> { }
+            int requestId, IOperation<TValue> operation) where TValue : IVersionedValue<TValue>
+        { }
 
         public void OnProposalCompleted<TValue>(DateTimeOffset timestamp, FastCasAddress proposer,
             int requestId, ProposeResponse<TValue> response) where TValue : IVersionedValue<TValue>

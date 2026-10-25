@@ -13,7 +13,7 @@ public sealed class FastClassicConflictScenarioTests
         await using var cluster = new FastCasSimulationCluster<StringValue>(
             seed: 666,
             initialValue: default,
-            options:new FastCasSimulationOptions
+            options: new FastCasSimulationOptions
             {
                 ProposerModePolicy = ProposerModePolicy.StaticFast,
             },

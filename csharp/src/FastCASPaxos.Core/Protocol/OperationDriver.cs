@@ -11,7 +11,6 @@ public abstract class OperationDriver<TValue, TRoute>
     where TRoute : notnull
 {
     private readonly TRoute _caller;
-    private readonly ImmutableArray<TRoute> _proposerOrder;
     private readonly Dictionary<TRoute, ProposerWork> _proposers;
     private readonly Dictionary<TRoute, LatestResponse> _latestResponses = [];
 
@@ -23,7 +22,7 @@ public abstract class OperationDriver<TValue, TRoute>
         }
 
         _caller = caller;
-        _proposerOrder = proposers;
+        Proposers = proposers;
         _proposers = [];
         foreach (var proposer in proposers)
         {
@@ -34,7 +33,7 @@ public abstract class OperationDriver<TValue, TRoute>
         }
     }
 
-    public ImmutableArray<TRoute> Proposers => _proposerOrder;
+    public ImmutableArray<TRoute> Proposers { get; }
 
     public bool HasOutstandingWork => _proposers.Values.Any(state => state.Pending.Count > 0 || state.HasScheduledRequest);
 
@@ -96,7 +95,7 @@ public abstract class OperationDriver<TValue, TRoute>
     private List<ScheduledProposal<TValue, TRoute>> StartReadyRequestsCore()
     {
         List<ScheduledProposal<TValue, TRoute>> requests = [];
-        foreach (var proposer in _proposerOrder)
+        foreach (var proposer in Proposers)
         {
             var work = _proposers[proposer];
             if (work.HasScheduledRequest || !work.Pending.TryDequeue(out var operation))

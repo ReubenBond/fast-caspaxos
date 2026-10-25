@@ -162,8 +162,13 @@ public sealed class RegisterApiTests
         var call = Assert.Single(service.Calls);
         Assert.Equal(scenario == PageCase.PrefixAndCursor ? prefix : "", call.Key);
         Assert.Equal(scenario switch { PageCase.EmptyCursor => "", PageCase.PrefixAndCursor => cursor, _ => null }, call.After);
-        Assert.Equal(scenario switch { PageCase.EmptyCursor => 1, PageCase.PrefixAndCursor or PageCase.LeadingZeroLimit => 2,
-            PageCase.MaxLimit => int.MaxValue, _ => 100 }, call.Limit);
+        Assert.Equal(scenario switch
+        {
+            PageCase.EmptyCursor => 1,
+            PageCase.PrefixAndCursor or PageCase.LeadingZeroLimit => 2,
+            PageCase.MaxLimit => int.MaxValue,
+            _ => 100
+        }, call.Limit);
         Assert.Equal(cancellation.Token, call.Token);
     }
 
