@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { FormEvent } from 'react';
 import { errorText, fromBase64, textBytes, toBase64, utf8 } from './api';
 import { ballotText } from './contracts';
-import type { NodeEvent, PayloadPreview, Register, WriteResult } from './contracts';
+import type { PayloadPreview, Register, WriteResult } from './contracts';
 import type { ResourceState } from './resource';
-import { ClusterStore, retention } from './store';
+import { ClusterStore } from './store';
+import { Timeline } from './Timeline';
 
 type NavigationGuard = 'pending' | 'draft' | 'uncertain' | null;
 
@@ -305,52 +306,4 @@ export function WriteEditor({ store, registerKey, initial, onCreated, onGuardCha
     </div>
     {blocked && reviewed && <RegisterValue value={current.value!} />}
   </form>;
-}
-
-export function Timeline({ store }: { store: ClusterStore }) {
-  const [paused, setPaused] = useState<{ events: NodeEvent[]; received: number } | null>(null);
-  const [host, setHost] = useState('');
-  const [kind, setKind] = useState('');
-  const [query, setQuery] = useState('');
-  const events = paused?.events ?? store.events;
-  const filtered = useMemo(() => events.filter((event) =>
-    (!host || event.nodeId === host) && (!kind || event.kind === kind)
-    && (!query || JSON.stringify(event).toLowerCase().includes(query.toLowerCase()))).slice(-200).reverse(), [events, host, kind, query]);
-  return <section className="timeline panel" aria-labelledby="timeline-title">
-    <div className="panel-heading"><div><h2 id="timeline-title">Live messages</h2>
-      <p className="muted">Arrival order · per-node sequences preserve order · correlate by call / operation ID</p></div>
-      <button aria-pressed={paused !== null} onClick={() => setPaused(paused ? null : { events: store.events, received: store.received })}>{paused ? 'Resume timeline' : 'Pause timeline'}</button></div>
-    <div className="timeline-toolbar">
-      <label>Node<select aria-label="Node" value={host} onChange={(event) => setHost(event.target.value)}><option value="">All nodes</option>
-        {store.nodes.map((node) => <option key={node.peer.id}>{node.peer.id}</option>)}</select></label>
-      <label>Event<select aria-label="Event" value={kind} onChange={(event) => setKind(event.target.value)}><option value="">All events</option>
-        {['protocol', 'operation', 'acceptor-state', 'storage', 'reset'].map((value) => <option key={value}>{value}</option>)}</select></label>
-      <label className="event-search">Filter messages<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Key, peer, call ID, outcome..." /></label>
-      <span className="muted">{events.length} / {retention} retained · {store.discarded} evicted</span>
-    </div>
-    {paused && <p className="pause-note" role="status">Timeline paused · {store.received - paused.received} new events. Node health and register observations remain live.</p>}
-    <div className="event-table-wrap" tabIndex={0} aria-label="Scrollable event timeline"><table className="event-table">
-      <thead><tr><th>Node / sequence</th><th>Event</th><th>Message / key</th><th>Outcome / details</th></tr></thead>
-      <tbody>{filtered.map((event) => <EventRow key={store.receipts.get(event) ?? `${event.nodeId}:${event.id}:${event.kind}:${event.timestamp}`} event={event} />)}</tbody>
-    </table>
-    {filtered.length === 0 && <p className="empty">Waiting for matching events. Heartbeats keep quiet node connections current.</p>}</div>
-    <div className="timeline-foot">Showing latest {filtered.length} matching events (up to 200). Reset events mark a new observation baseline or a history gap.</div>
-  </section>;
-}
-
-function EventRow({ event }: { event: NodeEvent }) {
-  const data = event.data;
-  const key = 'key' in data ? data.key : null;
-  const message = event.kind === 'protocol' ? `${event.data.direction} ${event.data.operation} ${event.data.phase} · peer ${event.data.peerId ?? 'local'}`
-    : event.kind === 'operation' ? event.data.operation
-    : event.kind === 'reset' ? `Resynchronize: ${event.data.reason}`
-    : event.kind === 'storage' ? event.data.status : 'Local state changed';
-  const outcome = 'outcome' in data ? data.outcome : 'error' in data ? data.error : null;
-  return <tr className={event.kind === 'reset' ? 'reset-row' : ''}>
-    <td><strong>{event.nodeId}</strong> <code>#{event.sequence}</code><time dateTime={event.timestamp}>{new Date(event.timestamp).toLocaleTimeString()}</time></td>
-    <td><span className="event-kind">{event.kind}</span></td>
-    <td><span>{message}</span>{key && <code className="event-key">{keyName(key.text)}{key.truncated ? ' [truncated key]' : ''}{key.lossy ? ' [lossy key]' : ''}</code>}
-      {event.kind === 'protocol' && <span className="muted">Ballot {ballotText(event.data.ballot)} → {ballotText(event.data.nextBallot)}</span>}</td>
-    <td><details><summary>{outcome || 'Inspect event'}</summary><pre>{JSON.stringify(event, null, 2)}</pre></details></td>
-  </tr>;
 }

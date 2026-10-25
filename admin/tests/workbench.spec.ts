@@ -45,6 +45,12 @@ test('real hosts stream changes, preserve conditional bytes, and recover one dis
     const after = await request.get(`${cluster.origin(1)}/v1/registers/value?key=demo%2Fconfig%2Ffeature-flags`);
     expect(after.headers().etag).not.toBe(before.headers().etag);
     expect(await after.text()).toBe('{"source":"isolated demo database","enabled":false}');
+    const timeline = page.getByRole('region', { name: 'Cluster timeline' });
+    await expect(timeline.getByRole('columnheader', { name: 'Node a', exact: true })).toBeVisible();
+    await expect(timeline.getByRole('columnheader', { name: 'Node b', exact: true })).toBeVisible();
+    await expect(timeline.getByRole('img', { name: /Node a to Node [bc]: accept request-initiated/ }).first()).toBeAttached();
+    await expect(timeline.getByText('Committed acceptor state', { exact: true }).first()).toBeAttached();
+    await expect(timeline.getByText(/ms host elapsed/).first()).toBeAttached();
     await page.getByLabel('Event', { exact: true }).selectOption('protocol');
     await expect(page.locator('.event-table tbody')).toContainText('accept');
 
@@ -72,17 +78,29 @@ test('real hosts stream changes, preserve conditional bytes, and recover one dis
     await mobile.getByRole('button', { name: 'demo/config/feature-flags', exact: false }).click();
     await expect(mobile.getByLabel('Current value')).toContainText('"enabled":false');
     await mobile.getByRole('button', { name: 'Pause timeline' }).click();
+    // Paused node lanes remain horizontally navigable on a narrow viewport.
+    const mobileTimeline = mobile.getByRole('region', { name: 'Scrollable event timeline' });
+    await mobileTimeline.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
+    await expect(mobile.getByRole('columnheader', { name: 'Message / state change' })).toBeVisible();
     for (const target of [page, mobile]) {
       expect(await target.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     }
     const desktopPath = testInfo.outputPath('desktop.png');
     const mobilePath = testInfo.outputPath('mobile.png');
+    const timelinePath = testInfo.outputPath('timeline.png');
+    const mobileTimelinePath = testInfo.outputPath('timeline-mobile.png');
     await Promise.all([
       page.screenshot({ path: desktopPath, fullPage: true }),
       mobile.screenshot({ path: mobilePath, fullPage: true }),
     ]);
+    await Promise.all([
+      timeline.screenshot({ path: timelinePath }),
+      mobile.getByRole('region', { name: 'Cluster timeline' }).screenshot({ path: mobileTimelinePath }),
+    ]);
     await testInfo.attach('Desktop workbench, real isolated demo cluster', { path: desktopPath, contentType: 'image/png' });
     await testInfo.attach('Mobile workbench, real isolated demo cluster', { path: mobilePath, contentType: 'image/png' });
+    await testInfo.attach('Node message lanes, real isolated demo cluster', { path: timelinePath, contentType: 'image/png' });
+    await testInfo.attach('Mobile timeline, real isolated demo cluster', { path: mobileTimelinePath, contentType: 'image/png' });
     expect(failures).toEqual([]);
   } finally {
     await context.close();

@@ -182,7 +182,7 @@ observations advance it. Consumers use `addEventListener` for the named events.
 
 | Event | `data` fields and semantics |
 | --- | --- |
-| `protocol` | `operation` (`prepare`/`accept`), `direction` (`local`/`outbound`/`inbound`), `phase`, nullable `peerId`, `callId`, nullable `operationId`, `key:KeyPreview`, `ballot`, `nextBallot`, nullable `outcome`, `promisedBallot`, `acceptedBallot`, `conflictingBallot`, `value:PayloadPreview`, `error`. |
+| `protocol` | `operation` (`read`/`prepare`/`accept`), `direction` (`local`/`outbound`/`inbound`), `phase`, nullable `peerId`, `callId`, nullable `operationId`, `key:KeyPreview`, `ballot`, `nextBallot`, nullable `outcome`, `promisedBallot`, `acceptedBallot`, `conflictingBallot`, `value:PayloadPreview`, `error`. |
 | `operation` | `operation` (`read`/`compare-exchange`/`list`), `operationId`, `key:KeyPreview` (list uses its prefix), `outcome`, nullable `isPresent`, `value:PayloadPreview`, `version` (Base64), and `error`. |
 | `acceptor-state` | `key:KeyPreview`, `promisedBallot`, `acceptedBallot`, nullable `acceptedValue:PayloadPreview` and `register:RegisterPreview`. A transition in a successfully committed local SQLite batch. |
 | `storage` | `status` (`ready`/`failed`/`stopped`), nullable exception-type `error`. |
@@ -195,8 +195,9 @@ Protocol phases distinguish `request-initiated` (local/outgoing invocation),
 (local/outgoing completion), `response-produced` (incoming provider completion),
 and `fault-observed`. A received request has passed transport decoding.
 An initiated request records an attempt at the client boundary; the destination's
-received observation establishes delivery. Outcomes are `promised`/`accepted`/
-`rejected`; faults include an exception type.
+received observation establishes delivery. Read outcomes are `present`/`missing`/
+`unchanged`; prepare and accept outcomes are `promised`/`accepted`/`rejected`.
+Faults include an exception type.
 
 `callId` pairs each invocation and completion. Host gRPC interceptors propagate
 it and `operationId` to remote observers via `fcp-node-bin`, `fcp-call`, and

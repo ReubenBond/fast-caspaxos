@@ -26,11 +26,16 @@ export interface LocalState {
   acceptedValue: PayloadPreview | null; register: RegisterPreview | null;
 }
 export interface AcceptorState extends Omit<LocalState, 'key'> { key: KeyPreview }
+export interface Repair {
+  state: string; departing: boolean; targetReplicas: number;
+  examined: number; repaired: number; pending: number; error: string | null; timestamp: string;
+}
 interface EventData {
   protocol: Protocol;
   operation: Operation;
   'acceptor-state': AcceptorState;
   storage: Storage;
+  repair: Repair;
   reset: { reason: string };
   heartbeat: { storageStatus: string };
 }
@@ -59,7 +64,7 @@ export type WriteResult =
   | { kind: 'unknown'; message: string; currentEtag?: string }
   | { kind: 'rejected'; message: string };
 
-export const eventKinds: EventKind[] = ['protocol', 'operation', 'acceptor-state', 'storage', 'reset', 'heartbeat'];
+export const eventKinds: EventKind[] = ['protocol', 'operation', 'acceptor-state', 'storage', 'repair', 'reset', 'heartbeat'];
 
 export function parseEvent(text: string, kind: EventKind, nodeId: string): NodeEvent {
   const item = JSON.parse(text) as NodeEvent;

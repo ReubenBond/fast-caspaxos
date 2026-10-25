@@ -107,13 +107,36 @@ to that node's boot. The quorum-established value remains separately labeled.
 Truncated or lossy event keys invalidate broad views; exact lookup always uses
 the complete selected key.
 
-**Messages:** the timeline retains 1,000 events, renders the latest 200 matching
-events, and shows eviction counts. Heartbeats update health. Node, event-kind,
-and text/correlation filters help trace requests/replies and outcomes. Expand an
-event for call/operation IDs, ballots, error details, and bounded Base64 previews.
-Pausing freezes the displayed timeline while subscriptions and state refreshes
-continue. Arrival order is observational; per-node sequence and call correlation
-carry ordering evidence across independent host clocks.
+**Cluster timeline:** node lanes show the latest 200 matching observations with
+time flowing down the page, oldest to newest, from a retained window of 1,000
+events. Requests point toward acceptors; responses point back to callers. Dashed
+arrows mark initiated attempts, solid arrows mark received requests and completed
+responses, loops show local calls, and crosses mark faults at their observing
+host. Each row represents one boundary observation, so a remote call can have
+initiation, receipt, production, and completion rows sharing one call ID.
+The small dot identifies the observing host. Incoming calls without peer metadata
+use an **Unknown peer** lane.
+
+Committed acceptor transitions show promised/accepted ballots and logical
+versions alongside their previous retained values. Storage, quorum-operation,
+and repair lifecycle outcomes appear on their node's lane. Reset/history-gap
+markers and retention counts expose the available evidence. Comparisons start
+fresh after node restarts, stream resets, sequence gaps, or ambiguous key previews.
+Snapshots above remain the authority for current local state.
+
+Node filters include both observed and peer endpoints. Event-kind and text filters
+narrow messages, keys, and outcomes. Expand an event for the complete diagnostic
+envelope, bounded Base64 previews, and **Trace call** / **Trace operation** actions.
+**Follow latest** scrolls with new arrivals; scrolling up releases it.
+**Pause timeline** freezes displayed history while subscriptions and state
+refreshes continue. Heartbeats update health.
+
+UTC timestamps retain the host's reported precision. **Host elapsed** pairs a
+request and its completion on the same node, boot, direction, peer, call,
+operation ID, and method, using millisecond-resolution host timestamps. This
+includes time spent at that invocation boundary; backwards clock movement is
+labeled explicitly. Row spacing represents browser arrival order. Per-node
+sequences and call IDs provide ordering evidence across independent host clocks.
 
 Reads coalesce on a 300 ms deadline, with one in-flight request per resource and
 at most one trailing refresh. Successful same-resource reads advance visible

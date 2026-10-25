@@ -120,9 +120,10 @@ grid uses a 290px inventory and flexible inspector. At 1000px it uses 16px gutte
 and a 235px inventory; at 680px it becomes a vertical task sequence with 10px
 gutters. The mobile key list is bounded to 220px.
 
-The timeline has a 420px scroll region, sticky table headings, and a 700px table
-minimum. Local-state tables use a 480px minimum. Both preserve columns through
-horizontal scrolling; current values and local/event tables accept keyboard focus.
+The timeline has a 640px scroll region, sticky node headings, a 180px time column,
+120px node lanes, and at least 350px for event evidence. Local-state tables use a
+480px minimum. Both preserve columns through horizontal scrolling; current values
+and local/event tables accept keyboard focus.
 
 ## Elevation & Depth
 
@@ -153,9 +154,15 @@ provides explicit fresh-read and version-adoption controls.
 **Local observations:** a semantic table shows each node's promises and accepted
 ballot. Native details expose versions, payload previews, and snapshot cursors.
 
-**Timeline:** consistent node/kind/text controls filter a bounded event table.
-Pause freezes displayed arrivals; the rest of the workbench remains live.
-Reset rows use a pale warning tone and explicit resynchronization text.
+**Timeline:** time flows down a bounded sequence diagram, with node lanes between
+host timestamps and message/state evidence. Blue request arrows, green response
+arrows, local loops, state squares, and fault crosses pair with readable event
+labels. Dashed strokes distinguish initiated attempts; observing-host dots mark
+each row's source. Committed ballot/version comparisons and same-host elapsed
+times expose change and cost. Node/kind/text filters and call/operation tracing
+narrow the evidence. Follow latest scrolls with arrivals; pause freezes displayed
+history while the workbench remains live. Reset and sequence-gap rows use a pale
+warning tone and explicit resynchronization text.
 
 **Interaction states:** controls provide hover, active, disabled, keyboard-focus,
 loading, error, and outcome states. The sole transition is a 120ms button
