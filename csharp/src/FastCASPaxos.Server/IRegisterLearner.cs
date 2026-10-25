@@ -13,3 +13,6 @@ public interface IRegisterLearner
 /// establishes both quorums; receivers use the conclusion to seed their next operation.
 /// </summary>
 public sealed record RegisterCommit(string Key, Ballot AcceptedBallot, ByteString Value, Ballot PreparedBallot);
+
+/// <summary>A subscriber delivery failure observed after the authoritative quorum outcome.</summary>
+public sealed record RegisterNotificationFailure(RegisterCommit Commit, Exception Error);

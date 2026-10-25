@@ -261,7 +261,7 @@ type NodeEvent<T> = {
   bootId: string;
   sequence: string;
   timestamp: string;
-  kind: "protocol" | "operation" | "acceptor-state" | "storage" | "repair" | "administration" | "reset" | "heartbeat";
+  kind: "protocol" | "operation" | "acceptor-state" | "storage" | "repair" | "administration" | "notification" | "reset" | "heartbeat";
   data: T;
   id: string;
 };
@@ -281,6 +281,7 @@ observations advance it. Consumers use `addEventListener` for the named events.
 | `storage` | `status` (`ready`/`failed`/`stopped`), nullable exception-type `error`. |
 | `repair` | `state` (`staged`/`draining`/`running`/`complete`/`pending`/`cancelled`/`failed`), `departing`, `targetReplicas`, `examined`, `repaired`, `pending`, nullable diagnostic `error`, `timestamp`. |
 | `administration` | Target `nodeId`, participant `command`, and explicit `error` for an unconfirmed cluster step. |
+| `notification` | `operation: commit`, bounded `key`, nullable correlation `operationId`, and exception-type `error`. Subscriber delivery failures have an outcome separate from the quorum operation. |
 | `reset` | `reason`: `initial`, `invalid-cursor`, `restarted`, `history-unavailable`, `proposer-settings-changed`, or `cluster-prepare`/`cluster-clear`/`cluster-activate`. |
 | `heartbeat` | `storageStatus`: current local writer lifecycle status. |
 

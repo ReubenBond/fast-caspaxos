@@ -176,7 +176,7 @@ public sealed partial class NodeRuntime : IRepairScheduler, IRegisterLearner, IA
 
     private void OpenRegisters(string epoch, ProposerSettings settings)
     {
-        _registers = new(_peers, _ballots!, _options.RegisterOptions(_clock, settings), _acceptor);
+        _registers = new(_peers, _ballots!, _options.RegisterOptions(_clock, settings), _acceptor, Diagnostics);
         _registers.Committed += QueueCommit;
         var observed = new ObservedRegisterService(_registers, Diagnostics);
         Volatile.Write(ref _registerGeneration, new(epoch, observed, _registers));

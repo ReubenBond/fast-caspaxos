@@ -65,6 +65,7 @@ public sealed record AcceptorStateObservation(
 }
 
 public sealed record StorageObservation(string Status, string? Error = null);
+public sealed record NotificationObservation(string Operation, KeyPreview? Key, string? OperationId, string Error);
 public sealed record ResetObservation(string Reason);
 public sealed record HeartbeatObservation(string StorageStatus);
 

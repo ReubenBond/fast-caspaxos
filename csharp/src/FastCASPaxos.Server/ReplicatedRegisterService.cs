@@ -3,6 +3,7 @@ using System.Collections.Immutable;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
 using FastCASPaxos.Protocol;
+using FastCASPaxos.Server.Diagnostics;
 
 namespace FastCASPaxos.Server;
 
@@ -18,6 +19,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
     private readonly IProposerBallotSource _ballots;
     private readonly RegisterServiceOptions _options;
     private readonly ILocalAcceptorInspection? _localAcceptor;
+    private readonly NodeEventJournal? _diagnostics;
     private readonly object _gate = new();
     private readonly Dictionary<string, KeyState> _keys = new(StringComparer.Ordinal);
     private readonly LinkedList<string> _idleKeys = new();
@@ -27,13 +29,16 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
     private int _active;
     private Ballot _requestIncarnation;
     private long _requestSequence;
+    private RegisterNotificationFailure? _lastNotificationFailure;
 
     /// <summary>Publishes quorum conclusions. Subscribers enqueue delivery and return synchronously.</summary>
     public event Action<RegisterCommit>? Committed;
 
+    public RegisterNotificationFailure? LastNotificationFailure => Volatile.Read(ref _lastNotificationFailure);
+
     public ReplicatedRegisterService(
         ImmutableArray<AcceptorPeer> peers, IProposerBallotSource ballots, RegisterServiceOptions? options = null,
-        ILocalAcceptorInspection? localAcceptor = null)
+        ILocalAcceptorInspection? localAcceptor = null, NodeEventJournal? diagnostics = null)
     {
         if (peers.IsDefault) throw new ArgumentNullException(nameof(peers));
         ArgumentNullException.ThrowIfNull(ballots);
@@ -54,6 +59,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         _ballots = ballots;
         _options = options ?? new RegisterServiceOptions();
         _localAcceptor = localAcceptor;
+        _diagnostics = diagnostics;
         ArgumentNullException.ThrowIfNull(_options.Mode);
         ArgumentNullException.ThrowIfNull(_options.TimeProvider);
         _options.Mode.Validate();
@@ -202,6 +208,8 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         }
 
         var acquired = false;
+        RegisterValue current;
+        RegisterCommit notification;
         try
         {
             await state.Gate.WaitAsync(call.Token).ConfigureAwait(false);
@@ -235,10 +243,9 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
                     await BackoffAsync(retries++, call.Token).ConfigureAwait(false);
                 }
             }
-            var current = RegisterEncoding.Decode(engine.Result.Value);
+            current = RegisterEncoding.Decode(engine.Result.Value);
             operation.Complete(engine.Result.Value, current.Version);
-            Committed?.Invoke(new(key, engine.Ballot, engine.Result.Value, engine.PreparedBallot ?? Ballot.Zero));
-            return current;
+            notification = new(key, engine.Ballot, engine.Result.Value, engine.PreparedBallot ?? Ballot.Zero);
         }
         catch (OperationCanceledException) when (call.Token.IsCancellationRequested)
         {
@@ -269,6 +276,23 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
                         TrimIdleKeys();
                     }
                 }
+            }
+        }
+        PublishCommitted(notification);
+        return current;
+    }
+
+    private void PublishCommitted(RegisterCommit commit)
+    {
+        foreach (var subscriber in Delegate.EnumerateInvocationList(Committed))
+        {
+            try { subscriber(commit); }
+            catch (Exception error)
+            {
+                // Delivery has its own outcome: preserve the quorum result and notify every subscriber.
+                Volatile.Write(ref _lastNotificationFailure, new(commit, error));
+                _diagnostics?.Publish("notification", new NotificationObservation(
+                    "commit", KeyPreview.From(commit.Key), DiagnosticContext.Current?.OperationId, error.GetType().Name));
             }
         }
     }

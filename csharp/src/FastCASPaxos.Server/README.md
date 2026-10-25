@@ -138,6 +138,12 @@ initial fast ballot directly. Successful accepts piggyback the next prepare;
 subsequent writes reuse a quorum-confirmed promise in a single accept round.
 The service publishes `Committed` conclusions containing the accepted ballot,
 complete envelope, and the next promise actually confirmed by a quorum.
+Subscribers run after the authoritative operation and key-gate cleanup. Each
+subscriber has an independent delivery outcome; failures preserve the committed
+result and the warm engine while subsequent subscribers still receive the
+conclusion. `LastNotificationFailure` retains the most recent failure and its
+commit. Supplying a `NodeEventJournal` also records every failure as a separate
+`notification` event; the host wires this into its SSE diagnostics.
 Trusted cluster peers deliver these conclusions through `IRegisterLearner.Learn`.
 Learning uses the same bounded key cache and applies pending conclusions under
 the key's operation gate. Fast-mode writers can consequently alternate between

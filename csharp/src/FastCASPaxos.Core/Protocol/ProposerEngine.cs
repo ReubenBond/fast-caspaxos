@@ -439,6 +439,7 @@ public abstract class ProposerEngine<TValue, TRoute>
         }
 
         Ballot = CreateInitialBallot();
+        PreparedBallot = null;
         if (_modePolicy.ShouldSkipInitialPrepare(ProposerId)
             && Ballot == Ballot.InitialFast()
             && TryStartInitialFastAccept())

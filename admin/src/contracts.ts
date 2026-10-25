@@ -54,6 +54,7 @@ interface EventData {
   storage: Storage;
   repair: Repair;
   administration: { nodeId: string; command: string; error: string };
+  notification: { operation: string; key: KeyPreview | null; operationId: string | null; error: string };
   reset: { reason: string };
   heartbeat: { storageStatus: string };
 }
@@ -82,7 +83,7 @@ export type WriteResult =
   | { kind: 'unknown'; message: string; currentEtag?: string }
   | { kind: 'rejected'; message: string };
 
-export const eventKinds: EventKind[] = ['protocol', 'operation', 'acceptor-state', 'storage', 'repair', 'administration', 'reset', 'heartbeat'];
+export const eventKinds: EventKind[] = ['protocol', 'operation', 'acceptor-state', 'storage', 'repair', 'administration', 'notification', 'reset', 'heartbeat'];
 
 export function parseEvent(text: string, kind: EventKind, nodeId: string): NodeEvent {
   const item = JSON.parse(text) as NodeEvent;

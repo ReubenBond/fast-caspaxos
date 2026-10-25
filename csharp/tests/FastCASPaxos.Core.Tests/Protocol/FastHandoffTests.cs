@@ -138,6 +138,30 @@ public sealed class FastHandoffTests
     private static RecordingProposerEngine<int, string> Create(string mode = "fast", int proposerId = 3) =>
         new("proposer", proposerId, 0, ["a", "b", "c"], ProposerModePolicy.Parse(mode));
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void ClassicProposalConsumesUnusablePromiseAsFloorWithoutRepublishingIt(int preparedProposer)
+    {
+        var proposer = Create("classic");
+        var accepted = new Ballot(8, 0);
+        var prepared = new Ballot(9, preparedProposer);
+        proposer.LearnCommittedValue(accepted, 42, prepared);
+
+        proposer.StartProposal(Increment());
+
+        var ballot = proposer.LastSendPrepare!.Value.Ballot;
+        Assert.True(ballot > prepared);
+        Assert.Null(proposer.PreparedBallot);
+        proposer.HandlePreparePromised(new(ballot.Round, "a", accepted, 42));
+        proposer.HandlePreparePromised(new(ballot.Round, "b", accepted, 42));
+        Assert.Equal(Ballot.Zero, proposer.LastSendAccept!.Value.NextBallotToPrepare);
+        proposer.HandleAcceptAccepted(new(ballot.Round, "a", Ballot.Zero));
+        proposer.HandleAcceptAccepted(new(ballot.Round, "b", Ballot.Zero));
+        Assert.Equal(43, proposer.LastProposalCompleted!.Value.CommittedValue);
+        Assert.Null(proposer.PreparedBallot);
+    }
+
     private static Operation<int, int> Increment() => new()
     {
         Input = 1,

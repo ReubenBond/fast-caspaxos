@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
+using FastCASPaxos.Server.Diagnostics;
 using Xunit;
 using static FastCASPaxos.Server.Tests.TestSupport;
 
@@ -8,6 +9,85 @@ namespace FastCASPaxos.Server.Tests;
 
 public sealed class FastHandoffTests
 {
+    [Theory]
+    [InlineData("fast")]
+    [InlineData("leader")]
+    public async Task ClassicWriterPublishesNoExpiredLearnedPromise(string sourceMode)
+    {
+        var peers = Peers();
+        await using var source = new ReplicatedRegisterService(Routes(peers), new TestBallots(1), Options(sourceMode));
+        await using var classic = new ReplicatedRegisterService(Routes(peers), new TestBallots(2), Options("classic"));
+        await using var receiver = new ReplicatedRegisterService(Routes(peers), new TestBallots(3), Options("fast"));
+        var commits = new List<RegisterCommit>();
+        source.Committed += classic.Learn;
+        classic.Committed += receiver.Learn;
+        classic.Committed += commits.Add;
+        var first = await source.CompareExchangeAsync("key", null, Payload);
+
+        var second = await classic.CompareExchangeAsync("key", first.Current!.Version, ByteString.Empty);
+
+        Assert.Equal(CompareExchangeStatus.Applied, second.Status);
+        Assert.Null(second.Error);
+        var commit = Assert.Single(commits);
+        Assert.Equal(Ballot.Zero, commit.PreparedBallot);
+        Assert.Null(classic.LastNotificationFailure);
+        var third = await receiver.CompareExchangeAsync("key", Revision(2), Payload);
+        Assert.Equal(CompareExchangeStatus.Applied, third.Status);
+        Assert.Equal(new RegisterValue(Payload, Revision(3)), third.Current);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ThrowingCommitSubscriberPreservesAppliedOutcomeCacheAndOtherSubscribers(bool disposedLearner)
+    {
+        var peers = Peers();
+        using var journal = new NodeEventJournal("source");
+        await using var source = new ReplicatedRegisterService(
+            Routes(peers), new TestBallots(1), Options("fast"), diagnostics: journal);
+        await using var receiver = new ReplicatedRegisterService(Routes(peers), new TestBallots(2), Options("fast"));
+        await using var stopped = new ReplicatedRegisterService(Routes(peers), new TestBallots(3), Options("fast"));
+        await stopped.DisposeAsync();
+        var expectedError = new InvalidOperationException("subscriber failure");
+        source.Committed += disposedLearner ? stopped.Learn : _ => throw expectedError;
+        source.Committed += receiver.Learn;
+        var delivered = new List<RegisterCommit>();
+        source.Committed += delivered.Add;
+        var cursor = journal.Cursor;
+
+        var first = await source.CompareExchangeAsync("key", null, Payload);
+
+        Assert.Equal(CompareExchangeStatus.Applied, first.Status);
+        Assert.Equal(new RegisterValue(Payload, Revision(1)), first.Current);
+        Assert.Null(first.Error);
+        var failure = Assert.IsType<RegisterNotificationFailure>(source.LastNotificationFailure);
+        Assert.Equal(Assert.Single(delivered), failure.Commit);
+        if (disposedLearner) Assert.IsType<ObjectDisposedException>(failure.Error);
+        else Assert.Same(expectedError, failure.Error);
+        using var timeout = new CancellationTokenSource(Watchdog);
+        await using (var events = journal.ReadAsync(cursor, Watchdog, timeout.Token).GetAsyncEnumerator())
+        {
+            Assert.True(await events.MoveNextAsync());
+            Assert.Equal("notification", events.Current.Kind);
+            var observation = Assert.IsType<NotificationObservation>(events.Current.Data);
+            Assert.Equal("commit", observation.Operation);
+            Assert.Equal("key", observation.Key!.Text);
+            Assert.Equal(failure.Error.GetType().Name, observation.Error);
+        }
+
+        var before = Counts(peers);
+        var second = await source.CompareExchangeAsync("key", Revision(1), ByteString.Empty);
+        Assert.Equal(CompareExchangeStatus.Applied, second.Status);
+        Assert.Null(second.Error);
+        AssertOneAcceptRound(peers, before);
+        Assert.Equal(2, delivered.Count);
+        before = Counts(peers);
+        var third = await receiver.CompareExchangeAsync("key", Revision(2), Payload);
+        Assert.Equal(CompareExchangeStatus.Applied, third.Status);
+        Assert.Equal(new RegisterValue(Payload, Revision(3)), third.Current);
+        AssertOneAcceptRound(peers, before);
+    }
+
     [Theory]
     [InlineData("fast")]
     [InlineData("adaptive")]

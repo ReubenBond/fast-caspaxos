@@ -20,6 +20,15 @@ function state(sequence: string, round: number, nodeId = 'a', bootId = `${nodeId
 }
 
 describe('timeline evidence', () => {
+  it('reports notification failure separately from the committed write outcome', () => {
+    const notification = event('notification', '1', {
+      operation: 'commit', key: key('dog'), operationId: 'op', error: 'ObjectDisposedException',
+    });
+    expect(formatMessage(notification).full).toBe('notification:commit("dog", error=ObjectDisposedException)');
+    expect(buildTimeline([notification])[0]).toMatchObject({
+      shape: 'fault', summary: 'commit notification failed', facts: ['ObjectDisposedException'],
+    });
+  });
   it('prints short request and response parameters on message labels', () => {
     expect(formatMessage(protocol('1', { key: key('dog') }))).toEqual({
       text: 'accept("dog", b=(1,1), next=(2,1))',

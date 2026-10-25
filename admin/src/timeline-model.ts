@@ -81,6 +81,10 @@ export function formatMessage(event: NodeEvent): { text: string; full: string } 
       add(event.data.nodeId, 'node=');
       add(event.data.error, 'error=');
       break;
+    case 'notification':
+      type = `notification:${event.data.operation}`;
+      add(event.data.error, 'error=');
+      break;
     case 'reset': add(event.data.reason); break;
     case 'heartbeat': add(event.data.storageStatus, 'storage='); break;
   }
@@ -195,6 +199,11 @@ export function buildTimeline(events: readonly NodeEvent[]): TimelineEntry[] {
       case 'administration':
         entry.shape = 'fault';
         entry.summary = `Administration ${event.data.command} on ${event.data.nodeId}`;
+        entry.facts.push(event.data.error);
+        break;
+      case 'notification':
+        entry.shape = 'fault';
+        entry.summary = `${event.data.operation} notification failed`;
         entry.facts.push(event.data.error);
         break;
       case 'heartbeat':
