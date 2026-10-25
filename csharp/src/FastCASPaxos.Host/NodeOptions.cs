@@ -27,6 +27,7 @@ public sealed class NodeOptions
     public int MaxBatchSize { get; set; } = 64;
     public int Capacity { get; set; } = 256;
     public string Mode { get; set; } = "adaptive";
+    public ProposerSettings? ProposerSettings { get; set; }
     public TimeSpan OperationTimeout { get; set; } = TimeSpan.FromSeconds(10);
     public TimeSpan AttemptTimeout { get; set; } = TimeSpan.FromSeconds(1);
     public TimeSpan RetryBackoff { get; set; } = TimeSpan.FromMilliseconds(10);
@@ -78,6 +79,7 @@ public sealed class NodeOptions
         ValidateDuration(RepairRetryInterval, nameof(RepairRetryInterval));
         if (!Enum.IsDefined(ShutdownMode)) throw new ArgumentOutOfRangeException(nameof(ShutdownMode));
         ProposerModePolicy.Parse(Mode).Validate();
+        ProposerSettings?.CreatePolicy();
         ArgumentNullException.ThrowIfNull(Peers);
         var ids = new HashSet<string>(StringComparer.Ordinal);
         var endpoints = new HashSet<Uri>();
@@ -114,9 +116,9 @@ public sealed class NodeOptions
         return endpoint;
     }
 
-    internal RegisterServiceOptions RegisterOptions(TimeProvider timeProvider) => new()
+    internal RegisterServiceOptions RegisterOptions(TimeProvider timeProvider, ProposerSettings settings) => new()
     {
-        Mode = ProposerModePolicy.Parse(Mode),
+        Mode = settings.CreatePolicy(),
         Capacity = Capacity,
         OperationTimeout = OperationTimeout,
         AttemptTimeout = AttemptTimeout,

@@ -68,6 +68,32 @@ documents integration choices for authenticated applications.
 
 ## Operating the workbench
 
+**Cluster controls:** expand this panel to inspect each member's selected policy,
+serving phase, and durable generation. Choose Classic, Fast, Leadered, Fast +
+leadered, or Adaptive, adjust adaptive startup, forwarding, conflict-debt
+increment/decay, fast reopening, and leader-miss thresholds, then select **Apply
+settings to all nodes**. Every node persists its selection and drains admitted
+register work before replacing cached proposer engines. Per-node outcomes make
+partial application explicit; retrying the same settings converges reachable
+members.
+
+**Clear entire cluster:** confirm this destructive action to reset register data,
+accepted values, promises, learned state, and cached protocol engines on every
+member while retaining the selected proposer settings. Finish or reconcile an
+open register edit first. The ordinal-first member coordinates durable
+prepare/clear/activate barriers. The panel polls each node directly and displays
+the operation ID, phase, and unconfirmed outcomes. **Resume cluster reset**
+continues the same operation after an outage, lost response, or restart.
+Prepared/cleared members remain fenced until activation; generation-tagged
+protocol and learning messages keep delayed old traffic fenced after activation.
+New register versions include the generation, so pre-reset ETags remain stale.
+
+Cluster commands always use the fixed coordinator, independently of the
+request-host selector. Each advertised HTTP origin must be reachable from the
+coordinator as well as the browser. The
+[host administration contract](../csharp/src/FastCASPaxos.Host/README.md#cluster-administration)
+documents recovery, persisted state, and trusted participant routes.
+
 **Registers:** prefix search and exclusive cursor pagination show up to 50 logical
 keys per page. Empty keys and empty continuation strings remain distinct from
 absence. Stream resets and broad key invalidations restart enumeration at the

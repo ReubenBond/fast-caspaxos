@@ -50,6 +50,7 @@ export function formatMessage(event: NodeEvent): { text: string; full: string } 
           ballot(data.conflictingBallot, 'conflict=');
       }
       payload(data.value);
+      if (data.valueHash) add(data.valueHash, 'sha256=');
       if (data.error) add(data.error, 'error=');
       break;
     }
@@ -75,6 +76,19 @@ export function formatMessage(event: NodeEvent): { text: string; full: string } 
       add(String(event.data.repaired), 'repaired=');
       add(String(event.data.pending), 'pending=');
       if (event.data.error) add(event.data.error, 'error=');
+      break;
+    case 'administration':
+      type = `administration:${event.data.command}`;
+      add(event.data.nodeId, 'node=');
+      add(event.data.error, 'error=');
+      break;
+    case 'notification':
+      type = `notification:${event.data.operation}`;
+      add(event.data.error, 'error=');
+      break;
+    case 'inspection':
+      type = `inspection:${event.data.operation}`;
+      add(event.data.error, 'error=');
       break;
     case 'reset': add(event.data.reason); break;
     case 'heartbeat': add(event.data.storageStatus, 'storage='); break;
@@ -157,6 +171,7 @@ export function buildTimeline(events: readonly NodeEvent[]): TimelineEntry[] {
         if (data.acceptedBallot) entry.facts.push(`Accepted: ${ballotText(data.acceptedBallot)}`);
         if (data.conflictingBallot) entry.facts.push(`Conflicting: ${ballotText(data.conflictingBallot)}`);
         if (data.error) entry.facts.push(data.error);
+        if (data.valueHash) entry.facts.push(`Accepted SHA256: ${data.valueHash}`);
         break;
       }
       case 'acceptor-state': {
@@ -186,6 +201,21 @@ export function buildTimeline(events: readonly NodeEvent[]): TimelineEntry[] {
       case 'reset':
         entry.shape = 'reset';
         entry.summary = `Resynchronize: ${event.data.reason}`;
+        break;
+      case 'administration':
+        entry.shape = 'fault';
+        entry.summary = `Administration ${event.data.command} on ${event.data.nodeId}`;
+        entry.facts.push(event.data.error);
+        break;
+      case 'notification':
+        entry.shape = 'fault';
+        entry.summary = `${event.data.operation} notification failed`;
+        entry.facts.push(event.data.error);
+        break;
+      case 'inspection':
+        entry.shape = 'fault';
+        entry.summary = `${event.data.operation} inspection unavailable`;
+        entry.facts.push(event.data.error, 'The write enters classic quorum recovery.');
         break;
       case 'heartbeat':
         entry.summary = `Heartbeat · storage ${event.data.storageStatus}`;

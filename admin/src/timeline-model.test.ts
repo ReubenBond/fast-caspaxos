@@ -20,6 +20,39 @@ function state(sequence: string, round: number, nodeId = 'a', bootId = `${nodeId
 }
 
 describe('timeline evidence', () => {
+  it('renders ballot inspection failure as classic recovery without changing operation correlation', () => {
+    const inspection = event('inspection', '1', {
+      operation: 'ballots', key: key('dog'), operationId: 'inspection-op', error: 'TimeoutException',
+    });
+    expect(formatMessage(inspection).full).toBe('inspection:ballots("dog", error=TimeoutException)');
+    expect(buildTimeline([inspection])[0]).toMatchObject({
+      shape: 'fault', summary: 'ballots inspection unavailable',
+      facts: ['TimeoutException', 'The write enters classic quorum recovery.'],
+      event: { data: { operationId: 'inspection-op' } },
+    });
+  });
+
+  it('renders compact Learn hash evidence and explicit stale response without inventing a payload', () => {
+    const hash = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+    const request = protocol('1', { operation: 'learn-digest', value: null, valueHash: hash });
+    expect(formatMessage(request).full).toBe(`learn-digest("chosen", b=(1,1), sha256=${hash})`);
+    const stale = protocol('2', { operation: 'learn-digest', phase: 'response-observed', outcome: 'stale', value: null, valueHash: hash });
+    expect(formatMessage(stale).full).toBe(`learn-digest:stale("chosen", b=(1,1), sha256=${hash})`);
+    const entry = buildTimeline([request, stale])[1]!;
+    expect(entry).toMatchObject({ from: 'b', to: 'a', shape: 'response' });
+    expect(entry.facts).toContain(`Accepted SHA256: ${hash}`);
+    expect(formatMessage(stale).full).not.toContain('value=');
+  });
+
+  it('reports notification failure separately from the committed write outcome', () => {
+    const notification = event('notification', '1', {
+      operation: 'commit', key: key('dog'), operationId: 'op', error: 'ObjectDisposedException',
+    });
+    expect(formatMessage(notification).full).toBe('notification:commit("dog", error=ObjectDisposedException)');
+    expect(buildTimeline([notification])[0]).toMatchObject({
+      shape: 'fault', summary: 'commit notification failed', facts: ['ObjectDisposedException'],
+    });
+  });
   it('prints short request and response parameters on message labels', () => {
     expect(formatMessage(protocol('1', { key: key('dog') }))).toEqual({
       text: 'accept("dog", b=(1,1), next=(2,1))',

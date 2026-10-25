@@ -65,6 +65,14 @@ dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .workbench { display: grid; grid-template-columns: 290px minmax(0, 1fr); align-items: stretch; gap: 16px; }
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 7px; min-width: 0; }
+.cluster-controls { margin-bottom: 20px; }
+.cluster-controls > summary { padding: 13px 16px; font-weight: 650; }
+.cluster-controls-body { padding: 0 16px 16px; display: grid; gap: 12px; }
+.cluster-controls fieldset { border: 1px solid var(--border); border-radius: 5px; padding: 12px; }
+.settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.settings-checks { display: flex; flex-wrap: wrap; gap: 16px; margin: 12px 0; }
+.settings-checks input { width: auto; display: inline; margin-right: 4px; }
+.cluster-controls form button { margin-top: 12px; }
 .panel-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 13px 16px; border-bottom: 1px solid var(--border); min-height: 58px; }
 .inventory { display: flex; flex-direction: column; }
 .search { padding: 14px 16px 10px; }

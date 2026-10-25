@@ -123,6 +123,11 @@ receive distinct incarnations. Register revisions advance within the register;
 successive fast writes use only the acceptor commit, with no proposer-side
 allocator transaction after incarnation initialization. Restarted proposers
 advance past all previously reserved ballots and incarnations.
+Classic prepared ballots remain owned by the engine that reserved them,
+including when several service instances share a proposer identity and allocator.
+Learning another engine's classic promise advances the ballot floor; that engine
+retains exclusive use of its reservation. Shared fast promises can be reused by
+other engines after their committed base is learned.
 The source rejects opening an allocator under a different proposer identity.
 Round exhaustion fails with `OverflowException` before a wrapped ballot can
 be emitted; provision a new proposer identity before exhausting its range.
@@ -131,11 +136,41 @@ The default mode is **adaptive**, combining shared fast ballots with leader-owne
 classic recovery and prepared leader rounds. Uncontended creation can use the
 initial fast ballot directly. Successful accepts piggyback the next prepare;
 subsequent writes reuse a quorum-confirmed promise in a single accept round.
+The service publishes `Committed` conclusions containing the accepted ballot,
+complete envelope, and the next promise actually confirmed by a quorum.
+Subscribers run after the authoritative operation and key-gate cleanup. Each
+subscriber has an independent delivery outcome; failures preserve the committed
+result and the warm engine while subsequent subscribers still receive the
+conclusion. `LastNotificationFailure` retains the most recent failure and its
+commit. Supplying a `NodeEventJournal` also records every failure as a separate
+`notification` event; the host wires this into its SSE diagnostics.
+Trusted cluster peers deliver these conclusions through `IRegisterLearner.Learn`.
+Learning uses the same bounded key cache and applies pending conclusions under
+the key's operation gate. Fast-mode writers can consequently alternate between
+nodes using the shared prepared ballot; leader promises remain proposer-owned.
+Quorum reads also seed the committed value and any matching quorum-confirmed
+next promise.
 Fast rounds use the fast quorum; leader rounds use a majority. Contention or
 timeouts trigger classic recovery, and successful leader rounds reduce conflict
-debt so the policy can reopen fast mode. Cold existing keys and inconclusive
-prepared state use prepare-based recovery. Explicit classic, fast, leader, and
+debt so the policy can reopen fast mode. Before a write, an optional local
+`ILocalAcceptorInspection` advances the proposer's ballot floor using both
+durable accepted and promised ballots through `InspectBallotsAsync`. A bounded
+read executor retains each underlying probe's slot until it completes, while
+callers stop waiting at cancellation or the attempt deadline. Ordinary local
+I/O, storage-unavailability, timeout, and probe-capacity failures are recorded in
+`LastInspectionFailure` and the optional diagnostic journal. The operation then
+uses a fresh owned classic Prepare/Accept round through the available quorum.
+Invalid ballot metadata and corrupt storage fail explicitly.
+A locally permitted, quorum-confirmed
+prepared ballot remains reusable. Cold existing keys and inconclusive
+prepared state start prepare above that floor. Explicit classic, fast, leader, and
 fast+leader policies remain available.
+
+`RegisterCommit.AcknowledgedPeers` identifies accept acknowledgements consumed
+for that exact committed ballot/value. A transport can omit value bytes for
+those peers only when the receiver resolves the certificate against an exact
+local ballot and value digest. The host provides this compact path and bounded
+latest-only per-key delivery.
 
 Idle keys retain their engine, accepted base, prepared promise, and adaptive
 history in a least-recently-used cache of at most `Capacity` idle keys. Active and
@@ -143,6 +178,13 @@ queued keys retain their state until their callers finish. Eviction releases the
 engine; the next access establishes a fresh base. Quorum reads always gather fresh
 acceptor observations. Cached state permits speculation only through the core
 protocol's prepared-ballot checks and quorum acknowledgements.
+
+Hosts deliver commit learning asynchronously, outside the write's accept RTT.
+A receiver with a delivered value and usable prepared promise can issue a
+one-RTT update. Delayed learning, eviction, restart, or an intervening higher
+promise causes quorum recovery from the locally known ballot floor.
+Local accepted bytes alone supply a candidate for recovery; quorum evidence
+establishes the value used for a prepare-free operation.
 
 ## Quorum-backed key listing
 

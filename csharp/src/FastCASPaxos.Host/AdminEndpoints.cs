@@ -53,6 +53,19 @@ public static class AdminEndpoints
     public static RouteGroupBuilder MapAdminApi(this IEndpointRouteBuilder endpoints, NodeRuntime node)
     {
         var group = endpoints.MapGroup("/v1/admin").WithTags("Node diagnostics").RequireCors(CorsPolicy);
+        group.MapGet("/control", (HttpContext context) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            return Results.Json(node.Administration, Json);
+        });
+        group.MapPost("/cluster/settings", (ProposerSettings settings, HttpContext context, ILoggerFactory logging) =>
+            AdminCommandAsync(() => node.ApplyClusterSettingsAsync(settings, context.RequestAborted), context, logging));
+        group.MapPost("/cluster/reset", (ResetRequest request, HttpContext context, ILoggerFactory logging) =>
+            AdminCommandAsync(() => node.ResetClusterAsync(request, context.RequestAborted), context, logging));
+        group.MapPost("/internal/settings", (ProposerSettings settings, HttpContext context, ILoggerFactory logging) =>
+            AdminCommandAsync(() => node.ApplySettingsAsync(settings, context.RequestAborted), context, logging));
+        group.MapPost("/internal/reset/{phase}", (string phase, ResetRequest request, HttpContext context, ILoggerFactory logging) =>
+            AdminCommandAsync(() => node.ApplyResetPhaseAsync(request, phase, context.RequestAborted), context, logging));
         group.MapGet("/node", (HttpContext context) =>
         {
             context.Response.Headers.CacheControl = "no-store";
@@ -98,6 +111,25 @@ public static class AdminEndpoints
             }
         });
         return group;
+    }
+
+    private static async Task<IResult> AdminCommandAsync<T>(
+        Func<Task<T>> command, HttpContext context, ILoggerFactory logging)
+    {
+        context.Response.Headers.CacheControl = "no-store";
+        try { return Results.Json(await command(), Json); }
+        catch (ArgumentException error) { return Results.Problem(statusCode: 400, title: "invalid", detail: error.Message); }
+        catch (InvalidOperationException error) { return Results.Problem(statusCode: 409, title: "administration-conflict", detail: error.Message); }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        {
+            return Results.Problem(statusCode: 499, title: "cancelled", detail: "Refresh durable administration status before retrying.");
+        }
+        catch (Exception error)
+        {
+            logging.CreateLogger(typeof(AdminEndpoints)).AdministrationFailed(error);
+            return Results.Problem(statusCode: 503, title: "administration-incomplete",
+                detail: "Refresh durable administration status and retry the same operation. Consult node logs.");
+        }
     }
 
     private static async Task<IResult> StateAsync(HttpContext context, NodeRuntime node, ILoggerFactory logging, bool list)

@@ -280,12 +280,33 @@ semantics. Keep application-owned opaque protocol values in separate namespaces.
 ## Wire contract
 
 [`Protos/register.proto`](Protos/register.proto) defines package
-`fastcaspaxos.v1`, services `Acceptor` and `Register`, and C# generated types
+`fastcaspaxos.v1`, services `Acceptor`, `Register`, `RegisterLearner`,
+`AcceptorDigests`, and `Repair`, and C# generated types
 under `FastCASPaxos.Grpc.Wire`. Domain interfaces continue to use domain types.
 Prepare and accept outcomes are explicit oneofs. Prepare success echoes the
 requested ballot; prepare rejection retains the accepted state and conflicting
 ballot. Accept returns the promised or conflicting ballot. Optional next
 ballots, including `(0, 0)`, preserve piggyback semantics exactly.
+
+`RegisterLearner.Learn` carries the key, quorum-committed accepted ballot/value,
+and an optional quorum-confirmed higher prepared ballot. Its source is a trusted
+proposer that established those quorums. The host enqueues delivery separately
+from write completion and seeds the receiver's bounded proposer cache. A learned
+shared fast promise enables the next write on another node in one accept RTT;
+classic promises remain restricted to their owning proposer and configured mode.
+The receiver's durable local acceptor ballots fence reuse. Protect this endpoint
+with the same cluster access controls as `Acceptor`.
+
+`RegisterLearner.LearnDigest` carries an accepted ballot/SHA256 pair and the
+quorum-confirmed higher prepared ballot. A sender uses it for peers whose accept
+acknowledgements it observed for that exact committed ballot/value; other peers
+receive full-value `Learn`. The receiver resolves the certificate against its
+atomic local ballot/hash match and returns an explicit `learned` or `stale`
+oneof. This preserves correctness when a peer advances between acknowledgement
+and delivery. The host bounds compact-resolution waits and underlying I/O,
+coalesces each peer/key to its latest pending conclusion, and dispatches unrelated
+keys concurrently within `Capacity`. Both learning RPCs carry the host's
+generation fence and the original operation correlation.
 
 Message presence distinguishes unaccepted protocol state from accepted empty
 bytes. Register state explicitly selects `absent` or `present`; a present

@@ -1,4 +1,4 @@
-import type { KeyPage, NodeStatus, Register, Snapshot, WriteResult } from './contracts';
+import type { ClusterAdminResult, KeyPage, NodeAdministration, NodeStatus, ProposerSettings, Register, ResetRequest, Snapshot, WriteResult } from './contracts';
 
 export type Fetch = typeof fetch;
 export function endpoint(origin: string, path: string, query?: Record<string, string | null>): string {
@@ -34,6 +34,28 @@ export class Api {
     const state = await this.json<Snapshot>(endpoint(origin, '/v1/admin/state', { key }), signal);
     if (state.schemaVersion !== 1) throw new Error('Unsupported local-state schema.');
     return state;
+  }
+
+  async administration(origin: string, signal: AbortSignal): Promise<NodeAdministration> {
+    const status = await this.json<NodeAdministration>(endpoint(origin, '/v1/admin/control'), signal);
+    if (status.schemaVersion !== 1) throw new Error('Unsupported administration schema.');
+    return status;
+  }
+
+  private async command(origin: string, name: string, body: unknown, signal: AbortSignal): Promise<ClusterAdminResult> {
+    const response = await this.request(endpoint(origin, `/v1/admin/cluster/${name}`), {
+      method: 'POST', signal, cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error(`Administration response (${response.status}): ${await response.text()}`);
+    return response.json() as Promise<ClusterAdminResult>;
+  }
+
+  applySettings(origin: string, settings: ProposerSettings, signal: AbortSignal): Promise<ClusterAdminResult> {
+    return this.command(origin, 'settings', settings, signal);
+  }
+
+  resetCluster(origin: string, request: ResetRequest, signal: AbortSignal): Promise<ClusterAdminResult> {
+    return this.command(origin, 'reset', request, signal);
   }
 
   keys(origin: string, prefix: string, after: string | null, signal: AbortSignal): Promise<KeyPage> {

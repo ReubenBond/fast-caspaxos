@@ -935,6 +935,37 @@ public sealed class CoreProtocolRegressionTests
         Assert.Equal(preparedFastBallot, accept.Ballot);
     }
 
+    [Theory]
+    [InlineData(1073741824)]
+    [InlineData(int.MaxValue)]
+    public void ProposerEngineAdaptiveLargeConflictDebtSaturatesAndKeepsLeaderedMode(int increment)
+    {
+        var engine = CreateAdaptiveProposer(new AdaptiveProposerPolicy
+        {
+            ConflictDebtIncrement = increment,
+            ConflictDebtDecay = 0,
+        });
+        string[] acceptors = ["a1", "a2", "a3", "a4"];
+        engine.StartProposal(AppendOperation(1, "A"));
+        var round = engine.Ballot.Round;
+        foreach (var acceptor in acceptors)
+            engine.HandleAcceptRejected(RejectedAccept(round, acceptor, new Ballot(2, 0)));
+        Assert.Equal(increment, engine.ConflictDebt);
+
+        round = engine.Ballot.Round;
+        foreach (var acceptor in acceptors)
+            engine.HandlePrepareRejected(new(round, acceptor, Ballot.Zero, default, new Ballot(4, 0)));
+        Assert.Equal(int.MaxValue, engine.ConflictDebt);
+
+        engine.ResetRecording();
+        round = engine.Ballot.Round;
+        engine.HandlePreparePromised(SuccessPrepare(round, "a1"));
+        engine.HandlePreparePromised(SuccessPrepare(round, "a2"));
+        engine.HandlePreparePromised(SuccessPrepare(round, "a3"));
+        Assert.NotNull(engine.LastSendAccept);
+        Assert.Equal(1, engine.LastSendAccept.Value.NextBallotToPrepare.Proposer);
+    }
+
     [Fact]
     public void ProposerEngineReadPartialAcceptedValueRequiresIdentityQuorumBeforeLaterRead()
     {

@@ -109,10 +109,46 @@ internal sealed class TestBallots(int proposerId) : IProposerBallotSource, IDisp
     public void Dispose() => Disposed = true;
 }
 
-internal sealed class MemoryAcceptor : IKeyedAcceptor
+internal sealed class MemoryAcceptor : IKeyedAcceptor, ILocalAcceptorInspection
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, AcceptorState<ByteString?>> _states = new(StringComparer.Ordinal);
+    public ConcurrentQueue<(string Key, LocalAcceptorState? State)> Inspections { get; } = new();
+
+    public async ValueTask<LocalAcceptorBallots?> InspectBallotsAsync(string key, CancellationToken cancellationToken = default)
+    {
+        var state = await InspectAsync(key, cancellationToken);
+        return state is null ? null : new(state.PromisedBallot, state.AcceptedBallot);
+    }
+
+    public ValueTask<LocalAcceptorState?> InspectAsync(string key, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            LocalAcceptorState? result = _states.TryGetValue(key, out var state)
+                ? new(key, state.PromisedBallot, state.AcceptedBallot, state.AcceptedValue) : null;
+            Inspections.Enqueue((key, result));
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    public ValueTask<LocalAcceptorPage> InspectKeysAsync(string prefix = "", string? afterKey = null,
+        int limit = 100, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            var entries = _states.Where(pair => pair.Key.StartsWith(prefix, StringComparison.Ordinal)
+                    && (afterKey is null || string.CompareOrdinal(pair.Key, afterKey) > 0))
+                .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                .Take(limit == int.MaxValue ? limit : limit + 1)
+                .Select(pair => new LocalAcceptorState(pair.Key, pair.Value.PromisedBallot,
+                    pair.Value.AcceptedBallot, pair.Value.AcceptedValue)).ToArray();
+            return ValueTask.FromResult(new LocalAcceptorPage([.. entries.Take(limit)],
+                entries.Length > limit ? entries[limit - 1].Key : null));
+        }
+    }
 
     public ValueTask<AcceptorReadResult> ReadAsync(
         string key, AcceptedDigest? known = null, CancellationToken cancellationToken = default)

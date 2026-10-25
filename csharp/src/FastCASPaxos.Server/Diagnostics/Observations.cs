@@ -48,7 +48,7 @@ public sealed record ProtocolObservation(
     string Operation, string Direction, string Phase, string? PeerId, string CallId, string? OperationId,
     KeyPreview? Key, Ballot Ballot, Ballot NextBallot, string? Outcome = null,
     Ballot? PromisedBallot = null, Ballot? AcceptedBallot = null, Ballot? ConflictingBallot = null,
-    PayloadPreview? Value = null, string? Error = null);
+    PayloadPreview? Value = null, string? Error = null, string? ValueHash = null);
 
 public sealed record OperationObservation(
     string Operation, string OperationId, KeyPreview? Key, string Outcome,
@@ -65,6 +65,8 @@ public sealed record AcceptorStateObservation(
 }
 
 public sealed record StorageObservation(string Status, string? Error = null);
+public sealed record NotificationObservation(string Operation, KeyPreview? Key, string? OperationId, string Error);
+public sealed record InspectionObservation(string Operation, KeyPreview? Key, string? OperationId, string Error);
 public sealed record ResetObservation(string Reason);
 public sealed record HeartbeatObservation(string StorageStatus);
 

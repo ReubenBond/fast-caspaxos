@@ -21,6 +21,7 @@ builder.Services.AddGrpc(grpc =>
     grpc.MaxSendMessageSize = options.MaxSendMessageBytes;
     grpc.EnableDetailedErrors = false;
     grpc.Interceptors.Add<DiagnosticServerInterceptor>();
+    grpc.Interceptors.Add<EpochServerInterceptor>();
 });
 builder.Services.AddAdminCors(options);
 builder.Services.Configure<HostOptions>(builder.Configuration.GetSection("HostOptions"));
@@ -28,6 +29,7 @@ builder.Services.Configure<HostOptions>(builder.Configuration.GetSection("HostOp
 await using var node = await NodeRuntime.OpenAsync(options);
 builder.Services.AddSingleton(node.Acceptor);
 builder.Services.AddSingleton(node.Registers);
+builder.Services.AddSingleton(node.Learner);
 builder.Services.AddSingleton(node.Digests);
 builder.Services.AddSingleton<FastCASPaxos.Server.IRepairScheduler>(node);
 builder.Services.AddSingleton(node);
@@ -36,6 +38,7 @@ await using var app = builder.Build();
 app.UseCors();
 app.MapGrpcService<AcceptorGrpcService>();
 app.MapGrpcService<RegisterGrpcService>();
+app.MapGrpcService<RegisterLearnerGrpcService>();
 app.MapGrpcService<AcceptorDigestGrpcService>();
 app.MapGrpcService<RepairGrpcService>();
 app.MapRegisterApi(maxRequestBodyBytes: options.MaxRequestBodyBytes).RequireCors(AdminEndpoints.CorsPolicy);

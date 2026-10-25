@@ -10,17 +10,19 @@ using System.Threading.Channels;
 namespace FastCASPaxos.Host;
 
 /// <summary>Owns one durable acceptor, one proposer allocator, and its fixed-peer register service.</summary>
-public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
+public sealed partial class NodeRuntime : IRepairScheduler, IRegisterLearner, IRegisterDigestLearner, IAsyncDisposable
 {
     private readonly List<GrpcChannel> _channels = [];
     private SqliteProposerBallotSource? _ballots;
     private SqliteAcceptorServer? _acceptor;
     private ReplicatedRegisterService? _registers;
     private IKeyedAcceptor? _observedAcceptor;
-    private IRegisterService? _observedRegisters;
     private QuiescingAcceptor? _admission;
     private DurabilityRepair? _repair;
     private readonly List<GrpcRepairScheduler> _remoteSchedulers = [];
+    private readonly List<LearningPeer> _learners = [];
+    private CancellationTokenSource _learningStopping = new();
+    private CancellationTokenSource _generationStopping = new();
     private readonly CancellationTokenSource _maintenanceStopping = new();
     private readonly CancellationTokenSource _shutdownAborted = new();
     private readonly Channel<bool> _staged = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
@@ -38,10 +40,19 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
     private RepairObservation? _lastRepair;
     private readonly object _gate = new();
     private Task? _disposal;
+    private readonly NodeOptions _options;
+    private NodeAdminStateStore? _admin;
+    private readonly SemaphoreSlim _administration = new(1);
+    private EpochAcceptor? _epochAcceptor;
+    private RegisterGeneration? _registerGeneration;
+    private ImmutableArray<AcceptorPeer> _peers;
+    private readonly BoundedReadExecutor _localReads;
 
     private int _eventStreams;
     private NodeRuntime(NodeOptions options, TimeProvider timeProvider)
     {
+        _options = options;
+        _localReads = new(options.Capacity);
         _clock = timeProvider;
         _repairInterval = options.RepairInterval;
         _repairRetryInterval = options.RepairRetryInterval;
@@ -57,12 +68,16 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
         })];
         HeartbeatInterval = options.HeartbeatInterval;
         MaxEventStreams = options.MaxEventStreams;
+        Acceptor = new RuntimeAcceptor(this);
+        Registers = new RuntimeRegisters(this);
+        Digests = new RuntimeDigests(this);
     }
 
-    public IKeyedAcceptor Acceptor => _observedAcceptor ?? throw new InvalidOperationException("The node is not open.");
-    public IRegisterService Registers => _observedRegisters ?? throw new InvalidOperationException("The node is not open.");
+    public IKeyedAcceptor Acceptor { get; }
+    public IRegisterService Registers { get; }
+    public IRegisterLearner Learner => this;
     public ILocalAcceptorInspection Inspection => _acceptor ?? throw new InvalidOperationException("The node is not open.");
-    public IAcceptorDigestSource Digests => _acceptor ?? throw new InvalidOperationException("The node is not open.");
+    public IAcceptorDigestSource Digests { get; }
     private DurabilityRepair Repair => _repair ?? throw new InvalidOperationException("The node is not open.");
     public int TargetReplicas => Repair.TargetReplicas;
     public RepairObservation? LastRepair => Volatile.Read(ref _lastRepair);
@@ -89,50 +104,11 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(options.ProposerDatabase))!);
             runtime._acceptor = await SqliteAcceptorServer.OpenAsync(options.AcceptorDatabase,
                 options.QueueCapacity, options.MaxBatchSize, runtime.Diagnostics, cancellationToken).ConfigureAwait(false);
-            runtime._admission = new QuiescingAcceptor(runtime._acceptor);
-            runtime._observedAcceptor = new ObservedAcceptor(runtime._admission, runtime.Diagnostics, "inbound", null);
             runtime._ballots = new SqliteProposerBallotSource(options.ProposerDatabase, options.ProposerId);
-            var peers = ImmutableArray.CreateBuilder<AcceptorPeer>(options.Peers.Count);
-            var repairPeers = ImmutableArray.CreateBuilder<RepairPeer>(options.Peers.Count);
-            foreach (var peer in options.Peers)
-            {
-                IKeyedAcceptor acceptor;
-                IAcceptorDigestSource digests;
-                if (peer.Id == options.AcceptorId)
-                {
-                    acceptor = runtime._admission;
-                    digests = runtime._acceptor;
-                }
-                else
-                {
-                    var channel = GrpcChannel.ForAddress(peer.Endpoint, new GrpcChannelOptions
-                    {
-                        MaxReceiveMessageSize = options.MaxReceiveMessageBytes,
-                        MaxSendMessageSize = options.MaxSendMessageBytes,
-                    });
-                    runtime._channels.Add(channel);
-                    var invoker = channel.CreateCallInvoker().Intercept(new DiagnosticClientInterceptor());
-                    acceptor = new GrpcKeyedAcceptor(invoker, options.PeerCallTimeout, clock);
-                    digests = new GrpcAcceptorDigestSource(invoker, options.PeerCallTimeout, clock);
-                    runtime._remoteSchedulers.Add(new GrpcRepairScheduler(invoker, options.PeerCallTimeout, clock));
-                }
-                peers.Add(new AcceptorPeer(peer.Id, new ObservedAcceptor(acceptor, runtime.Diagnostics,
-                    peer.Id == options.AcceptorId ? "local" : "outbound", peer.Id)));
-                repairPeers.Add(new(peer.Id, peer.Id == options.AcceptorId
-                    ? new ObservedAcceptor(runtime._acceptor, runtime.Diagnostics, "local", peer.Id)
-                    : peers[^1].Acceptor, digests));
-            }
-            runtime._registers = new ReplicatedRegisterService(peers.MoveToImmutable(), runtime._ballots, options.RegisterOptions(clock));
-            runtime._observedRegisters = new ObservedRegisterService(runtime._registers, runtime.Diagnostics);
-            runtime._repair = new DurabilityRepair(options.AcceptorId, repairPeers.MoveToImmutable(), runtime._ballots, new()
-            {
-                TargetReplicas = options.TargetReplicationFactor,
-                PageSize = options.RepairPageSize,
-                OperationTimeout = options.OperationTimeout,
-                AttemptTimeout = options.AttemptTimeout,
-                RetryBackoff = options.RetryBackoff,
-                TimeProvider = clock,
-            });
+            runtime._admin = new(options.ProposerDatabase, options.ProposerSettings ?? new() { Mode = options.Mode });
+            runtime.OpenGeneration(runtime._admin.State.Epoch);
+            if (runtime._admin.State.Phase != "active")
+                await runtime.QuiesceGenerationAsync().ConfigureAwait(false);
             return runtime;
         }
         catch (Exception error)
@@ -142,6 +118,153 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
             throw;
         }
     }
+
+    private void OpenGeneration(string epoch)
+    {
+        var options = _options;
+        _epochAcceptor = new(epoch, _acceptor!, _acceptor!);
+        _admission = new QuiescingAcceptor(_epochAcceptor);
+        _observedAcceptor = new ObservedAcceptor(_admission, Diagnostics, "inbound", null);
+        var peers = ImmutableArray.CreateBuilder<AcceptorPeer>(options.Peers.Count);
+        var repairPeers = ImmutableArray.CreateBuilder<RepairPeer>(options.Peers.Count);
+        foreach (var peer in options.Peers)
+        {
+            IKeyedAcceptor acceptor;
+            IAcceptorDigestSource digests;
+            if (peer.Id == options.AcceptorId)
+            {
+                acceptor = _admission;
+                digests = _epochAcceptor;
+            }
+            else
+            {
+                var channel = GrpcChannel.ForAddress(peer.Endpoint, new GrpcChannelOptions
+                {
+                    MaxReceiveMessageSize = options.MaxReceiveMessageBytes,
+                    MaxSendMessageSize = options.MaxSendMessageBytes,
+                });
+                _channels.Add(channel);
+                var invoker = channel.CreateCallInvoker().Intercept(
+                    new DiagnosticClientInterceptor(), new EpochClientInterceptor(epoch));
+                acceptor = new GrpcKeyedAcceptor(invoker, options.PeerCallTimeout, _clock);
+                digests = new GrpcAcceptorDigestSource(invoker, options.PeerCallTimeout, _clock);
+                _remoteSchedulers.Add(new GrpcRepairScheduler(invoker, options.PeerCallTimeout, _clock));
+                _learners.Add(new(peer.Id, new GrpcRegisterLearner(invoker, options.PeerCallTimeout, _clock),
+                    new LatestLearningQueue(options.Capacity)));
+            }
+            peers.Add(new(peer.Id, new ObservedAcceptor(acceptor, Diagnostics,
+                peer.Id == options.AcceptorId ? "local" : "outbound", peer.Id)));
+            repairPeers.Add(new(peer.Id, peer.Id == options.AcceptorId
+                ? new ObservedAcceptor(_epochAcceptor, Diagnostics, "local", peer.Id)
+                : peers[^1].Acceptor, digests));
+        }
+        _peers = peers.MoveToImmutable();
+        OpenRegisters(epoch, _admin!.State.Settings);
+        foreach (var peer in _learners)
+            peer.Worker = Task.WhenAll(Enumerable.Range(0, options.Capacity).Select(_ => BroadcastCommitsAsync(peer)));
+        _repair = new(options.AcceptorId, repairPeers.MoveToImmutable(), _ballots!, new()
+        {
+            TargetReplicas = options.TargetReplicationFactor,
+            PageSize = options.RepairPageSize,
+            OperationTimeout = options.OperationTimeout,
+            AttemptTimeout = options.AttemptTimeout,
+            RetryBackoff = options.RetryBackoff,
+            TimeProvider = _clock,
+        });
+    }
+
+    private void OpenRegisters(string epoch, ProposerSettings settings)
+    {
+        _registers = new(_peers, _ballots!, _options.RegisterOptions(_clock, settings), _acceptor, Diagnostics, _localReads);
+        _registers.Committed += QueueCommit;
+        var observed = new ObservedRegisterService(_registers, Diagnostics);
+        Volatile.Write(ref _registerGeneration, new(epoch, observed, _registers));
+    }
+
+    public void Learn(RegisterCommit commit)
+    {
+        ArgumentNullException.ThrowIfNull(commit);
+        var context = DiagnosticContext.Current;
+        var callId = context?.CallId ?? Guid.NewGuid().ToString("N");
+        ObserveLearning(commit, "inbound", "request-received", context?.NodeId, callId);
+        try
+        {
+            var generation = GetServingRegisters();
+            using var lease = generation.Admission.Enter();
+            generation.Core.Learn(commit);
+            ObserveLearning(commit, "inbound", "response-produced", context?.NodeId, callId);
+        }
+        catch (Exception error)
+        {
+            ObserveLearning(commit, "inbound", "fault-observed", context?.NodeId, callId, error.GetType().Name);
+            throw;
+        }
+    }
+
+    private void QueueCommit(RegisterCommit commit)
+    {
+        if (_learners.Count == 0) return;
+        var notification = new LearningNotification(commit,
+            new(commit.AcceptedBallot, AcceptedDigest.Hash(commit.Value)), DiagnosticContext.Current?.OperationId);
+        foreach (var peer in _learners)
+        {
+            if (!peer.Queue.TryWrite(notification))
+                ObserveLearning(commit, "outbound", "fault-observed", peer.Id, Guid.NewGuid().ToString("N"),
+                    "Commit learning key capacity is full; the peer will recover through a quorum.");
+        }
+    }
+
+    private async Task BroadcastCommitsAsync(LearningPeer peer)
+    {
+        var token = _learningStopping.Token;
+        try
+        {
+            while (true)
+            {
+                var notification = await peer.Queue.ReadAsync(token).ConfigureAwait(false);
+                var commit = notification.Commit;
+                var callId = Guid.NewGuid().ToString("N");
+                DiagnosticContext.Current = new(Diagnostics.NodeId, notification.OperationId, callId);
+                var compact = commit.AcknowledgedPeers.Contains(peer.Id)
+                    ? new RegisterCommitDigest(commit.Key, notification.Digest, commit.PreparedBallot) : null;
+                if (compact is null) ObserveLearning(commit, "outbound", "request-initiated", peer.Id, callId);
+                else ObserveCompactLearning(compact, "outbound", "request-initiated", peer.Id, callId);
+                try
+                {
+                    if (compact is null)
+                    {
+                        await peer.Client.LearnAsync(commit, token).ConfigureAwait(false);
+                        ObserveLearning(commit, "outbound", "response-observed", peer.Id, callId);
+                    }
+                    else
+                    {
+                        var learned = await peer.Client.LearnDigestAsync(compact, token).ConfigureAwait(false);
+                        ObserveCompactLearning(compact, "outbound", "response-observed", peer.Id, callId,
+                            learned ? "committed" : "stale");
+                    }
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+                catch (Exception error)
+                {
+                    if (compact is null) ObserveLearning(commit, "outbound", "fault-observed", peer.Id, callId, error.GetType().Name);
+                    else ObserveCompactLearning(compact, "outbound", "fault-observed", peer.Id, callId, error: error.GetType().Name);
+                }
+                finally
+                {
+                    DiagnosticContext.Current = null;
+                    peer.Queue.Complete(commit.Key);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+    }
+
+    private void ObserveLearning(RegisterCommit commit, string direction, string phase, string? peer, string callId,
+        string? error = null) =>
+        Diagnostics.Publish("protocol", new ProtocolObservation("learn", direction, phase, peer, callId,
+            DiagnosticContext.Current?.OperationId, KeyPreview.From(commit.Key), commit.AcceptedBallot,
+            commit.PreparedBallot, error is null ? "committed" : null, AcceptedBallot: commit.AcceptedBallot,
+            Value: PayloadPreview.From(commit.Value), Error: error));
 
     internal bool TryOpenEventStream()
     {
@@ -158,6 +281,7 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
         {
             if (_stopping || _disposal is not null)
                 throw new RegisterUnavailableException(new InvalidOperationException("The node is stopping."));
+            using var lease = _epochAcceptor!.Admission.Enter();
             PublishRepair(new("staged", false, Repair.TargetReplicas));
             _staged.Writer.TryWrite(true);
         }
@@ -166,6 +290,7 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
     public async Task StageClusterRepairAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        using var lease = _epochAcceptor!.Admission.Enter();
         StageRepair();
         await Task.WhenAll(_remoteSchedulers.Select(peer => peer.StageRepairAsync(cancellationToken))).ConfigureAwait(false);
     }
@@ -194,14 +319,25 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
                 PublishRepair(new("running", false, Repair.TargetReplicas));
                 try
                 {
-                    var result = await Repair.RunPassAsync(cancellationToken: token).ConfigureAwait(false);
-                    ReportRepair(result, false);
-                    foreach (var error in result.Errors) logger.RepairPeerUnavailable(error);
+                    await _administration.WaitAsync(token).ConfigureAwait(false);
+                    try
+                    {
+                        using var lease = _epochAcceptor!.Admission.Enter();
+                        using var passCancellation = CancellationTokenSource.CreateLinkedTokenSource(token, _generationStopping.Token);
+                        var result = await Repair.RunPassAsync(cancellationToken: passCancellation.Token).ConfigureAwait(false);
+                        ReportRepair(result, false);
+                        foreach (var error in result.Errors) logger.RepairPeerUnavailable(error);
+                    }
+                    finally { _administration.Release(); }
                 }
                 catch (RegisterUnavailableException error)
                 {
                     logger.RepairInventoryUnavailable(error);
                     PublishRepair(new("failed", false, Repair.TargetReplicas, Error: error.Message));
+                }
+                catch (OperationCanceledException) when (!token.IsCancellationRequested)
+                {
+                    PublishRepair(new("quiesced", false, Repair.TargetReplicas));
                 }
                 delay = _repairInterval;
             }
@@ -220,23 +356,34 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
         lock (_gate)
         {
             _stopping = true;
+            _maintenanceStopping.Cancel();
             return (_shutdown ??= StopCoreAsync(cancellationToken)).WaitAsync(cancellationToken);
         }
     }
 
     private async Task StopCoreAsync(CancellationToken cancellationToken)
     {
+        await _administration.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try { await StopServingAsync(cancellationToken).ConfigureAwait(false); }
+        finally { _administration.Release(); }
+    }
+
+    private async Task StopServingAsync(CancellationToken cancellationToken)
+    {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdownAborted.Token);
         cancellationToken = linked.Token;
-        var departing = ShutdownMode == NodeShutdownMode.Departure;
+        var departing = ShutdownMode == NodeShutdownMode.Departure && _admin!.State.Phase == "active";
         _maintenanceStopping.Cancel();
         PublishRepair(new("draining", departing, Repair.TargetReplicas));
         var admitted = _admission!.QuiesceAsync();
+        var serving = GetRegisters().Admission.CloseAsync();
         var registers = _registers!.DisposeAsync().AsTask();
         try
         {
             if (_periodic is not null) await _periodic.WaitAsync(cancellationToken).ConfigureAwait(false);
-            await Task.WhenAll(admitted, registers).WaitAsync(cancellationToken).ConfigureAwait(false);
+            await Task.WhenAll(admitted, registers, serving).WaitAsync(cancellationToken).ConfigureAwait(false);
+            _learningStopping.Cancel();
+            await Task.WhenAll(_learners.Select(peer => peer.Worker)).WaitAsync(cancellationToken).ConfigureAwait(false);
             if (!departing)
             {
                 PublishRepair(new("complete", false, Repair.TargetReplicas));
@@ -288,6 +435,8 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
         List<Exception> errors = [];
         _shutdownAborted.Cancel();
         _maintenanceStopping.Cancel();
+        _learningStopping.Cancel();
+        _generationStopping.Cancel();
         if (_shutdown is not null)
         {
             try { await _shutdown.ConfigureAwait(false); }
@@ -299,11 +448,15 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
             try { await _periodic.ConfigureAwait(false); }
             catch (Exception error) { errors.Add(error); }
         }
+        await _clusterAdministration.WaitAsync().ConfigureAwait(false);
+        await _administration.WaitAsync().ConfigureAwait(false);
         if (_registers is not null)
         {
             try { await _registers.DisposeAsync().ConfigureAwait(false); }
             catch (Exception error) { errors.Add(error); }
         }
+        try { await Task.WhenAll(_learners.Select(peer => peer.Worker)).ConfigureAwait(false); }
+        catch (Exception error) { errors.Add(error); }
         _repair?.Dispose();
         foreach (var channel in _channels)
         {
@@ -315,14 +468,19 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
             try { _ballots.Dispose(); }
             catch (Exception error) { errors.Add(error); }
         }
+        _admin?.Dispose();
+        _adminHttp.Dispose();
         if (_acceptor is not null)
         {
             try { await _acceptor.DisposeAsync().ConfigureAwait(false); }
             catch (Exception error) { errors.Add(error); }
         }
         Diagnostics.Dispose();
+        _administration.Release();
+        _clusterAdministration.Release();
         if (errors.Count > 0) throw new AggregateException("Node shutdown failed.", errors);
     }
+
 }
 
 public sealed record RepairObservation(

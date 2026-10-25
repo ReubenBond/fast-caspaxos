@@ -85,6 +85,14 @@ its outcome. Disposal closes admission, drains admitted work, and releases the
 connection. Further calls fail with `ObjectDisposedException`; repeated disposal
 awaits the same shutdown.
 
+`ClearAsync` deletes every accepted value and promise through the same serialized
+WAL/FULL writer transaction. Its owner first fences every protocol writer for
+this acceptor and drains admitted work. The
+[host cluster reset](../FastCASPaxos.Host/README.md#cluster-administration)
+establishes that boundary across every fixed member and advances a durable
+generation before serving new traffic. All instances sharing an acceptor
+database participate in the owner's fence.
+
 Any storage/transaction failure faults all affected requests and retires the
 writer. Pending and future operations report that failure; disposal reports it
 as well. Commit errors and process/transport failures can leave an unknown
@@ -142,6 +150,14 @@ null. `InspectKeysAsync(prefix, afterKey, limit)` uses the same ordering and
 pagination, including promise-only rows. Both execute read-only SQL on the
 provider's existing serialized queue. Administrative inspection therefore
 preserves protocol state while exposing each node's actual durable contents.
+
+`InspectBallotsAsync` reads only the promised and accepted ballot columns for
+proposal-floor hints. `ResolveCommittedValueAsync` selects value bytes only when
+the local accepted ballot and persisted SHA256 exactly match a compact commit
+certificate; selection and byte validation share one serialized transaction.
+Missing or advanced state returns null, preserving the distinction from an I/O
+or corrupt-state exception. Hosts bound the caller's wait and the number of
+underlying probes independently.
 
 An optional `NodeEventJournal` supplied to `OpenAsync` receives bounded
 immutable state observations after successful COMMIT and before replies are

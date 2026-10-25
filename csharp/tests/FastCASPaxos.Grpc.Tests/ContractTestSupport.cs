@@ -46,7 +46,8 @@ internal static class ContractTestSupport
 internal sealed class ContractCallInvoker(
     Wire.Acceptor.AcceptorBase? acceptor = null,
     Wire.Register.RegisterBase? register = null,
-    Wire.AcceptorDigests.AcceptorDigestsBase? digests = null) : TestCallInvoker
+    Wire.AcceptorDigests.AcceptorDigestsBase? digests = null,
+    Wire.RegisterLearner.RegisterLearnerBase? learner = null) : TestCallInvoker
 {
     protected override async Task<TResponse> Invoke<TRequest, TResponse>(
         Method<TRequest, TResponse> method, TRequest request, CallOptions options)
@@ -60,6 +61,8 @@ internal sealed class ContractCallInvoker(
             Wire.FetchIfDifferentRequest value => await digests!.FetchIfDifferent(value, context),
             Wire.ReadRequest value => await register!.Read(value, context),
             Wire.CompareExchangeRequest value => await register!.CompareExchange(value, context),
+            Wire.RegisterCommit value => await learner!.Learn(value, context),
+            Wire.RegisterCommitDigest value => await learner!.LearnDigest(value, context),
             Wire.ListKeysRequest value when method.ServiceName.EndsWith(".Acceptor", StringComparison.Ordinal) =>
                 await acceptor!.ListKeys(value, context),
             Wire.ListKeysRequest value => await register!.ListKeys(value, context),
@@ -112,12 +115,12 @@ internal abstract class TestCallInvoker : CallInvoker
         Method<TRequest, TResponse> method, string? host, CallOptions options) => throw new NotSupportedException();
 }
 
-internal sealed class TestServerCallContext(CallOptions options) : ServerCallContext
+internal sealed class TestServerCallContext(CallOptions options, string method = "contract-test") : ServerCallContext
 {
     private readonly Metadata _trailers = new();
     private Status _status;
     private WriteOptions? _writeOptions;
-    protected override string MethodCore => "contract-test";
+    protected override string MethodCore => method;
     protected override string HostCore => "in-process";
     protected override string PeerCore => "in-process";
     protected override DateTime DeadlineCore => options.Deadline ?? DateTime.MaxValue;

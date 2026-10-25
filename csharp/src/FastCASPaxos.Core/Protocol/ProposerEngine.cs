@@ -113,12 +113,47 @@ public abstract class ProposerEngine<TValue, TRoute>
         BeginOperation();
     }
 
+    /// <summary>
+    /// Starts above locally observed ballots, retaining a certified prepared ballot while the
+    /// local acceptor still permits it. Value recovery remains governed by quorum evidence.
+    /// </summary>
+    public void StartProposal(IOperation<TValue> operation, Ballot acceptedBallot, Ballot promisedBallot)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        if (CurrentOperation is not null)
+            throw new InvalidOperationException("A local observation can seed only an idle proposer.");
+
+        if (PreparedBallot is { } prepared && CanReusePreparedBallot(prepared)
+            && acceptedBallot < prepared && promisedBallot <= prepared)
+        {
+            StartProposal(operation);
+            return;
+        }
+
+        Ballot = Ballot.Max(Ballot, Ballot.Max(acceptedBallot, promisedBallot));
+        StartProposal(operation);
+    }
+
     public void StartCurrentRequest()
     {
         if (CurrentOperation is not null)
         {
             BeginOperation();
         }
+    }
+
+    /// <summary>Establishes the value through a fresh owned classic prepare after an unavailable local hint.</summary>
+    public void StartProposalWithRecovery(IOperation<TValue> operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        if (CurrentOperation is not null) throw new InvalidOperationException("Recovery requires an idle proposer.");
+        CurrentOperation = operation;
+        _runtime.Diagnostics.OnProposalStarted(this, ProposerId, Ballot);
+        var floor = Ballot.Max(Ballot, PreparedBallot ?? Ballot.Zero);
+        ClearAcceptState();
+        PreparedBallot = null;
+        Ballot = ReserveBallot(floor.IsZero ? Ballot.InitialClassic(ProposerId) : floor.NextRound(ProposerId));
+        SendPrepareForCurrentBallot();
     }
 
     public void LearnCommittedValue(Ballot acceptedBallot, TValue value, Ballot preparedBallot = default)
@@ -367,6 +402,8 @@ public abstract class ProposerEngine<TValue, TRoute>
     /// retain their identity. A reserved piggyback promise is consumed at most once by this engine.
     /// </summary>
     protected virtual Ballot ReserveBallot(Ballot candidate) => candidate;
+    /// <summary>Hosted engines also establish ownership of a learned classic reservation.</summary>
+    protected virtual bool CanReusePreparedBallot(Ballot ballot) => _modePolicy.CanReusePreparedBallot(ballot, ProposerId);
     protected virtual void OnCachedValueChanged(TValue value) { }
     protected virtual void OnPendingAcceptValueStarted(TValue value) { }
     protected virtual void OnPendingAcceptValueCommitted(TValue value) { }
@@ -405,7 +442,7 @@ public abstract class ProposerEngine<TValue, TRoute>
         }
 
         if (PreparedBallot is { } reusableBallot
-            && (reusableBallot.IsFastRoundBallot || reusableBallot.Proposer == ProposerId))
+            && CanReusePreparedBallot(reusableBallot))
         {
             // Reuse the piggybacked promise exactly once, jumping straight into operation execution
             // as if a standalone prepare for that ballot had already succeeded.
@@ -416,6 +453,7 @@ public abstract class ProposerEngine<TValue, TRoute>
         }
 
         Ballot = CreateInitialBallot();
+        PreparedBallot = null;
         if (_modePolicy.ShouldSkipInitialPrepare(ProposerId)
             && Ballot == Ballot.InitialFast()
             && TryStartInitialFastAccept())
@@ -430,7 +468,10 @@ public abstract class ProposerEngine<TValue, TRoute>
     {
         // New work stays on the fast path when enabled; otherwise it starts in this proposer's
         // classic ballot space. Retries are handled separately by RetryPrepare.
-        return ReserveBallot(_modePolicy.CreateProposalBallot(ProposerId, Ballot));
+        var candidate = _modePolicy.CreateProposalBallot(ProposerId, Ballot);
+        if (PreparedBallot is { } observedPromise && candidate <= observedPromise)
+            candidate = _modePolicy.CreateProposalBallot(ProposerId, observedPromise);
+        return ReserveBallot(candidate);
     }
 
     private void SendPrepareForCurrentBallot()

@@ -125,6 +125,11 @@ public sealed class ProposerModePolicy
     internal bool ShouldSkipInitialPrepare(int proposerId) =>
         IsAdaptive ? PreferFastPath(proposerId) : StaticFastCommitEnabled;
 
+    internal bool CanReusePreparedBallot(Ballot ballot, int proposerId) =>
+        ballot.IsFastRoundBallot
+            ? ShouldSkipInitialPrepare(proposerId)
+            : ballot.Proposer == proposerId && (StaticLeaderEnabled || IsAdaptive);
+
     internal Ballot CreateProposalBallot(int proposerId, Ballot currentBallot)
     {
         if (currentBallot.IsZero)
@@ -159,7 +164,7 @@ public sealed class ProposerModePolicy
             return;
         }
 
-        LeaderMisses = Math.Min(int.MaxValue, LeaderMisses + 1);
+        LeaderMisses = (int)Math.Min(int.MaxValue, (long)LeaderMisses + 1);
     }
 
     internal void RecordLeaderForwardSuccess()
@@ -181,7 +186,7 @@ public sealed class ProposerModePolicy
 
         if (maxConflictBallot.IsFastRoundBallot || currentBallot.IsFastRoundBallot)
         {
-            ConflictDebt = Math.Min(int.MaxValue, ConflictDebt + AdaptivePolicy.ConflictDebtIncrement);
+            ConflictDebt = (int)Math.Min(int.MaxValue, (long)ConflictDebt + AdaptivePolicy.ConflictDebtIncrement);
         }
 
         LeaderHintProposerId = proposerId;

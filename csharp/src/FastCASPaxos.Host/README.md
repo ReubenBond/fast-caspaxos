@@ -12,6 +12,35 @@ by the normal host build and publish path. Its workbench combines conditional
 register editing with direct per-node streams, local snapshots, and message
 diagnostics. Building the host with console assets requires Node.js 24+ and npm.
 
+Each host distributes quorum-committed register values and quorum-confirmed
+next-ballot promises over the `RegisterLearner` gRPC service. Each peer admits up
+to `Capacity` distinct learning keys and dispatches up to that many independent
+RPCs. A key has one in-flight delivery and its latest pending conclusion;
+successive commits coalesce while unrelated keys and healthy peers progress.
+Distinct-key capacity exhaustion and delivery failures appear as protocol faults.
+Delivered learning enables one-accept-RTT fast writes
+when switching nodes; delayed learning starts recovery above the receiving node's
+durable local ballot floor. Protect the learning RPC with the same trusted-cluster
+access controls as the acceptor protocol.
+
+An observed successful accept acknowledgement for the exact committed ballot and
+value makes that peer eligible for `LearnDigest`: accepted ballot, SHA256, and
+the actual quorum-confirmed successor promise. The sender hashes the shared value
+once per commit. Other peers receive full-value `Learn`. SQLite resolves a compact
+certificate against one atomic local ballot/hash match before supplying its
+bytes to the learner. A receiver that has advanced returns the explicit `stale`
+outcome. Both paths retain operation correlation and generation fencing.
+Independent delivery keeps the final write's handoff timely, including when
+there is no subsequent message available for piggybacking.
+
+Ballot-only local inspection selects promised/accepted ballot columns. Its wait
+is bounded by the attempt timeout and operation cancellation, with underlying
+read slots retained until storage actually completes. Compact resolution uses
+the same host-owned `Capacity` pool across settings changes and resets. Ordinary
+inspection unavailability is observable and starts a fresh owned classic
+Prepare/Accept recovery, preserving healthy remote-quorum availability. Invalid
+ballot state and database corruption are explicit errors.
+
 ## Configuration and access
 
 Every member in the authoritative `FastCASPaxos:Peers` array has:
@@ -36,6 +65,7 @@ addresses and advertised addresses are independent deployment settings.
 | `EventHistoryCapacity` | `1024`; retained observations per node. Positive integer. |
 | `MaxEventStreams` | `64`; concurrent SSE responses per node. Positive integer. |
 | `HeartbeatInterval` | `00:00:15`; positive duration, at most one day. |
+| `ProposerSettings` | Initial proposer policy and adaptive tuning. When omitted, `Mode` supplies the initial mode. Admin changes are persisted with the proposer database and take precedence on subsequent starts. |
 
 For a local frontend at port 5173, set
 `FastCASPaxos__TrustedAdminOrigins__0=http://localhost:5173`. CORS permits this
@@ -70,6 +100,89 @@ Sequences are decimal **strings**, preserving precision in JavaScript.
 | `GET /v1/admin/events` | `text/event-stream`, one host's observations. |
 | `GET /v1/admin/repair` | Node/boot identity, `draining`, `shutdownComplete` for the configured shutdown mode, `targetReplicas`, and nullable timestamped `lastRepair`. |
 | `POST /v1/admin/repair` | Stages coalesced durability passes across the configured hosts; 202 confirms staging, 503 identifies incomplete staging. |
+| `GET /v1/admin/control` | Durable generation, serving/reset phase, proposer settings, coordinator identity, and reset progress. |
+| `POST /v1/admin/cluster/settings` | Applies a complete proposer-settings object to every configured member; returns per-node outcomes and `complete` or `incomplete`. |
+| `POST /v1/admin/cluster/reset` | Starts or resumes the identified cluster reset, with durable phase barriers and per-node outcomes. |
+
+### Cluster administration
+
+The member with the ordinal-first acceptor ID coordinates cluster commands.
+The console discovers that member independently of the register request-host
+selector. The coordinator contacts each member's advertised HTTP origin;
+configure these origins for reachability from both the browser and peer hosts.
+Protect `/v1/admin/internal/*` for coordinator-to-member administration with the
+same trusted-cluster access boundary. These participant routes execute the
+coordinator's settings, prepare, clear, and activate steps. Operators use the
+cluster routes to establish the all-member barriers.
+
+The complete settings object is:
+
+```json
+{
+  "mode": "adaptive",
+  "startInFastMode": true,
+  "enableForwarding": true,
+  "conflictDebtIncrement": 4,
+  "conflictDebtDecay": 1,
+  "fastReopenThreshold": 0,
+  "leaderMissThreshold": 1
+}
+```
+
+Modes are `classic`, `fast`, `leader`, `fast+leader`, and `adaptive`.
+Adaptive integer settings use nonnegative Int32 values, with a minimum of one
+for `leaderMissThreshold`. Leadered adaptive startup requires
+`fastReopenThreshold` below Int32.MaxValue so its initial conflict debt can
+exceed the reopening threshold. Tuning values remain selected across mode
+changes. Each member persists the settings, drains admitted register calls and
+learning callbacks, then constructs fresh proposer engines. Accepted values,
+promises, and logical register versions remain durable. Settings application is
+per-node: reachable members retain successful changes when another member is
+unavailable, and retrying the selected settings converges the cluster.
+
+A reset body contains `operationId` (a fresh lowercase GUID in `N` format) and
+`expectedEpoch` (the decimal string observed from the coordinator's `/control`).
+The coordinator retains the operation and per-member progress in its proposer
+database, serializes it against other cluster commands, and advances these phases:
+
+1. **Prepare:** every member durably records the reset, seals register/protocol
+   admission, cancels asynchronous learning, and drains admitted work. Repair
+   and lifecycle changes serialize with administration.
+2. **Clear:** after every prepare acknowledgement, each member deletes all
+   accepted values and promises in its SQLite writer transaction. A crash
+   between the delete and the durable cleared marker safely repeats the delete
+   while the member remains fenced.
+3. **Activate:** after every clear acknowledgement, members reopen with fresh
+   engines, learning queues, and peer clients for the next generation.
+
+Each phase is idempotent. A lost response produces an explicit unconfirmed node
+result; refresh `/control` and resend the same reset body. Prepared and cleared
+members retain their fence across process restarts. An interrupted activation
+can leave some members serving the new, empty generation while others remain
+fenced; retry activates the remaining members. Replaying a completed operation
+preserves any writes made since activation. The coordinator must be reachable
+to start or resume the operation.
+
+Generations are monotonically increasing UInt64 values serialized as decimal
+strings, initially `"0"`. Host peer gRPC calls carry exactly one `fcp-epoch`
+header. The host validates it and holds admission through the handler's durable
+outcome. Immutable per-generation clients retain the generation of delayed
+prepare, accept, inventory, repair, and Learn calls. The next generation rejects
+old traffic, including calls surviving transport cancellation. Public register
+gRPC/REST clients receive generation-prefixed opaque versions after a reset, so
+an earlier generation's ETag cannot match a recreated register.
+
+Reset preserves proposer settings, fixed member identities, and durable ballot/
+request-identity allocator reservations. Retain both node databases and WAL files
+as a unit. Registers, protocol promises/accepted state, and volatile proposer/
+learning caches start fresh. The diagnostic stream records reset phase
+invalidations and retains its bounded historical evidence; the console refreshes
+snapshots and restarts inventory enumeration at those boundaries.
+
+The node-participant routes are `POST /v1/admin/internal/settings` and
+`POST /v1/admin/internal/reset/{prepare|clear|activate}`, using the same bodies
+as their cluster commands. Their ordered invocation is owned by the coordinator.
+All members of a reset-capable cluster run the generation-aware host.
 
 Snapshots use `Cache-Control: no-store`. SSE uses `no-store, no-transform`,
 `X-Accel-Buffering: no`, disabled server buffering, and a flush after each
@@ -168,7 +281,7 @@ type NodeEvent<T> = {
   bootId: string;
   sequence: string;
   timestamp: string;
-  kind: "protocol" | "operation" | "acceptor-state" | "storage" | "repair" | "reset" | "heartbeat";
+  kind: "protocol" | "operation" | "acceptor-state" | "storage" | "repair" | "administration" | "notification" | "inspection" | "reset" | "heartbeat";
   data: T;
   id: string;
 };
@@ -182,12 +295,15 @@ observations advance it. Consumers use `addEventListener` for the named events.
 
 | Event | `data` fields and semantics |
 | --- | --- |
-| `protocol` | `operation` (`read`/`prepare`/`accept`), `direction` (`local`/`outbound`/`inbound`), `phase`, nullable `peerId`, `callId`, nullable `operationId`, `key:KeyPreview`, `ballot`, `nextBallot`, nullable `outcome`, `promisedBallot`, `acceptedBallot`, `conflictingBallot`, `value:PayloadPreview`, `error`. |
+| `protocol` | `operation` (`read`/`prepare`/`accept`/`learn`/`learn-digest`), `direction` (`local`/`outbound`/`inbound`), `phase`, nullable `peerId`, `callId`, nullable `operationId`, `key:KeyPreview`, `ballot`, `nextBallot`, nullable `outcome`, `promisedBallot`, `acceptedBallot`, `conflictingBallot`, `value:PayloadPreview`, `valueHash` (Base64 SHA256 for compact learning), `error`. |
 | `operation` | `operation` (`read`/`compare-exchange`/`list`), `operationId`, `key:KeyPreview` (list uses its prefix), `outcome`, nullable `isPresent`, `value:PayloadPreview`, `version` (Base64), and `error`. |
 | `acceptor-state` | `key:KeyPreview`, `promisedBallot`, `acceptedBallot`, nullable `acceptedValue:PayloadPreview` and `register:RegisterPreview`. A transition in a successfully committed local SQLite batch. |
 | `storage` | `status` (`ready`/`failed`/`stopped`), nullable exception-type `error`. |
 | `repair` | `state` (`staged`/`draining`/`running`/`complete`/`pending`/`cancelled`/`failed`), `departing`, `targetReplicas`, `examined`, `repaired`, `pending`, nullable diagnostic `error`, `timestamp`. |
-| `reset` | `reason`: `initial`, `invalid-cursor`, `restarted`, or `history-unavailable`. |
+| `administration` | Target `nodeId`, participant `command`, and explicit `error` for an unconfirmed cluster step. |
+| `notification` | `operation: commit`, bounded `key`, nullable correlation `operationId`, and exception-type `error`. Subscriber delivery failures have an outcome separate from the quorum operation. |
+| `inspection` | `operation: ballots`, bounded `key`, nullable `operationId`, and exception-type `error`. Ordinary local-inspection unavailability triggers classic quorum recovery. |
+| `reset` | `reason`: `initial`, `invalid-cursor`, `restarted`, `history-unavailable`, `proposer-settings-changed`, or `cluster-prepare`/`cluster-clear`/`cluster-activate`. |
 | `heartbeat` | `storageStatus`: current local writer lifecycle status. |
 
 Protocol phases distinguish `request-initiated` (local/outgoing invocation),
@@ -197,6 +313,7 @@ and `fault-observed`. A received request has passed transport decoding.
 An initiated request records an attempt at the client boundary; the destination's
 received observation establishes delivery. Read outcomes are `present`/`missing`/
 `unchanged`; prepare and accept outcomes are `promised`/`accepted`/`rejected`.
+Learning reports `committed`, with the accepted ballot and certified next promise.
 Faults include an exception type.
 
 `callId` pairs each invocation and completion. Host gRPC interceptors propagate
