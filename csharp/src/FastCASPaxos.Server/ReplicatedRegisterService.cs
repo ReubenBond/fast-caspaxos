@@ -244,8 +244,9 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
                         _options.AttemptTimeout, _options.TimeProvider, call.Token).ConfigureAwait(false);
                     local?.Validate();
                 }
-                catch (Exception error) when (!call.Token.IsCancellationRequested && IsInspectionUnavailable(error))
+                catch (Exception error) when (IsInspectionUnavailable(error))
                 {
+                    call.Token.ThrowIfCancellationRequested();
                     Volatile.Write(ref _lastInspectionFailure, error);
                     _diagnostics?.Publish("inspection", new InspectionObservation(
                         "ballots", KeyPreview.From(key), DiagnosticContext.Current?.OperationId, error.GetType().Name));

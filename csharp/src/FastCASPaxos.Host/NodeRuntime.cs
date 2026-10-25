@@ -203,6 +203,7 @@ public sealed partial class NodeRuntime : IRepairScheduler, IRegisterLearner, IR
 
     private void QueueCommit(RegisterCommit commit)
     {
+        if (_learners.Count == 0) return;
         var notification = new LearningNotification(commit,
             new(commit.AcceptedBallot, AcceptedDigest.Hash(commit.Value)), DiagnosticContext.Current?.OperationId);
         foreach (var peer in _learners)

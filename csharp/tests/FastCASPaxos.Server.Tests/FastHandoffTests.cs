@@ -766,6 +766,44 @@ public sealed class FastHandoffTests
         finally { underlying.TrySetResult(null); }
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task InspectionFailureRacingCancellationPreservesCancellationContract(bool deadline, bool timeoutFailure)
+    {
+        var peers = Peers();
+        var clock = new ManualTime();
+        using var cancellation = new CancellationTokenSource();
+        var inspection = new BallotInspector((_, _) =>
+        {
+            if (deadline) clock.Advance(TimeSpan.FromSeconds(5));
+            else cancellation.Cancel();
+            return ValueTask.FromException<LocalAcceptorBallots?>(timeoutFailure
+                ? new TimeoutException("inspection timeout") : new IOException("inspection failure"));
+        });
+        await using var service = new ReplicatedRegisterService(
+            Routes(peers), new TestBallots(3), Options("fast", clock), inspection);
+
+        var writing = service.CompareExchangeAsync("key", null, Payload, cancellation.Token).AsTask();
+
+        if (deadline) await Assert.ThrowsAsync<RegisterUnavailableException>(() => writing.WaitAsync(Watchdog));
+        else
+        {
+            var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => writing.WaitAsync(Watchdog));
+            Assert.Equal(cancellation.Token, error.CancellationToken);
+        }
+        Assert.Equal(1, inspection.Calls);
+        Assert.Null(service.LastInspectionFailure);
+        Assert.All(peers, peer =>
+        {
+            Assert.Empty(peer.Prepares);
+            Assert.Empty(peer.Accepts);
+            Assert.Null(peer.Inner.Snapshot("key"));
+        });
+    }
+
     private sealed class BallotInspector(Func<string, CancellationToken, ValueTask<LocalAcceptorBallots?>> read) : ILocalAcceptorInspection
     {
         public int Calls { get; private set; }

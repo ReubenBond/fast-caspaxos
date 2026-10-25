@@ -159,12 +159,14 @@ public sealed class FastHandoffHostTests
         try
         {
             ByteString? version = null;
+            string? latestOperationId = null;
             for (var step = 1; step <= 4; step++)
             {
                 DiagnosticContext.Current = new("a", $"coalesced-{step}", null);
                 var result = await source.Registers.CompareExchangeAsync("key", version, new([(byte)step])).AsTask().WaitAsync(Watchdog);
                 Assert.Equal(CompareExchangeStatus.Applied, result.Status);
                 Assert.Equal(new RegisterValue(new([(byte)step]), Revision((ulong)step)), result.Current);
+                latestOperationId = Assert.IsType<OperationObservation>(source.Diagnostics.LastOperation!.Data).OperationId;
                 version = result.Current!.Version;
                 if (step == 1) await entered.Task.WaitAsync(Watchdog);
             }
@@ -185,7 +187,7 @@ public sealed class FastHandoffHostTests
                 Assert.True(item.Compact);
                 Assert.Equal("0", item.Epoch);
             });
-            Assert.Equal("coalesced-4", delivered[1].OperationId);
+            Assert.Equal(latestOperationId, delivered[1].OperationId);
             Assert.Equal(new Ballot(5, 0), delivered[1].Prepared);
             var envelope = (await source.Inspection.InspectAsync("key"))!.AcceptedValue!.Value;
             Assert.Equal(new ByteString(SHA256.HashData(envelope.ToArray())), delivered[1].Hash);
@@ -233,15 +235,17 @@ public sealed class FastHandoffHostTests
             DiagnosticContext.Current = new("a", "actual-overflow", null);
             Assert.Equal(CompareExchangeStatus.Applied,
                 (await source.Registers.CompareExchangeAsync("overflow", null, Payload).AsTask().WaitAsync(Watchdog)).Status);
+            var overflowOperationId = Assert.IsType<OperationObservation>(source.Diagnostics.LastOperation!.Data).OperationId;
             DiagnosticContext.Current = new("a", "latest-pending", null);
             var latest = await source.Registers.CompareExchangeAsync("key", Revision(1), ByteString.Empty).AsTask().WaitAsync(Watchdog);
+            var latestOperationId = Assert.IsType<OperationObservation>(source.Diagnostics.LastOperation!.Data).OperationId;
             Assert.Equal(new RegisterValue(ByteString.Empty, Revision(2)), latest.Current);
             var latestState = (await source.Inspection.InspectAsync("key"))!;
             var observations = await SinceAsync(source.Diagnostics, cursors[0]);
             var drop = Assert.Single(observations.OfType<ProtocolObservation>(), item =>
                 item.PeerId == "b" && item.Error?.Contains("capacity", StringComparison.Ordinal) == true);
             Assert.Equal("overflow", drop.Key!.Text);
-            Assert.Equal("actual-overflow", drop.OperationId);
+            Assert.Equal(overflowOperationId, drop.OperationId);
             Assert.DoesNotContain(arrivals, item => item.Node == 1 && item.Key == "overflow");
             Assert.Equal(2, concurrency.Max());
             release.TrySetResult();
@@ -249,7 +253,7 @@ public sealed class FastHandoffHostTests
             var delivered = arrivals.Where(item => item.Node == 1 && item.Key == "key").ToArray();
             Assert.Equal(2, delivered.Length);
             Assert.Equal(latestState.AcceptedBallot, delivered[1].Ballot);
-            Assert.Equal("latest-pending", delivered[1].OperationId);
+            Assert.Equal(latestOperationId, delivered[1].OperationId);
             Assert.Equal(new ByteString(SHA256.HashData(latestState.AcceptedValue!.Value.ToArray())), delivered[1].Hash);
         }
         finally { release.TrySetResult(); DiagnosticContext.Current = previous; }
@@ -359,6 +363,7 @@ public sealed class FastHandoffHostTests
         {
             var write = await cluster.Nodes[0].Registers.CompareExchangeAsync("key", null, Payload).AsTask().WaitAsync(Watchdog);
             Assert.Equal(CompareExchangeStatus.Applied, write.Status);
+            var operationId = Assert.IsType<OperationObservation>(cluster.Nodes[0].Diagnostics.LastOperation!.Data).OperationId;
             await arrived.Task.WaitAsync(Watchdog);
             var state = (await cluster.Nodes[0].Inspection.InspectAsync("key"))!;
             Assert.True(state.AcceptedBallot.IsClassicRoundBallot);
@@ -374,7 +379,7 @@ public sealed class FastHandoffHostTests
                 Assert.Equal(state.AcceptedBallot, delivery.Ballot);
                 Assert.Equal(hash, delivery.Hash);
                 Assert.Equal(FastCASPaxos.Model.Ballot.Zero, delivery.Prepared);
-                Assert.Equal("ack-eligibility", delivery.OperationId);
+                Assert.Equal(operationId, delivery.OperationId);
                 Assert.Equal("0", delivery.Epoch);
             }
             Assert.False(release.Task.IsCompleted);
