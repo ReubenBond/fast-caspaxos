@@ -119,7 +119,7 @@ public sealed class NodeRuntime : IRepairScheduler, IRegisterLearner, IAsyncDisp
                     digests = new GrpcAcceptorDigestSource(invoker, options.PeerCallTimeout, clock);
                     runtime._remoteSchedulers.Add(new GrpcRepairScheduler(invoker, options.PeerCallTimeout, clock));
                     runtime._learners.Add(new(peer.Id, new GrpcRegisterLearner(invoker, options.PeerCallTimeout, clock),
-                        Channel.CreateBounded<RegisterCommit>(new BoundedChannelOptions(options.Capacity)
+                        Channel.CreateBounded<LearningNotification>(new BoundedChannelOptions(options.Capacity)
                         {
                             SingleReader = true,
                             FullMode = BoundedChannelFullMode.Wait,
@@ -175,9 +175,10 @@ public sealed class NodeRuntime : IRepairScheduler, IRegisterLearner, IAsyncDisp
 
     private void QueueCommit(RegisterCommit commit)
     {
+        var notification = new LearningNotification(commit, DiagnosticContext.Current?.OperationId);
         foreach (var peer in _learners)
         {
-            if (!peer.Queue.Writer.TryWrite(commit))
+            if (!peer.Queue.Writer.TryWrite(notification))
                 ObserveLearning(commit, "outbound", "fault-observed", peer.Id, Guid.NewGuid().ToString("N"),
                     "Commit learning queue is full; the peer will recover through a quorum.");
         }
@@ -188,10 +189,11 @@ public sealed class NodeRuntime : IRepairScheduler, IRegisterLearner, IAsyncDisp
         var token = _learningStopping.Token;
         try
         {
-            await foreach (var commit in peer.Queue.Reader.ReadAllAsync(token).ConfigureAwait(false))
+            await foreach (var notification in peer.Queue.Reader.ReadAllAsync(token).ConfigureAwait(false))
             {
+                var commit = notification.Commit;
                 var callId = Guid.NewGuid().ToString("N");
-                DiagnosticContext.Current = new(Diagnostics.NodeId, null, callId);
+                DiagnosticContext.Current = new(Diagnostics.NodeId, notification.OperationId, callId);
                 ObserveLearning(commit, "outbound", "request-initiated", peer.Id, callId);
                 try
                 {
@@ -402,7 +404,9 @@ public sealed class NodeRuntime : IRepairScheduler, IRegisterLearner, IAsyncDisp
         if (errors.Count > 0) throw new AggregateException("Node shutdown failed.", errors);
     }
 
-    private sealed record LearningPeer(string Id, GrpcRegisterLearner Client, Channel<RegisterCommit> Queue)
+    private readonly record struct LearningNotification(RegisterCommit Commit, string? OperationId);
+
+    private sealed record LearningPeer(string Id, GrpcRegisterLearner Client, Channel<LearningNotification> Queue)
     {
         public Task Worker { get; set; } = Task.CompletedTask;
     }

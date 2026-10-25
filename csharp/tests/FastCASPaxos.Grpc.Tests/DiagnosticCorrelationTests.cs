@@ -122,8 +122,10 @@ public sealed class DiagnosticCorrelationTests
         var remoteEvents = await History(remote.Node.Diagnostics, remoteCursor);
         var allOutbound = localEvents.Select(e => e.Data).OfType<ProtocolObservation>().Where(p => p.Direction == "outbound").ToArray();
         var allInbound = remoteEvents.Select(e => e.Data).OfType<ProtocolObservation>().ToArray();
-        var outbound = allOutbound.Where(p => p.OperationId == operation.OperationId).ToArray();
-        var inbound = allInbound.Where(p => p.OperationId == operation.OperationId).ToArray();
+        var outbound = allOutbound.Where(p => p.OperationId == operation.OperationId
+            && p.Operation is "read" or "prepare" or "accept").ToArray();
+        var inbound = allInbound.Where(p => p.OperationId == operation.OperationId
+            && p.Operation is "read" or "prepare" or "accept").ToArray();
         string[] expectedOperations = mode == "classic" ? ["prepare", "accept"] : ["accept"];
         var expectedSentPhases = expectedOperations.SelectMany(name =>
             new[] { (name, "request-initiated"), (name, "response-observed") }).ToArray();
@@ -157,10 +159,12 @@ public sealed class DiagnosticCorrelationTests
         Assert.Equal(expectedOutcomes, localProtocol.Where(p => p.Phase == "response-observed").Select(p => p.Outcome));
         Assert.Equal(expectedOutcomes, outbound.Where(p => p.Phase == "response-observed").Select(p => p.Outcome));
 
-        // Everything outside the original quorum operation must be exactly the new
-        // Learn call, with its own call ID and no inherited user-operation context.
-        var learnedOutbound = allOutbound.Where(p => p.OperationId != operation.OperationId).ToArray();
-        var learnedInbound = allInbound.Where(p => p.OperationId != operation.OperationId).ToArray();
+        // Learning retains the originating user-operation correlation while using a
+        // separate transport call ID. It is not another phase of the quorum exchange.
+        var learnedOutbound = allOutbound.Where(p => p.Operation == "learn").ToArray();
+        var learnedInbound = allInbound.Where(p => p.Operation == "learn").ToArray();
+        Assert.Equal(outbound.Length + learnedOutbound.Length, allOutbound.Length);
+        Assert.Equal(inbound.Length + learnedInbound.Length, allInbound.Length);
         Assert.Equal<string>(["request-initiated", "response-observed"], learnedOutbound.Select(p => p.Phase));
         Assert.Equal<string>(["request-received", "response-produced"], learnedInbound.Select(p => p.Phase));
         var accepted = Assert.Single(outbound, p => p.Operation == "accept" && p.Phase == "request-initiated");
@@ -172,8 +176,8 @@ public sealed class DiagnosticCorrelationTests
             Assert.DoesNotContain(outbound, p => p.CallId == sent.CallId);
             Assert.Equal("learn", sent.Operation);
             Assert.Equal("learn", received.Operation);
-            Assert.Null(sent.OperationId);
-            Assert.Null(received.OperationId);
+            Assert.Equal(operation.OperationId, sent.OperationId);
+            Assert.Equal(operation.OperationId, received.OperationId);
             Assert.Equal("b", sent.PeerId);
             Assert.Equal("a", received.PeerId);
             Assert.Equal("inbound", received.Direction);
