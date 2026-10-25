@@ -381,7 +381,7 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
             var existing = current.Get(key);
             if (_expired || current.WrittenBy(key, request) || existing.Version != expectedVersion)
                 return (OperationStatus.NotApplicable, current);
-            var revision = existing.Version is { } version ? BinaryPrimitives.ReadUInt64BigEndian(version.Span) : 0;
+            var revision = existing.Version is { } version ? BinaryPrimitives.ReadUInt64BigEndian(version.ToArray()) : 0;
             Span<byte> bytes = stackalloc byte[8];
             BinaryPrimitives.WriteUInt64BigEndian(bytes, checked(revision + 1));
             MayHaveApplied = true;

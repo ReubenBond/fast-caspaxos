@@ -23,7 +23,7 @@ export interface Node {
   lastOperation?: Extract<NodeEvent, { kind: 'operation' }> | null;
   error?: string;
   reset?: string;
-  versions: Map<string, string>;
+  acceptedEnvelopes: Map<string, string>;
 }
 
 export const retention = 1000;
@@ -94,7 +94,7 @@ export class ClusterStore {
 
   private addNode(peer: Peer): void {
     const node: Node = {
-      peer, lastSeen: this.now(), opened: false, connection: 'connecting', versions: new Map(),
+      peer, lastSeen: this.now(), opened: false, connection: 'connecting', acceptedEnvelopes: new Map(),
       status: new Resource(async (signal) => {
         const status = await this.api.status(peer.httpEndpoint, signal);
         signal.throwIfAborted();
@@ -170,7 +170,7 @@ export class ClusterStore {
       node.boot = item.bootId;
       node.sequence = sequence;
       node.reset = item.data.reason;
-      node.versions.clear();
+      node.acceptedEnvelopes.clear();
       node.storage = undefined;
       node.lastOperation = undefined;
       node.status.reset();
@@ -200,13 +200,13 @@ export class ClusterStore {
       if (item.kind === 'acceptor-state') {
         const key = item.data.key;
         if (!exactKey(key) || key.text === this.selected) node.local?.invalidate();
-        // Reads can recover accepted state. Version equality prevents their observations
-        // feeding an endless read -> accept -> invalidate cycle.
-        const version = item.data.register?.version ?? '';
-        if (!exactKey(key) || node.versions.get(key.text) !== version) {
+        // FCR2 contenders can share a revision. The bounded envelope preview includes their
+        // distinct request identities; unchanged recovery envelopes suppress read feedback.
+        const envelope = JSON.stringify([item.data.register?.version, item.data.acceptedValue]);
+        if (!exactKey(key) || node.acceptedEnvelopes.get(key.text) !== envelope) {
           if (exactKey(key)) {
-            node.versions.set(key.text, version);
-            if (node.versions.size > 500) node.versions.delete(node.versions.keys().next().value!);
+            node.acceptedEnvelopes.set(key.text, envelope);
+            if (node.acceptedEnvelopes.size > 500) node.acceptedEnvelopes.delete(node.acceptedEnvelopes.keys().next().value!);
           }
           this.invalidateLogical(key);
         }

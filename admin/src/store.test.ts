@@ -232,7 +232,7 @@ describe('ClusterStore subscriptions, ordering and refreshes', () => {
     await start('chosen');
     h.sources[0]!.send(accepted('1', key()));
     await advance(400);
-    expect(h.store.nodes[0]!.versions.get('chosen')).toBe('"v2"');
+    expect(h.store.nodes[0]!.acceptedEnvelopes.get('chosen')).toBe(JSON.stringify(['"v2"', null]));
     h.sources[0]!.send(operation('1', key(), 'a', 'new-boot'));
     h.sources[0]!.send(event('heartbeat', '1', { storageStatus: 'faulted' }, 'a', 'new-boot'));
     expect(h.store.nodes[0]!.boot).toBe('a-boot');
@@ -240,7 +240,7 @@ describe('ClusterStore subscriptions, ordering and refreshes', () => {
     h.sources[0]!.send(event('reset', '0', { reason: 'node restarted' }, 'a', 'new-boot'));
     expect(h.store.nodes[0]!.boot).toBe('new-boot');
     expect(h.store.nodes[0]!.sequence).toBe(0n);
-    expect(h.store.nodes[0]!.versions.size).toBe(0);
+    expect(h.store.nodes[0]!.acceptedEnvelopes.size).toBe(0);
     expect(h.store.nodes[0]!.storage).toBeUndefined();
     expect(h.store.nodes[0]!.status.state.stale).toBe(true);
     expect(h.store.nodes[0]!.local!.state.stale).toBe(true);
@@ -327,7 +327,7 @@ describe('ClusterStore subscriptions, ordering and refreshes', () => {
     expect(h.read).toHaveBeenCalledTimes(1);
   });
 
-  it('coalesces event storms and suppresses same-version logical read feedback', async () => {
+  it('coalesces event storms and suppresses unchanged-envelope logical read feedback', async () => {
     await start('chosen');
     h.read.mockClear();
     h.keys.mockClear();
@@ -345,6 +345,28 @@ describe('ClusterStore subscriptions, ordering and refreshes', () => {
     h.sources[0]!.send(accepted('102', key(), '"v3"'));
     await advance(400);
     expect(h.read).toHaveBeenCalledTimes(2);
+  });
+
+  it('refreshes same-revision contenders with different request identities and suppresses identity recovery feedback', async () => {
+    await start('chosen');
+    const first = accepted('1', key());
+    first.data.acceptedValue = { length: 32, base64: 'RkNSMgEAAAAAAAAAAQAAAAEAAAABAAAAAAAAAAEACv8=', truncated: false };
+    h.sources[0]!.send(first);
+    await advance(400);
+    h.read.mockClear();
+    h.keys.mockClear();
+    const second = accepted('2', key());
+    second.data.acceptedValue = { length: 32, base64: 'RkNSMgEAAAAAAAAAAQAAAAEAAAABAAAAAAAAAAIACv8=', truncated: false };
+    h.sources[0]!.send(second);
+    await advance(400);
+    expect(h.read).toHaveBeenCalledTimes(1);
+    expect(h.keys).toHaveBeenCalledTimes(1);
+    h.sources[0]!.send(event('acceptor-state', '3', {
+      ...second.data, promisedBallot: { round: 9, proposer: 2 }, acceptedBallot: { round: 8, proposer: 2 },
+    }));
+    await advance(400);
+    expect(h.read).toHaveBeenCalledTimes(1);
+    expect(h.keys).toHaveBeenCalledTimes(1);
   });
 
   it('preserves empty selected keys and empty pagination cursors', async () => {

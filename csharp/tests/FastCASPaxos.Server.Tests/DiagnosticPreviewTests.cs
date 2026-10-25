@@ -64,7 +64,7 @@ public sealed class DiagnosticPreviewTests
             new("FCR1\u0002"u8), new("FCR1\u0001"u8),
             Envelope(new(new byte[8]), new([7])),
             EnvelopeV2(0, Payload), EnvelopeV2(1, Payload, sequence: 0),
-            new(EnvelopeV2(1, ByteString.Empty).Span[..28])
+            new(EnvelopeV2(1, ByteString.Empty).ToArray().AsSpan(0, 28))
         ];
         foreach (var bytes in opaque)
             Assert.Equal(new RegisterPreview("opaque", null, null, null), RegisterPreview.FromAccepted(bytes));

@@ -10,7 +10,7 @@ public sealed class RegisterSimulationClusterTests
     private static ulong ReadRevision(RegisterValue value)
     {
         Assert.Equal(8, value.Version!.Value.Length);
-        return BinaryPrimitives.ReadUInt64BigEndian(value.Version.Value.Span);
+        return BinaryPrimitives.ReadUInt64BigEndian(value.Version.Value.ToArray());
     }
 
     [Fact]

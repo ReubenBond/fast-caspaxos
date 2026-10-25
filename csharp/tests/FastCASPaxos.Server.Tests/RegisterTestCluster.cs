@@ -34,7 +34,7 @@ internal static class TestSupport
     public static ulong ReadRevision(ByteString version)
     {
         Assert.Equal(8, version.Length);
-        return BinaryPrimitives.ReadUInt64BigEndian(version.Span);
+        return BinaryPrimitives.ReadUInt64BigEndian(version.ToArray());
     }
     public static ByteString EnvelopeV2(ulong revision, ByteString payload,
         int proposer = 9, int incarnation = 1, long sequence = 1)
@@ -46,24 +46,25 @@ internal static class TestSupport
         BinaryPrimitives.WriteInt32BigEndian(bytes.AsSpan(13), proposer);
         BinaryPrimitives.WriteInt32BigEndian(bytes.AsSpan(17), incarnation);
         BinaryPrimitives.WriteInt64BigEndian(bytes.AsSpan(21), sequence);
-        payload.Span.CopyTo(bytes.AsSpan(29));
+        payload.ToArray().CopyTo(bytes, 29);
         return new(bytes);
     }
     public static (ulong Revision, int Proposer, int Incarnation, long Sequence, ByteString Payload)
         InspectWrite(ByteString envelope)
     {
         Assert.True(envelope.Length >= 29);
-        Assert.Equal("FCR2"u8.ToArray(), envelope.Span[..4].ToArray());
-        Assert.Equal(1, envelope.Span[4]);
-        var revision = BinaryPrimitives.ReadUInt64BigEndian(envelope.Span[5..]);
-        var proposer = BinaryPrimitives.ReadInt32BigEndian(envelope.Span[13..]);
-        var incarnation = BinaryPrimitives.ReadInt32BigEndian(envelope.Span[17..]);
-        var sequence = BinaryPrimitives.ReadInt64BigEndian(envelope.Span[21..]);
+        var bytes = envelope.ToArray().AsSpan();
+        Assert.Equal("FCR2"u8.ToArray(), bytes[..4].ToArray());
+        Assert.Equal(1, bytes[4]);
+        var revision = BinaryPrimitives.ReadUInt64BigEndian(bytes[5..]);
+        var proposer = BinaryPrimitives.ReadInt32BigEndian(bytes[13..]);
+        var incarnation = BinaryPrimitives.ReadInt32BigEndian(bytes[17..]);
+        var sequence = BinaryPrimitives.ReadInt64BigEndian(bytes[21..]);
         Assert.True(revision > 0);
         Assert.True(proposer > 0);
         Assert.True(incarnation > 0);
         Assert.True(sequence > 0);
-        return (revision, proposer, incarnation, sequence, new(envelope.Span[29..]));
+        return (revision, proposer, incarnation, sequence, new(bytes[29..]));
     }
     public static ControlledPeer[] Peers(int count = 3) =>
         Enumerable.Range(0, count).Select(_ => new ControlledPeer()).ToArray();

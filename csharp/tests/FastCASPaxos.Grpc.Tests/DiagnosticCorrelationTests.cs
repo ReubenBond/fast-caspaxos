@@ -93,12 +93,17 @@ public sealed class DiagnosticCorrelationTests
         finally { DiagnosticContext.Current = null; }
     }
 
-    [Fact]
-    public async Task RealHttp2TwoHostsLinkLocalOutboundInboundAndQuorumOperation()
+    [Theory]
+    [InlineData("classic")]
+    [InlineData("adaptive")]
+    public async Task RealHttp2TwoHostsLinkLocalOutboundInboundAndQuorumOperation(string mode)
     {
         using var directory = new TestDirectory();
-        await using var remote = await DiagnosticHost.Start(DiagnosticHost.Options(directory, "b", 2));
+        var remoteOptions = DiagnosticHost.Options(directory, "b", 2);
+        remoteOptions.Mode = mode;
+        await using var remote = await DiagnosticHost.Start(remoteOptions);
         var options = DiagnosticHost.Options(directory);
+        options.Mode = mode;
         options.Peers.Add(new() { Id = "b", Endpoint = remote.Address, HttpEndpoint = "http://127.0.0.1:12" });
         await using var local = await DiagnosticHost.Start(options);
         var localCursor = local.Node.Diagnostics.Cursor;
@@ -114,8 +119,13 @@ public sealed class DiagnosticCorrelationTests
         var remoteEvents = await History(remote.Node.Diagnostics, remoteCursor);
         var outbound = localEvents.Select(e => e.Data).OfType<ProtocolObservation>().Where(p => p.Direction == "outbound").ToArray();
         var inbound = remoteEvents.Select(e => e.Data).OfType<ProtocolObservation>().ToArray();
-        Assert.NotEmpty(outbound);
-        Assert.Equal(outbound.Length, inbound.Length);
+        string[] expectedOperations = mode == "classic" ? ["prepare", "accept"] : ["accept"];
+        var expectedSentPhases = expectedOperations.SelectMany(name =>
+            new[] { (name, "request-initiated"), (name, "response-observed") }).ToArray();
+        Assert.Equal(expectedSentPhases, outbound.Select(p => (p.Operation, p.Phase)));
+        Assert.Equal(expectedOperations.SelectMany(name =>
+            new[] { (name, "request-received"), (name, "response-produced") }),
+            inbound.Select(p => (p.Operation, p.Phase)));
         foreach (var sent in outbound)
         {
             var received = Assert.Single(inbound, p => p.CallId == sent.CallId &&
@@ -132,14 +142,15 @@ public sealed class DiagnosticCorrelationTests
             Assert.Equal(sent.Outcome, received.Outcome);
         }
         var localProtocol = localEvents.Select(e => e.Data).OfType<ProtocolObservation>().Where(p => p.Direction == "local").ToArray();
-        Assert.NotEmpty(localProtocol);
+        Assert.Equal(expectedSentPhases, localProtocol.Select(p => (p.Operation, p.Phase)));
         Assert.All(localProtocol, p =>
         {
             Assert.Equal(operation.OperationId, p.OperationId);
             Assert.Equal("a", p.PeerId);
         });
-        Assert.Contains(localProtocol, p => p.Operation == "prepare" && p.Phase == "response-observed" && p.Outcome == "promised");
-        Assert.Contains(localProtocol, p => p.Operation == "accept" && p.Phase == "response-observed" && p.Outcome == "accepted");
+        var expectedOutcomes = expectedOperations.Select(name => name == "prepare" ? "promised" : "accepted").ToArray();
+        Assert.Equal(expectedOutcomes, localProtocol.Where(p => p.Phase == "response-observed").Select(p => p.Outcome));
+        Assert.Equal(expectedOutcomes, outbound.Where(p => p.Phase == "response-observed").Select(p => p.Outcome));
         Assert.Contains(remoteEvents, e => e.Kind == "acceptor-state");
         Assert.DoesNotContain(remoteEvents, e => e.Kind == "operation");
         Assert.Null(remote.Node.Diagnostics.LastOperation);

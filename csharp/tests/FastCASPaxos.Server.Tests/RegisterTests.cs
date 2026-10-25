@@ -142,6 +142,7 @@ public sealed class RegisterTests
         var recovered = await service.CompareExchangeAsync("b", b.Current!.Version, Payload).AsTask().WaitAsync(Watchdog);
         Assert.Equal(CompareExchangeStatus.Applied, recovered.Status);
         Assert.Equal(new RegisterValue(Payload, Revision(2)), recovered.Current);
+        Assert.NotNull(recovered.Current);
         for (var index = 0; index < peers.Length; index++)
         {
             var peer = peers[index];
@@ -189,7 +190,9 @@ public sealed class RegisterTests
         Assert.Equal(mode == "adaptive" ? 1 : 0, ballots.Reserved.Count - reservations);
         for (var index = 0; index < peers.Length; index++)
         {
-            Assert.Equal(prepares[index], peers[index].Prepares.Count);
+            // Recovery completes at a classic majority: adaptive confirms its next owned
+            // ballot with those two votes, but fast needs three echoed fast promises.
+            Assert.Equal(prepares[index] + (mode == "fast" ? 1 : 0), peers[index].Prepares.Count);
             Assert.Equal(accepts[index] + 1, peers[index].Accepts.Count);
         }
     }
@@ -701,7 +704,7 @@ public sealed class RegisterTests
             "zero-round" => Envelope(Version(1, 0), Payload),
             "negative-round" => Envelope(Version(1, -1), Payload),
             "v2-short-header" => new ByteString("FCR2"u8),
-            "v2-short-identity" => new ByteString(EnvelopeV2(1, ByteString.Empty).Span[..28]),
+            "v2-short-identity" => new ByteString(EnvelopeV2(1, ByteString.Empty).ToArray().AsSpan(0, 28)),
             "v2-absent-trailing-data" => new ByteString("FCR2\0x"u8),
             "v2-zero-revision" => EnvelopeV2(0, Payload),
             "v2-zero-proposer" => EnvelopeV2(1, Payload, proposer: 0),
