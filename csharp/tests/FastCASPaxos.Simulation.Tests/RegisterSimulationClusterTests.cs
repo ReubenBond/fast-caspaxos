@@ -382,7 +382,7 @@ public sealed class RegisterSimulationClusterTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task SeparateProposersPreserveGenuineContentionAmbiguity(bool samePayload)
+    public async Task SeparateProposersResolveSameRevisionContentionToOneWinner(bool samePayload)
     {
         await using var cluster = new RegisterSimulationCluster(746);
         cluster.Run(async simulation =>
@@ -393,7 +393,7 @@ public sealed class RegisterSimulationClusterTests
             Assert.All(writes, write => Assert.False(write.IsCompleted));
             var results = await Task.WhenAll(writes);
             var winner = Assert.Single(results, result => result.Status == CompareExchangeStatus.Applied);
-            Assert.Equal(4, results.Count(result => result.Status == CompareExchangeStatus.Unknown));
+            Assert.Equal(4, results.Count(result => result.Status == CompareExchangeStatus.Mismatch));
             Assert.All(results, result =>
             {
                 Assert.Null(result.Error);

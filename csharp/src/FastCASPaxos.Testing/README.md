@@ -35,9 +35,9 @@ cluster.Run(async simulation =>
   **1-based** member (`null` means member 1). A shared sticky client uses the
   actual proposer's existing request queue: 32 healthy concurrent creates or
   same-version/same-byte updates yield one Applied and 31 Mismatch.
-  Explicit clients on different members retain real speculative contention:
-  losing proposers can correctly return Unknown rather than inventing a
-  definitive mismatch.
+  Explicit clients on different members exercise real speculative contention.
+  Recovery of the winner at the proposed revision proves the other calls
+  mismatched; a higher revision or a lost result can preserve uncertainty.
 - `DelayAsync(TimeSpan)` and `TimeProvider` use the **same** Clockwork clock and
   scheduler as the protocol. `OperationTimeout { get; init; }` defaults to two
   virtual seconds. Configure it before `Run`.
