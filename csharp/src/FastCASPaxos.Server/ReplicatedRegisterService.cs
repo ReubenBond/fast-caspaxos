@@ -79,10 +79,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
         try
         {
             var current = await ExecuteAsync(key, operation, call).ConfigureAwait(false);
-            var status = operation.Applied
-                ? CompareExchangeStatus.Applied
-                : operation.MayHaveApplied ? CompareExchangeStatus.Unknown : CompareExchangeStatus.Mismatch;
-            return new CompareExchangeResult(status, current);
+            return new CompareExchangeResult(operation.Status, current);
         }
         catch (Exception exception) when (operation.MayHaveApplied)
         {
@@ -184,8 +181,9 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
                     await BackoffAsync(retries++, call.Token).ConfigureAwait(false);
                 }
             }
-            operation.Complete(engine.Result.Value);
-            return RegisterEncoding.Decode(engine.Result.Value);
+            var current = RegisterEncoding.Decode(engine.Result.Value);
+            operation.Complete(engine.Result.Value, current.Version);
+            return current;
         }
         catch (OperationCanceledException) when (call.Token.IsCancellationRequested)
         {
@@ -540,7 +538,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
         private long _uncertainMutations;
         public ByteString? Payload { get; }
         public ByteString? EncodedWrite { get; private set; }
-        public bool Applied { get; private set; }
+        public CompareExchangeStatus Status { get; private set; }
         public bool MayHaveApplied => Volatile.Read(ref _uncertainMutations) != 0;
         public void MutationDispatched() => Interlocked.Increment(ref _uncertainMutations);
         public void MutationRejected() => Interlocked.Decrement(ref _uncertainMutations);
@@ -551,7 +549,21 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
             Payload = payload;
             _requestIdentity = requestIdentity;
         }
-        public void Complete(ByteString committed) => Applied = EncodedWrite is { } own && committed == own;
+        public void Complete(ByteString committed, ByteString? version)
+        {
+            if (EncodedWrite is { } own && committed == own)
+            {
+                Status = CompareExchangeStatus.Applied;
+                return;
+            }
+
+            // This accept quorum fences earlier attempts. Another envelope at the same or
+            // lower revision proves our write never committed; only a later revision can hide it.
+            var superseded = MayHaveApplied && version is { } current
+                && BinaryPrimitives.ReadUInt64BigEndian(current.Span)
+                    > checked((_expectedVersion is { } expected ? BinaryPrimitives.ReadUInt64BigEndian(expected.Span) : 0) + 1);
+            Status = superseded ? CompareExchangeStatus.Unknown : CompareExchangeStatus.Mismatch;
+        }
         public (OperationStatus Status, ByteString Result) Apply(ByteString current)
         {
             var existing = RegisterEncoding.Decode(current);

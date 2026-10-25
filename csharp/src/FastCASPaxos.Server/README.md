@@ -74,14 +74,17 @@ metadata contract; .NET 11 uses the runtime-provided types.
 | Status | Established outcome |
 | --- | --- |
 | `Applied` | This operation's complete envelope, including its request identity, reached an accept quorum. `Current` contains its revision and payload. |
-| `Mismatch` | The observed condition failed, and this operation's mutations are known to have been rejected or remained unsent. `Current` is the established state. |
+| `Mismatch` | The observed condition failed. Mutations remained unsent, were explicitly rejected, or recovery established another envelope at the same or lower revision and fenced the earlier attempts. `Current` is the established state. |
 | `Unknown` | A mutation may have applied. `Current`, when available, is a later established observation. `Error`, when available, preserves the interruption or failure. |
 
 The operation identity stays fixed through internal retries. Fast-round
 contenders with identical payloads have distinct identities, so only one can
 return `Applied` for a given expected version. Recovery of the operation's own
-envelope establishes success. A different later write after an uncertain
-mutation preserves `Unknown`: another writer may already have superseded it.
+envelope establishes success. Recovery of a different envelope at the same
+revision establishes `Mismatch`, even with a missing peer response: every applied
+write advances the revision, and the recovery quorum fences prior attempts.
+A higher revision after an uncertain mutation preserves `Unknown`: another writer
+may already have superseded it.
 Applications resolve this using their own business semantics.
 
 Cancellation before mutation dispatch throws `OperationCanceledException`.
@@ -185,6 +188,8 @@ followed by a positive big-endian Int64 request sequence. Existing `FCR1` envelo
 remain readable with their exact versions and payloads. Their next successful
 write increments the existing eight-byte version interpreted as a revision and
 writes `FCR2`; recovery preserves the original envelope.
+Deploy the updated register layer to all writers together so every writer sharing
+these keys follows the per-register revision rule.
 Protocol endpoints store
 these bytes opaquely. Protocol clients sharing register keys preserve this
 envelope and the register's conditional-update rules. Malformed accepted

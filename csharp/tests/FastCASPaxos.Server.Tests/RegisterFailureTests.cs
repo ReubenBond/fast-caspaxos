@@ -11,6 +11,37 @@ public sealed class RegisterFailureTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task ForeignSameRevisionProvesMismatchDespiteUnreachablePeer(bool samePayload)
+    {
+        var peers = Peers();
+        var existingPayload = samePayload ? Payload : ByteString.Empty;
+        var existing = EnvelopeV2(1, existingPayload, proposer: 2);
+        foreach (var peer in peers)
+            Assert.True((await peer.Inner.AcceptAsync("key", new(new Ballot(4, 2), existing, Ballot.Zero))).IsAccepted);
+        peers[2].GoOffline();
+        var clock = new ManualTime();
+        await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(1), Options("adaptive", clock));
+        var pending = service.CompareExchangeAsync("key", null, Payload).AsTask();
+        await clock.WaitForDelayAsync(TimeSpan.FromMilliseconds(2));
+        clock.Advance(TimeSpan.FromMilliseconds(2));
+        var result = await pending.WaitAsync(Watchdog);
+        Assert.Equal(CompareExchangeStatus.Mismatch, result.Status);
+        Assert.Equal(new RegisterValue(existingPayload, Revision(1)), result.Current);
+        Assert.Null(result.Error);
+        var attempted = peers[2].Accepts.First().Request;
+        Assert.Equal((1UL, 1, 1, 1L, Payload), InspectWrite(attempted.Value));
+        Assert.NotEqual(existing, attempted.Value);
+        Assert.All(peers.Take(2), peer =>
+        {
+            Assert.Equal(existing, peer.Inner.Snapshot("key")!.AcceptedValue);
+            Assert.True(peer.Accepts.Last().Request.Ballot > attempted.Ballot);
+        });
+        Assert.False((await peers[2].Inner.AcceptAsync("key", attempted)).IsAccepted);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task ClassicQuorumDoesNotWaitForMinority(bool offline)
     {
         var peers = Peers();

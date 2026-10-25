@@ -326,7 +326,7 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
                 var state = await owner.ExecuteAsync(this, operation, cancellationToken);
                 var current = state.Get(key);
                 var status = state.WrittenBy(key, request) ? CompareExchangeStatus.Applied
-                    : operation.MayHaveApplied ? CompareExchangeStatus.Unknown : CompareExchangeStatus.Mismatch;
+                    : operation.CouldHaveBeenSuperseded(current) ? CompareExchangeStatus.Unknown : CompareExchangeStatus.Mismatch;
                 owner.Record($"result node={node} status={status}");
                 return new(status, current);
             }
@@ -375,6 +375,11 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
         private bool _expired;
 
         public void Expire() => _expired = true;
+
+        public bool CouldHaveBeenSuperseded(RegisterValue current) =>
+            MayHaveApplied && current.Version is { } version
+            && BinaryPrimitives.ReadUInt64BigEndian(version.ToArray())
+                > checked((expectedVersion is { } expected ? BinaryPrimitives.ReadUInt64BigEndian(expected.ToArray()) : 0) + 1);
 
         public (OperationStatus Status, RegisterState Result) Apply(RegisterState current)
         {
