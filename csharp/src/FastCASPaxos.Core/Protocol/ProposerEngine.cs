@@ -123,7 +123,7 @@ public abstract class ProposerEngine<TValue, TRoute>
         if (CurrentOperation is not null)
             throw new InvalidOperationException("A local observation can seed only an idle proposer.");
 
-        if (PreparedBallot is { } prepared && _modePolicy.CanReusePreparedBallot(prepared, ProposerId)
+        if (PreparedBallot is { } prepared && CanReusePreparedBallot(prepared)
             && acceptedBallot < prepared && promisedBallot <= prepared)
         {
             StartProposal(operation);
@@ -388,6 +388,8 @@ public abstract class ProposerEngine<TValue, TRoute>
     /// retain their identity. A reserved piggyback promise is consumed at most once by this engine.
     /// </summary>
     protected virtual Ballot ReserveBallot(Ballot candidate) => candidate;
+    /// <summary>Hosted engines also establish ownership of a learned classic reservation.</summary>
+    protected virtual bool CanReusePreparedBallot(Ballot ballot) => _modePolicy.CanReusePreparedBallot(ballot, ProposerId);
     protected virtual void OnCachedValueChanged(TValue value) { }
     protected virtual void OnPendingAcceptValueStarted(TValue value) { }
     protected virtual void OnPendingAcceptValueCommitted(TValue value) { }
@@ -426,7 +428,7 @@ public abstract class ProposerEngine<TValue, TRoute>
         }
 
         if (PreparedBallot is { } reusableBallot
-            && _modePolicy.CanReusePreparedBallot(reusableBallot, ProposerId))
+            && CanReusePreparedBallot(reusableBallot))
         {
             // Reuse the piggybacked promise exactly once, jumping straight into operation execution
             // as if a standalone prepare for that ballot had already succeeded.
@@ -436,6 +438,7 @@ public abstract class ProposerEngine<TValue, TRoute>
             return;
         }
 
+        if (PreparedBallot is { } observedPromise) Ballot = Ballot.Max(Ballot, observedPromise);
         Ballot = CreateInitialBallot();
         if (_modePolicy.ShouldSkipInitialPrepare(ProposerId)
             && Ballot == Ballot.InitialFast()

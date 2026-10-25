@@ -112,13 +112,18 @@ public sealed class DiagnosticCorrelationTests
         var result = await local.Node.Registers.CompareExchangeAsync("key", null, Payload).AsTask().WaitAsync(Watchdog);
         Assert.Equal(CompareExchangeStatus.Applied, result.Status);
         Assert.Equal(Payload, result.Current!.Value);
+        // The quorum operation has completed, but learning uses a separate asynchronous
+        // call. Wait for its response instead of racing a snapshot of the journal.
+        var learned = await WaitForLearningResponse(local.Node.Diagnostics, localCursor);
         var last = Assert.IsType<NodeEvent>(local.Node.Diagnostics.LastOperation);
         var operation = Assert.IsType<OperationObservation>(last.Data);
         Assert.Equal("applied", operation.Outcome);
         var localEvents = await History(local.Node.Diagnostics, localCursor);
         var remoteEvents = await History(remote.Node.Diagnostics, remoteCursor);
-        var outbound = localEvents.Select(e => e.Data).OfType<ProtocolObservation>().Where(p => p.Direction == "outbound").ToArray();
-        var inbound = remoteEvents.Select(e => e.Data).OfType<ProtocolObservation>().ToArray();
+        var allOutbound = localEvents.Select(e => e.Data).OfType<ProtocolObservation>().Where(p => p.Direction == "outbound").ToArray();
+        var allInbound = remoteEvents.Select(e => e.Data).OfType<ProtocolObservation>().ToArray();
+        var outbound = allOutbound.Where(p => p.OperationId == operation.OperationId).ToArray();
+        var inbound = allInbound.Where(p => p.OperationId == operation.OperationId).ToArray();
         string[] expectedOperations = mode == "classic" ? ["prepare", "accept"] : ["accept"];
         var expectedSentPhases = expectedOperations.SelectMany(name =>
             new[] { (name, "request-initiated"), (name, "response-observed") }).ToArray();
@@ -151,6 +156,42 @@ public sealed class DiagnosticCorrelationTests
         var expectedOutcomes = expectedOperations.Select(name => name == "prepare" ? "promised" : "accepted").ToArray();
         Assert.Equal(expectedOutcomes, localProtocol.Where(p => p.Phase == "response-observed").Select(p => p.Outcome));
         Assert.Equal(expectedOutcomes, outbound.Where(p => p.Phase == "response-observed").Select(p => p.Outcome));
+
+        // Everything outside the original quorum operation must be exactly the new
+        // Learn call, with its own call ID and no inherited user-operation context.
+        var learnedOutbound = allOutbound.Where(p => p.OperationId != operation.OperationId).ToArray();
+        var learnedInbound = allInbound.Where(p => p.OperationId != operation.OperationId).ToArray();
+        Assert.Equal<string>(["request-initiated", "response-observed"], learnedOutbound.Select(p => p.Phase));
+        Assert.Equal<string>(["request-received", "response-produced"], learnedInbound.Select(p => p.Phase));
+        var accepted = Assert.Single(outbound, p => p.Operation == "accept" && p.Phase == "request-initiated");
+        foreach (var sent in learnedOutbound)
+        {
+            var received = Assert.Single(learnedInbound, p => p.CallId == sent.CallId &&
+                p.Phase == (sent.Phase == "request-initiated" ? "request-received" : "response-produced"));
+            Assert.Equal(learned.CallId, sent.CallId);
+            Assert.DoesNotContain(outbound, p => p.CallId == sent.CallId);
+            Assert.Equal("learn", sent.Operation);
+            Assert.Equal("learn", received.Operation);
+            Assert.Null(sent.OperationId);
+            Assert.Null(received.OperationId);
+            Assert.Equal("b", sent.PeerId);
+            Assert.Equal("a", received.PeerId);
+            Assert.Equal("inbound", received.Direction);
+            Assert.Equal(accepted.Key, sent.Key);
+            Assert.Equal(sent.Key, received.Key);
+            Assert.Equal(accepted.Ballot, sent.Ballot);
+            Assert.Equal(sent.Ballot, received.Ballot);
+            Assert.Equal(accepted.Ballot, sent.AcceptedBallot);
+            Assert.Equal(sent.AcceptedBallot, received.AcceptedBallot);
+            Assert.Equal(accepted.NextBallot, sent.NextBallot);
+            Assert.Equal(sent.NextBallot, received.NextBallot);
+            Assert.Equal(accepted.Value, sent.Value);
+            Assert.Equal(sent.Value, received.Value);
+            Assert.Equal("committed", sent.Outcome);
+            Assert.Equal(sent.Outcome, received.Outcome);
+            Assert.Null(sent.Error);
+            Assert.Null(received.Error);
+        }
         Assert.Contains(remoteEvents, e => e.Kind == "acceptor-state");
         Assert.DoesNotContain(remoteEvents, e => e.Kind == "operation");
         Assert.Null(remote.Node.Diagnostics.LastOperation);
@@ -207,5 +248,20 @@ public sealed class DiagnosticCorrelationTests
             if (reader.Current.Id == end) return events;
         }
         throw new InvalidOperationException("History exceeded the bounded trace.");
+    }
+
+    private static async Task<ProtocolObservation> WaitForLearningResponse(NodeEventJournal journal, string cursor)
+    {
+        await using var reader = journal.ReadAsync(cursor, TimeSpan.FromDays(1)).GetAsyncEnumerator();
+        for (var count = 0; count < journal.Capacity; count++)
+        {
+            Assert.True(await reader.MoveNextAsync().AsTask().WaitAsync(Watchdog));
+            Assert.NotEqual("reset", reader.Current.Kind);
+            if (reader.Current.Data is not ProtocolObservation
+                { Operation: "learn", Direction: "outbound", PeerId: "b" } observation) continue;
+            Assert.NotEqual("fault-observed", observation.Phase);
+            if (observation.Phase == "response-observed") return observation;
+        }
+        throw new InvalidOperationException("Learn response exceeded the bounded trace.");
     }
 }

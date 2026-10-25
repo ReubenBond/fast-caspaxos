@@ -647,6 +647,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
     private sealed class Engine : ProposerEngine<ByteString, string>
     {
         private readonly IProposerBallotSource _source;
+        private Ballot _reservedBallot;
         public override int ProposerId => _source.ProposerId;
         public Outbound? Outgoing { get; private set; }
         public ByteString? Result { get; private set; }
@@ -659,7 +660,9 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
             else StartProposal(operation, local.AcceptedBallot, local.PromisedBallot);
         }
         protected override Ballot ReserveBallot(Ballot candidate) =>
-            candidate.IsFastRoundBallot ? candidate : _source.Reserve(candidate.Round);
+            candidate.IsFastRoundBallot ? candidate : _reservedBallot = _source.Reserve(candidate.Round);
+        protected override bool CanReusePreparedBallot(Ballot ballot) =>
+            base.CanReusePreparedBallot(ballot) && (ballot.IsFastRoundBallot || ballot == _reservedBallot);
         protected override void OnSendPrepare(PrepareRequest request) => Outgoing = new Outbound(request, null);
         protected override void OnSendAccept(AcceptRequest<ByteString> request) => Outgoing = new Outbound(null, request);
         protected override void OnProposalCompleted(ProposeResponse<ByteString> response) => Result = response.CommittedValue;

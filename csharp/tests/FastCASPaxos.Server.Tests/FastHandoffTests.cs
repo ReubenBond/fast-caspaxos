@@ -366,6 +366,77 @@ public sealed class FastHandoffTests
         AssertOneAcceptRound(peers, before);
     }
 
+    [Fact]
+    public Task SharedAllocatorLearnDoesNotTransferClassicPreparedBallotOwnership() =>
+        AssertSharedAllocatorOwnershipAsync(learnThroughRead: false);
+
+    [Fact]
+    public Task SharedAllocatorReadDoesNotTransferClassicPreparedBallotOwnership() =>
+        AssertSharedAllocatorOwnershipAsync(learnThroughRead: true);
+
+    private static async Task AssertSharedAllocatorOwnershipAsync(bool learnThroughRead)
+    {
+        var peers = Peers();
+        using var ballots = new TestBallots(7);
+        await using var owner = new ReplicatedRegisterService(Routes(peers), ballots, Options("leader"), peers[0].Inner);
+        await using var other = new ReplicatedRegisterService(Routes(peers), ballots, Options("leader"), peers[2].Inner);
+        var commits = new List<RegisterCommit>();
+        owner.Committed += commits.Add;
+        var created = await owner.CompareExchangeAsync("key", null, Payload).AsTask().WaitAsync(Watchdog);
+        Assert.Equal(CompareExchangeStatus.Applied, created.Status);
+        var first = Assert.Single(commits);
+        Assert.False(first.PreparedBallot.IsZero);
+        Assert.Equal(ballots.ProposerId, first.PreparedBallot.Proposer);
+
+        // Reobserving a commit must not discard the same engine's own allocated promise.
+        if (learnThroughRead)
+            Assert.Equal(created.Current, await owner.ReadAsync("key").AsTask().WaitAsync(Watchdog));
+        else
+            owner.Learn(first);
+        var before = Counts(peers);
+        var warm = await owner.CompareExchangeAsync("key", created.Current!.Version, ByteString.Empty)
+            .AsTask().WaitAsync(Watchdog);
+        Assert.Equal(CompareExchangeStatus.Applied, warm.Status);
+        Assert.Equal(new RegisterValue(ByteString.Empty, Revision(2)), warm.Current);
+        AssertOneAcceptRound(peers, before);
+        Assert.All(peers, peer => Assert.Equal(first.PreparedBallot, peer.Accepts.Last().Request.Ballot));
+
+        var latest = commits.Last();
+        Assert.False(latest.PreparedBallot.IsZero);
+        Assert.Equal(ballots.ProposerId, latest.PreparedBallot.Proposer);
+        before = Counts(peers);
+        if (learnThroughRead)
+            Assert.Equal(warm.Current, await other.ReadAsync("key").AsTask().WaitAsync(Watchdog));
+        else
+            other.Learn(latest);
+        for (var index = 0; index < peers.Length; index++)
+        {
+            Assert.Equal(before[index].Prepares, peers[index].Prepares.Count);
+            Assert.Equal(before[index].Accepts, peers[index].Accepts.Count);
+        }
+
+        // Sharing the numeric proposer ID and allocator does not share an engine's
+        // reservation. Reusing it here would allow two proposal values at one classic ballot.
+        before = Counts(peers);
+        var reservations = ballots.Reserved.Count;
+        var updated = await other.CompareExchangeAsync("key", warm.Current!.Version, new([30]))
+            .AsTask().WaitAsync(Watchdog);
+        Assert.Equal(CompareExchangeStatus.Applied, updated.Status);
+        Assert.Equal(new RegisterValue(new([30]), Revision(3)), updated.Current);
+        for (var index = 0; index < peers.Length; index++)
+        {
+            var peer = peers[index];
+            Assert.Equal(before[index].Reads, peer.Reads.Count);
+            Assert.Equal(before[index].Prepares + 1, peer.Prepares.Count);
+            Assert.Equal(before[index].Accepts + 1, peer.Accepts.Count);
+            var prepared = peer.Prepares.Last().Request.Ballot;
+            Assert.Equal(ballots.ProposerId, prepared.Proposer);
+            Assert.True(prepared > latest.PreparedBallot);
+            Assert.Contains(prepared, ballots.Reserved.Skip(reservations));
+            Assert.Equal(prepared, peer.Accepts.Last().Request.Ballot);
+        }
+    }
+
     private static (int Reads, int Prepares, int Accepts)[] Counts(ControlledPeer[] peers) =>
         peers.Select(peer => (peer.Reads.Count, peer.Prepares.Count, peer.Accepts.Count)).ToArray();
 

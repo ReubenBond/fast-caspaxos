@@ -123,6 +123,11 @@ receive distinct incarnations. Register revisions advance within the register;
 successive fast writes use only the acceptor commit, with no proposer-side
 allocator transaction after incarnation initialization. Restarted proposers
 advance past all previously reserved ballots and incarnations.
+Classic prepared ballots remain owned by the engine that reserved them,
+including when several service instances share a proposer identity and allocator.
+Learning another engine's classic promise advances the ballot floor; that engine
+retains exclusive use of its reservation. Shared fast promises can be reused by
+other engines after their committed base is learned.
 The source rejects opening an allocator under a different proposer identity.
 Round exhaustion fails with `OverflowException` before a wrapped ballot can
 be emitted; provision a new proposer identity before exhausting its range.

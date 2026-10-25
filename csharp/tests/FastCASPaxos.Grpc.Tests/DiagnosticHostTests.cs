@@ -625,6 +625,7 @@ internal sealed class DiagnosticHost(NodeRuntime node, WebApplication app, strin
         builder.Services.AddSingleton(node.Acceptor);
         builder.Services.AddSingleton(node.Digests);
         builder.Services.AddSingleton(node.Registers);
+        builder.Services.AddSingleton(node.Learner);
         var app = builder.Build();
         var completed = Channel.CreateUnbounded<string>();
         app.Use(async (context, next) =>
@@ -642,6 +643,7 @@ internal sealed class DiagnosticHost(NodeRuntime node, WebApplication app, strin
         app.MapGrpcService<AcceptorGrpcService>();
         app.MapGrpcService<AcceptorDigestGrpcService>();
         app.MapGrpcService<RegisterGrpcService>();
+        app.MapGrpcService<RegisterLearnerGrpcService>();
         app.MapGet("/health/live", () => Results.Text("Serving register requests."));
         try
         {
