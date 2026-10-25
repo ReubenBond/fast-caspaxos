@@ -34,7 +34,6 @@ export function App({ store }: { store: ClusterStore }) {
   const [pageStack, setPageStack] = useState<(string | null)[]>([]);
   const [create, setCreate] = useState(false);
   const [newKey, setNewKey] = useState('');
-  const [createKey, setCreateKey] = useState<string | null>(null);
   const [navigationGuard, setNavigationGuard] = useState<NavigationGuard>(null);
   const [navigationNotice, setNavigationNotice] = useState<string>();
   useEffect(() => { void store.start(); return () => store.dispose(); }, [store]);
@@ -121,7 +120,9 @@ export function App({ store }: { store: ClusterStore }) {
     <main id="registers" className="workbench">
       <section className="inventory panel" aria-labelledby="keys-title">
         <div className="panel-heading"><h2 id="keys-title">Registers</h2>
-          <button className="primary compact" onClick={() => navigate(() => { setCreate(true); setCreateKey(null); })}>Create key</button></div>
+          <button className="primary compact" onClick={() => {
+            if (!create) navigate(() => { setNewKey(''); setCreate(true); });
+          }}>Create key</button></div>
         <form className="search" onSubmit={search}>
           <label htmlFor="prefix">Key prefix</label>
           <div className="input-action"><input id="prefix" value={prefix} onChange={(event) => setPrefix(event.target.value)} placeholder="Filter by prefix" />
@@ -156,14 +157,9 @@ export function App({ store }: { store: ClusterStore }) {
         <div className="panel-heading"><h2 id="inspector-title">{create ? 'Create register' : 'Register inspector'}</h2>
           {store.selected !== null && !create && <button className="compact" onClick={() => store.current?.invalidate()}>Read current value</button>}</div>
         {create ? <div className="inspector-body">
-          <p>Create an absent key using <code>If-None-Match: *</code>.</p>
-          <form onSubmit={(event) => { event.preventDefault(); navigate(() => setCreateKey(newKey)); }}>
-            <label htmlFor="new-key">Complete key (empty is valid)</label>
-            <div className="input-action"><input autoFocus id="new-key" value={newKey} onChange={(event) => setNewKey(event.target.value)} />
-              <button type="submit">Set key</button></div>
-          </form>
-          {createKey !== null && <WriteEditor key={`create:${createKey}`} store={store} registerKey={createKey}
-            initial={{ present: false }} onCreated={() => select(createKey)} onGuardChange={setNavigationGuard} />}
+          <p>Choose a key and its initial value.</p>
+          <WriteEditor key="create" store={store} registerKey={newKey} onKeyChange={setNewKey}
+            initial={{ present: false }} onCreated={() => select(newKey)} onGuardChange={setNavigationGuard} />
         </div> : store.selected === null ? <div className="empty inspector-empty">
           <h3>Select a register to inspect it</h3>
           <p>Compare its quorum-established value with each node's local accepted state, then follow the messages below.</p>
@@ -219,9 +215,10 @@ function RegisterValue({ value }: { value: Register }) {
   </div>;
 }
 
-export function WriteEditor({ store, registerKey, initial, onCreated, onGuardChange }: {
+export function WriteEditor({ store, registerKey, initial, onCreated, onGuardChange, onKeyChange }: {
   store: ClusterStore; registerKey: string; initial: Register; onCreated?: () => void;
   onGuardChange?: (guard: NavigationGuard) => void;
+  onKeyChange?: (key: string) => void;
 }) {
   const original = useRef(initial.present ? initial.bytes : new Uint8Array());
   const initialText = utf8(original.current);
@@ -271,7 +268,15 @@ export function WriteEditor({ store, registerKey, initial, onCreated, onGuardCha
     }
   };
   return <form className="write-editor" onSubmit={(event) => { void submit(event); }}>
-    <div className="section-label"><h3>Conditional edit</h3><label>Encoding <select aria-label="Encoding" value={mode} disabled={busy} onChange={(event) => {
+    {onKeyChange && <label className="register-key">Key (empty is valid)
+      <input autoFocus value={registerKey} disabled={busy || blocked || expected !== null} onChange={(event) => {
+        onKeyChange(event.target.value);
+        setDirty(true);
+        setResult(undefined);
+        setError(undefined);
+      }} />
+    </label>}
+    <div className="section-label"><h3>{onKeyChange ? 'Register contents' : 'Conditional edit'}</h3><label>Encoding <select aria-label="Encoding" value={mode} disabled={busy} onChange={(event) => {
       try {
         const value = bytes();
         const nextMode = event.target.value as 'text' | 'base64';
@@ -284,7 +289,7 @@ export function WriteEditor({ store, registerKey, initial, onCreated, onGuardCha
         setError(undefined);
       } catch (failure) { setError(errorText(failure)); }
     }}><option value="text">UTF-8 text</option><option value="base64">Base64</option></select></label></div>
-    <label htmlFor="draft">New complete value for <code>{keyName(registerKey)}</code></label>
+    <label htmlFor="draft">{onKeyChange ? 'Initial value' : <>New complete value for <code>{keyName(registerKey)}</code></>}</label>
     <textarea id="draft" value={draft} disabled={busy} spellCheck={false} rows={4}
       onChange={(event) => { setDraft(event.target.value); setDirty(true); }} />
     <p className="precondition">{expected === null ? <>Create precondition <code>If-None-Match: *</code></> : <>Expected ETag <code>{expected}</code></>}</p>

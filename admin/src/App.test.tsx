@@ -241,6 +241,99 @@ describe('WriteEditor conditional intent', () => {
   });
 });
 
+describe('App register creation', () => {
+  let h: Harness;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    h = harness();
+  });
+  afterEach(() => h.store.dispose());
+
+  async function openCreate() {
+    render(<App store={h.store} />);
+    await tick(400);
+    fireEvent.click(screen.getByRole('button', { name: 'Create key' }));
+    return {
+      key: screen.getByRole('textbox', { name: 'Key (empty is valid)' }),
+      value: screen.getByRole('textbox', { name: 'Initial value' }),
+    };
+  }
+
+  it.each([
+    { name: 'text', encoding: 'text', value: 'hello', bytes: [104, 101, 108, 108, 111] },
+    { name: 'binary', encoding: 'base64', value: 'AP8=', bytes: [0, 255] },
+  ])('shows both fields immediately and creates a $name value in one submission', async ({ encoding, value, bytes }) => {
+    const fields = await openCreate();
+    expect(fields.key).toBeVisible();
+    expect(fields.key).toHaveFocus();
+    expect(fields.value).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Set key' })).not.toBeInTheDocument();
+    fireEvent.change(fields.key, { target: { value: 'new/original' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Encoding' }), { target: { value: encoding } });
+    fireEvent.change(fields.value, { target: { value } });
+    fireEvent.change(fields.key, { target: { value: 'new/final' } });
+    expect(fields.value).toHaveValue(value);
+    expect(h.write).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Create register' }));
+    await tick(0);
+    expect(h.write).toHaveBeenCalledTimes(1);
+    const [origin, registerKey, payload, expected] = h.write.mock.calls[0]!;
+    expect(origin).toBe(peers[0]!.httpEndpoint);
+    expect(registerKey).toBe('new/final');
+    expect([...payload]).toEqual(bytes);
+    expect(expected).toBeNull();
+    expect(h.store.selected).toBe('new/final');
+    expect(screen.getByRole('heading', { name: 'Register inspector' })).toBeInTheDocument();
+  });
+
+  it('creates an empty key and empty value directly from the initial form', async () => {
+    const fields = await openCreate();
+    expect(fields.key).toHaveValue('');
+    expect(fields.value).toHaveValue('');
+    fireEvent.click(screen.getByRole('button', { name: 'Create register' }));
+    await tick(0);
+    expect(h.write).toHaveBeenCalledTimes(1);
+    expect(h.write.mock.calls[0]![1]).toBe('');
+    expect([...h.write.mock.calls[0]![2]]).toEqual([]);
+    expect(h.write.mock.calls[0]![3]).toBeNull();
+    expect(h.store.selected).toBe('');
+  });
+
+  it('protects key-only drafts when navigation would discard the create form', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const fields = await openCreate();
+    fireEvent.change(fields.key, { target: { value: 'unsaved/key' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create key' }));
+    expect(confirm).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'chosen' }));
+    expect(confirm).toHaveBeenCalledWith('Discard this unsaved draft and change the editor?');
+    expect(fields.key).toHaveValue('unsaved/key');
+    expect(screen.getByRole('heading', { name: 'Create register' })).toBeInTheDocument();
+    expect(h.store.selected).toBeNull();
+    expect(h.write).not.toHaveBeenCalled();
+  });
+
+  it.each(['unknown', 'conflict'] as const)('locks the submitted key while pending and after an %s outcome', async (kind) => {
+    const result = deferred<WriteResult>();
+    h.write.mockReturnValueOnce(result.promise);
+    const fields = await openCreate();
+    fireEvent.change(fields.key, { target: { value: 'pending/key' } });
+    fireEvent.change(fields.value, { target: { value: 'pending value' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create register' }));
+    expect(fields.key).toBeDisabled();
+    expect(fields.value).toBeDisabled();
+    expect(h.write.mock.calls[0]![1]).toBe('pending/key');
+    expect(h.write.mock.calls[0]![3]).toBeNull();
+    result.resolve({ kind, message: 'Preserve the submitted intent.' });
+    await tick(0);
+    expect(fields.key).toBeDisabled();
+    expect(fields.key).toHaveValue('pending/key');
+    expect(fields.value).toHaveValue('pending value');
+    expect(screen.getByRole('button', { name: 'Create register' })).toBeDisabled();
+    expect(h.write).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('App editor navigation protection', () => {
   let h: Harness;
   beforeEach(() => {

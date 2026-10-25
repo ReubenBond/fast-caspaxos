@@ -105,7 +105,9 @@ preserving ballots and stored state. Inconclusive observations use consensus
 recovery. The same path serves inspector refreshes and key-list candidate reads.
 
 **Values and edits:** the inspector shows complete bytes with their exact opaque
-ETag. UTF-8 decoding is strict; binary values use Base64. Switching representations
+ETag. The create form shows the key and initial value together and submits them
+in one step; empty keys and empty values are valid. UTF-8 decoding is strict;
+binary values use Base64. Switching representations
 preserves bytes, including a UTF-8 BOM and original line endings. The editor
 captures its own expected ETag, keeping drafts stable when newer observations
 arrive. Create uses `If-None-Match: *`; compare-and-swap uses the captured strong

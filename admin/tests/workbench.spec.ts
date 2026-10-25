@@ -117,7 +117,7 @@ test('real hosts stream changes, preserve conditional bytes, and recover one dis
   }
 });
 
-test('creates an empty binary key and reconciles a real competing-host conflict without overwriting the draft', async ({ page, context, request }) => {
+test('creates registers in one step and reconciles a real competing-host conflict without overwriting the draft', async ({ page, context, request }) => {
   const cluster = new Cluster();
   await cluster.start();
   try {
@@ -126,9 +126,19 @@ test('creates an empty binary key and reconciles a real competing-host conflict 
     await page.keyboard.press('Tab');
     await expect(page.getByRole('link', { name: 'Skip to registers' })).toBeFocused();
     await page.getByRole('button', { name: 'Create key', exact: true }).click();
-    await page.getByRole('button', { name: 'Set key', exact: true }).click();
+    await expect(page.getByRole('textbox', { name: 'Key (empty is valid)', exact: true })).toBeVisible();
+    await expect(page.getByLabel('Initial value', { exact: true })).toBeVisible();
+    await page.getByRole('textbox', { name: 'Key (empty is valid)', exact: true }).fill('demo/created');
+    await page.getByLabel('Initial value', { exact: true }).fill('initial content');
+    await page.getByRole('button', { name: 'Create register', exact: true }).click();
+    await expect(page.getByLabel('Current value')).toHaveText('initial content');
+    const textCreated = await request.get(`${cluster.origin(1)}/v1/registers/value?key=demo%2Fcreated`);
+    expect(textCreated.status()).toBe(200);
+    expect(await textCreated.text()).toBe('initial content');
+    await page.getByRole('button', { name: 'Create key', exact: true }).click();
+    await expect(page.getByRole('textbox', { name: 'Key (empty is valid)', exact: true })).toHaveValue('');
     await page.getByLabel('Encoding', { exact: true }).selectOption('base64');
-    await page.getByLabel('New complete value').fill('//8ACg==');
+    await page.getByLabel('Initial value', { exact: true }).fill('//8ACg==');
     await page.getByRole('button', { name: 'Create register', exact: true }).click();
     await expect(page.getByLabel('Current value')).toHaveText('//8ACg==');
     const created = await request.get(`${cluster.origin(1)}/v1/registers/value?key=`);

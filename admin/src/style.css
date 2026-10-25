@@ -96,6 +96,7 @@ dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .value-content { padding: 12px 0; max-height: 190px; overflow: auto; }
 .etag { display: block; color: #344c70; font-weight: 400; user-select: all; }
 .write-editor { margin-top: 22px; }
+.write-editor > .register-key { margin-bottom: 16px; }
 .write-editor textarea { margin-top: 5px; }
 .precondition { color: var(--muted); font-size: .8rem; margin: 7px 0 10px; }
 .write-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
