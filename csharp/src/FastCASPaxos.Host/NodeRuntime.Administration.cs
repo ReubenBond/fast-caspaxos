@@ -130,8 +130,13 @@ public sealed partial class NodeRuntime
 
     private RegisterGeneration GetRegisters()
     {
-        ObjectDisposedException.ThrowIf(_disposal is not null, this);
         return Volatile.Read(ref _registerGeneration) ?? throw new InvalidOperationException("The node is not open.");
+    }
+
+    private RegisterGeneration GetServingRegisters()
+    {
+        ObjectDisposedException.ThrowIf(IsDraining || _disposal is not null, this);
+        return GetRegisters();
     }
 
     private sealed record RegisterGeneration(string Epoch, IRegisterService Service, ReplicatedRegisterService Core)
@@ -166,7 +171,7 @@ public sealed partial class NodeRuntime
     {
         public async ValueTask<RegisterValue> ReadAsync(string key, CancellationToken cancellationToken = default)
         {
-            var generation = node.GetRegisters();
+            var generation = node.GetServingRegisters();
             using var lease = generation.Admission.Enter();
             return generation.Export(await generation.Service.ReadAsync(key, cancellationToken).ConfigureAwait(false));
         }
@@ -175,7 +180,7 @@ public sealed partial class NodeRuntime
             string key, ByteString? expectedVersion, ByteString value, CancellationToken cancellationToken = default)
         {
             if (value.IsDefault) throw new ArgumentException("Initialized value bytes are required.", nameof(value));
-            var generation = node.GetRegisters();
+            var generation = node.GetServingRegisters();
             using var lease = generation.Admission.Enter();
             if (!generation.TryImport(expectedVersion, out var imported))
                 return new(CompareExchangeStatus.Mismatch,
@@ -187,7 +192,7 @@ public sealed partial class NodeRuntime
         public async ValueTask<RegisterKeyPage> ListKeysAsync(
             string prefix = "", string? afterKey = null, int limit = 100, CancellationToken cancellationToken = default)
         {
-            var generation = node.GetRegisters();
+            var generation = node.GetServingRegisters();
             using var lease = generation.Admission.Enter();
             return await generation.Service.ListKeysAsync(prefix, afterKey, limit, cancellationToken).ConfigureAwait(false);
         }

@@ -190,7 +190,7 @@ public sealed partial class NodeRuntime : IRepairScheduler, IRegisterLearner, IA
         ObserveLearning(commit, "inbound", "request-received", context?.NodeId, callId);
         try
         {
-            var generation = GetRegisters();
+            var generation = GetServingRegisters();
             using var lease = generation.Admission.Enter();
             generation.Core.Learn(commit);
             ObserveLearning(commit, "inbound", "response-produced", context?.NodeId, callId);
