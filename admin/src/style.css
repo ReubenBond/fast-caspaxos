@@ -152,6 +152,7 @@ td, th { padding: 9px 10px; border-bottom: 1px solid #dce3ec; vertical-align: to
 .sequence-evidence details[open] summary { white-space: normal; }
 .event-fact { font-size: .8rem; color: var(--muted); margin-top: 3px; }
 .event-context { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.event-context .event-kind { flex-shrink: 0; white-space: nowrap; }
 .event-context .event-key { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sequence-time .elapsed { color: #17603c; }
 .trace-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
