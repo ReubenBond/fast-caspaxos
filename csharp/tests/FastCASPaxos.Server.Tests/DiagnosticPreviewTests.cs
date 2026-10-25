@@ -44,12 +44,16 @@ public sealed class DiagnosticPreviewTests
         Assert.Equal(new KeyPreview("", 0, false), KeyPreview.From(""));
     }
 
-    [Fact]
-    public void RegisterPreviewDistinguishesAbsentPresentEmptyAndOpaque()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RegisterPreviewDistinguishesAbsentPresentEmptyAndOpaque(bool revisionEnvelope)
     {
-        Assert.Equal(new RegisterPreview("register", false, null, null), RegisterPreview.FromAccepted(Absent));
-        var version = Version(7, 11);
-        var empty = RegisterPreview.FromAccepted(Envelope(version, new([])));
+        Assert.Equal(new RegisterPreview("register", false, null, null),
+            RegisterPreview.FromAccepted(revisionEnvelope ? new("FCR2\0"u8) : Absent));
+        var version = revisionEnvelope ? Revision(1) : Version(7, 11);
+        var empty = RegisterPreview.FromAccepted(revisionEnvelope
+            ? EnvelopeV2(1, ByteString.Empty) : Envelope(version, ByteString.Empty));
         Assert.Equal("register", empty.Format);
         Assert.True(empty.IsPresent);
         Assert.Equal(Convert.ToBase64String(version.ToArray()), empty.Version);
@@ -58,7 +62,9 @@ public sealed class DiagnosticPreviewTests
         [
             new([]), new([0, 255]), new("FCR1"u8), new("FCR1\0extra"u8),
             new("FCR1\u0002"u8), new("FCR1\u0001"u8),
-            Envelope(new(new byte[8]), new([7]))
+            Envelope(new(new byte[8]), new([7])),
+            EnvelopeV2(0, Payload), EnvelopeV2(1, Payload, sequence: 0),
+            new(EnvelopeV2(1, ByteString.Empty).Span[..28])
         ];
         foreach (var bytes in opaque)
             Assert.Equal(new RegisterPreview("opaque", null, null, null), RegisterPreview.FromAccepted(bytes));
@@ -97,16 +103,18 @@ public sealed class DiagnosticPreviewTests
         Assert.True(bounded.Truncated);
     }
 
-    [Fact]
-    public void AcceptorStatePreviewPreservesFullBallotsAndTruncatesEnvelopePayloadIndependently()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AcceptorStatePreviewPreservesFullBallotsAndTruncatesEnvelopePayloadIndependently(bool revisionEnvelope)
     {
         var payload = new ByteString(Enumerable.Range(0, 300).Select(i => (byte)i).ToArray());
-        var accepted = Envelope(Version(7, 11), payload);
+        var accepted = revisionEnvelope ? EnvelopeV2(1, payload) : Envelope(Version(7, 11), payload);
         var preview = AcceptorStateObservation.From(new("中", new(21, 8), new(20, 7), accepted));
         Assert.Equal(new Ballot(21, 8), preview.PromisedBallot);
         Assert.Equal(new Ballot(20, 7), preview.AcceptedBallot);
         Assert.Equal(new KeyPreview("中", 1, false), preview.Key);
-        Assert.Equal(313, preview.AcceptedValue!.Length);
+        Assert.Equal(revisionEnvelope ? 329 : 313, preview.AcceptedValue!.Length);
         Assert.True(preview.AcceptedValue.Truncated);
         Assert.Equal(accepted.ToArray().Take(256), Convert.FromBase64String(preview.AcceptedValue.Base64));
         Assert.Equal(300, preview.Register!.Value!.Length);

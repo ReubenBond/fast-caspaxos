@@ -10,9 +10,9 @@ namespace FastCASPaxos.Testing;
 internal sealed class RegisterState : IVersionedValue<RegisterState>, IEquatable<RegisterState>
 {
     private readonly RegisterState? _predecessor;
-    private readonly ImmutableSortedDictionary<string, RegisterValue> _values;
+    private readonly ImmutableSortedDictionary<string, Entry> _values;
 
-    private RegisterState(ImmutableSortedDictionary<string, RegisterValue> values, RegisterState? predecessor)
+    private RegisterState(ImmutableSortedDictionary<string, Entry> values, RegisterState? predecessor)
     {
         _values = values;
         _predecessor = predecessor;
@@ -22,14 +22,17 @@ internal sealed class RegisterState : IVersionedValue<RegisterState>, IEquatable
     }
 
     public static RegisterState Empty { get; } =
-        new(ImmutableSortedDictionary.Create<string, RegisterValue>(StringComparer.Ordinal), null);
+        new(ImmutableSortedDictionary.Create<string, Entry>(StringComparer.Ordinal), null);
 
     public int Version { get; }
     public IEnumerable<string> Keys => _values.Keys;
     public RegisterValue Get(string key) =>
-        _values.TryGetValue(key, out var value) ? value : new(null, null);
+        _values.TryGetValue(key, out var entry) ? entry.Value : new(null, null);
 
-    public RegisterState Set(string key, RegisterValue value) => new(_values.SetItem(key, value), this);
+    public bool WrittenBy(string key, int request) => _values.TryGetValue(key, out var entry) && entry.Request == request;
+
+    public RegisterState Set(string key, RegisterValue value, int request) =>
+        new(_values.SetItem(key, new Entry(value, request)), this);
 
     // Observers may skip intervening commits, so verify ancestry rather than requiring +1.
     public bool IsValidSuccessorTo(RegisterState predecessor)
@@ -45,4 +48,6 @@ internal sealed class RegisterState : IVersionedValue<RegisterState>, IEquatable
     public override bool Equals(object? obj) => obj is RegisterState other && Equals(other);
     public override int GetHashCode() => Version;
     public override string ToString() => $"register-revision-{Version}";
+
+    private sealed record Entry(RegisterValue Value, int Request);
 }

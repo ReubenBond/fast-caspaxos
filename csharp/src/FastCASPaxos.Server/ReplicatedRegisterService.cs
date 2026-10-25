@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Collections.Immutable;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
@@ -18,10 +19,13 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
     private readonly RegisterServiceOptions _options;
     private readonly object _gate = new();
     private readonly Dictionary<string, KeyState> _keys = new(StringComparer.Ordinal);
+    private readonly LinkedList<string> _idleKeys = new();
     private readonly CancellationTokenSource _stopping = new();
     private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool _disposed;
     private int _active;
+    private Ballot _requestIncarnation;
+    private long _requestSequence;
 
     public ReplicatedRegisterService(
         ImmutableArray<AcceptorPeer> peers, IProposerBallotSource ballots, RegisterServiceOptions? options = null)
@@ -71,11 +75,11 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
         if (value.IsDefault) throw new ArgumentException("An initialized payload is required.", nameof(value));
         if (expectedVersion is { } expected) RegisterEncoding.ValidateVersion(expected);
         using var call = Enter(cancellationToken);
-        var operation = new RegisterOperation(expectedVersion, value);
+        var operation = new RegisterOperation(expectedVersion, value, NewRequestIdentity());
         try
         {
             var current = await ExecuteAsync(key, operation, call).ConfigureAwait(false);
-            var status = current.Version is not null && current.Version == operation.Version
+            var status = operation.Applied
                 ? CompareExchangeStatus.Applied
                 : operation.MayHaveApplied ? CompareExchangeStatus.Unknown : CompareExchangeStatus.Mismatch;
             return new CompareExchangeResult(status, current);
@@ -148,6 +152,11 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
                 state = new KeyState(NewEngine());
                 _keys.Add(key, state);
             }
+            else if (state.Idle is { } idle)
+            {
+                _idleKeys.Remove(idle);
+                state.Idle = null;
+            }
             state.Users++;
         }
 
@@ -162,10 +171,6 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
             {
                 return observed;
             }
-            if (operation.Payload is not null)
-            {
-                operation.Initialize(RegisterEncoding.Version(_ballots.Reserve(1)));
-            }
             var engine = state.Engine;
             engine.Start(operation);
             var retries = 0;
@@ -179,6 +184,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
                     await BackoffAsync(retries++, call.Token).ConfigureAwait(false);
                 }
             }
+            operation.Complete(engine.Result.Value);
             return RegisterEncoding.Decode(engine.Result.Value);
         }
         catch (OperationCanceledException) when (call.Token.IsCancellationRequested)
@@ -199,8 +205,22 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
             {
                 if (--state.Users == 0)
                 {
-                    _keys.Remove(key);
-                    state.Dispose();
+                    if (_disposed)
+                    {
+                        _keys.Remove(key);
+                        state.Dispose();
+                    }
+                    else
+                    {
+                        state.Idle = _idleKeys.AddLast(key);
+                        if (_idleKeys.Count > _options.Capacity)
+                        {
+                            var oldest = _idleKeys.First!;
+                            _idleKeys.RemoveFirst();
+                            _keys.Remove(oldest.Value, out var evicted);
+                            evicted!.Dispose();
+                        }
+                    }
                 }
             }
         }
@@ -402,6 +422,22 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
 
     private Engine NewEngine() => new(_ballots, _peerIds, _options.Mode);
 
+    private ByteString NewRequestIdentity()
+    {
+        lock (_gate)
+        {
+            // One durable incarnation separates service lifetimes sharing a proposer.
+            // Individual requests consume only an in-memory sequence, independent of revisions.
+            if (_requestIncarnation.IsZero) _requestIncarnation = _ballots.Reserve(1);
+            var sequence = checked(++_requestSequence);
+            Span<byte> bytes = stackalloc byte[16];
+            BinaryPrimitives.WriteInt32BigEndian(bytes, _requestIncarnation.Proposer);
+            BinaryPrimitives.WriteInt32BigEndian(bytes[4..], _requestIncarnation.Round);
+            BinaryPrimitives.WriteInt64BigEndian(bytes[8..], sequence);
+            return new ByteString(bytes);
+        }
+    }
+
     private Call Enter(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -429,6 +465,12 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
         {
             if (_disposed) return new ValueTask(_drained.Task);
             _disposed = true;
+            foreach (var key in _idleKeys)
+            {
+                _keys.Remove(key, out var state);
+                state!.Dispose();
+            }
+            _idleKeys.Clear();
             if (_active == 0) _drained.TrySetResult();
         }
         _stopping.Cancel();
@@ -479,6 +521,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
         public Engine Engine = engine;
         public readonly SemaphoreSlim Gate = new(1);
         public int Users;
+        public LinkedListNode<string>? Idle;
 
         public void Dispose() => Gate.Dispose();
     }
@@ -493,30 +536,29 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
     private sealed class RegisterOperation : IOperation<ByteString>
     {
         private readonly ByteString? _expectedVersion;
+        private readonly ByteString _requestIdentity;
         private long _uncertainMutations;
         public ByteString? Payload { get; }
-        public ByteString? Version { get; private set; }
         public ByteString? EncodedWrite { get; private set; }
+        public bool Applied { get; private set; }
         public bool MayHaveApplied => Volatile.Read(ref _uncertainMutations) != 0;
         public void MutationDispatched() => Interlocked.Increment(ref _uncertainMutations);
         public void MutationRejected() => Interlocked.Decrement(ref _uncertainMutations);
         public RegisterOperation() { }
-        public RegisterOperation(ByteString? expectedVersion, ByteString payload)
+        public RegisterOperation(ByteString? expectedVersion, ByteString payload, ByteString requestIdentity)
         {
             _expectedVersion = expectedVersion;
             Payload = payload;
+            _requestIdentity = requestIdentity;
         }
-        public void Initialize(ByteString version)
-        {
-            Version = version;
-            EncodedWrite = RegisterEncoding.Encode(version, Payload!.Value);
-        }
+        public void Complete(ByteString committed) => Applied = EncodedWrite is { } own && committed == own;
         public (OperationStatus Status, ByteString Result) Apply(ByteString current)
         {
             var existing = RegisterEncoding.Decode(current);
-            if (Payload is null || existing.Version == Version || existing.Version != _expectedVersion)
+            if (Payload is null || EncodedWrite == current || existing.Version != _expectedVersion)
                 return (OperationStatus.NotApplicable, current);
-            return (OperationStatus.Success, EncodedWrite!.Value);
+            EncodedWrite ??= RegisterEncoding.Encode(RegisterVersion.Next(existing.Version), _requestIdentity, Payload.Value);
+            return (OperationStatus.Success, EncodedWrite.Value);
         }
     }
 

@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
 using FastCASPaxos.Protocol;
@@ -35,6 +36,12 @@ public sealed class RegisterRestartTests
             oldPrepare = recording.Prepare!.Value;
             oldAccept = recording.Accept!.Value;
             Assert.Equal(new ByteString([1]), firstValue.Value);
+            Assert.Equal(1UL, BinaryPrimitives.ReadUInt64BigEndian(firstValue.Version!.Value.Span));
+            Assert.Equal("FCR2"u8.ToArray(), oldAccept.Value.Span[..4].ToArray());
+            Assert.Equal(8, BinaryPrimitives.ReadInt32BigEndian(oldAccept.Value.Span[13..]));
+            Assert.True(BinaryPrimitives.ReadInt32BigEndian(oldAccept.Value.Span[17..]) > 0);
+            Assert.Equal(1L, BinaryPrimitives.ReadInt64BigEndian(oldAccept.Value.Span[21..]));
+            Assert.Equal(new byte[] { 1 }, oldAccept.Value.Span[29..].ToArray());
             // Establish the initial accepted pair on every durable replica before restarting.
             // Service success alone proves only a majority, not that every replica caught up.
             foreach (var peer in new[] { a, b, c })
@@ -55,8 +62,17 @@ public sealed class RegisterRestartTests
         Assert.Equal(CompareExchangeStatus.Applied, updated.Status);
         Assert.Equal(new ByteString([2]), updated.Current!.Value);
         Assert.NotEqual(firstValue.Version, updated.Current!.Version);
+        Assert.Equal(2UL, BinaryPrimitives.ReadUInt64BigEndian(updated.Current.Version!.Value.Span));
         Assert.True(afterRestart.Accept!.Value.Ballot > oldAccept.Ballot);
         var newAccept = afterRestart.Accept.Value;
+        Assert.Equal(8, afterRestart.Prepare!.Value.Ballot.Proposer);
+        Assert.True(afterRestart.Prepare.Value.Ballot > oldAccept.NextBallotToPrepare);
+        Assert.Equal("FCR2"u8.ToArray(), newAccept.Value.Span[..4].ToArray());
+        Assert.Equal(8, BinaryPrimitives.ReadInt32BigEndian(newAccept.Value.Span[13..]));
+        Assert.True(BinaryPrimitives.ReadInt32BigEndian(newAccept.Value.Span[17..])
+            > BinaryPrimitives.ReadInt32BigEndian(oldAccept.Value.Span[17..]));
+        Assert.Equal(1L, BinaryPrimitives.ReadInt64BigEndian(newAccept.Value.Span[21..]));
+        Assert.Equal(new byte[] { 2 }, newAccept.Value.Span[29..].ToArray());
         foreach (var peer in new[] { first, second })
         {
             var current = Assert.Single((await peer.ListKeysAsync()).Entries);

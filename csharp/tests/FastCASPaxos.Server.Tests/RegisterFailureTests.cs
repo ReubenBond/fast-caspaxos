@@ -137,9 +137,12 @@ public sealed class RegisterFailureTests
     [Theory]
     [InlineData("classic")]
     [InlineData("fast")]
+    [InlineData("leader")]
+    [InlineData("adaptive")]
     public async Task RetryRecoversOwnTokenWithoutApplyingTwice(string mode)
     {
         var peers = Peers();
+        var clock = new ManualTime();
         foreach (var peer in peers)
         {
             var calls = 0;
@@ -150,15 +153,27 @@ public sealed class RegisterFailureTests
                 return result;
             };
         }
-        await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(1), Options(mode));
-        var result = await service.CompareExchangeAsync("key", null, Payload).AsTask().WaitAsync(Watchdog);
+        var ballots = new TestBallots(1);
+        await using var service = new ReplicatedRegisterService(Routes(peers), ballots, Options(mode, clock));
+        var pending = service.CompareExchangeAsync("key", null, Payload).AsTask();
+        await clock.WaitForDelayAsync(TimeSpan.FromMilliseconds(2));
+        Assert.False(pending.IsCompleted);
+        clock.Advance(TimeSpan.FromMilliseconds(2));
+        var result = await pending.WaitAsync(Watchdog);
         Assert.Equal(CompareExchangeStatus.Applied, result.Status);
         Assert.Null(result.Error);
         var sent = peers.SelectMany(peer => peer.Accepts).Select(item => item.Request).ToArray();
         Assert.True(sent.Length >= 6); // Lost replies force a real second accept phase.
         Assert.Single(sent.Select(request => request.Value).Distinct());
-        Assert.Equal(Envelope(result.Current!.Version!.Value, Payload), sent[0].Value);
+        Assert.Equal(new RegisterValue(Payload, Revision(1)), result.Current);
+        var identity = InspectWrite(sent[0].Value);
+        Assert.Equal((1UL, 1, 1, 1L, Payload), identity);
         Assert.Equal(result.Current, await service.ReadAsync("key"));
+        var next = await service.CompareExchangeAsync("key", result.Current!.Version, Payload);
+        Assert.Equal(CompareExchangeStatus.Applied, next.Status);
+        Assert.Equal(new RegisterValue(Payload, Revision(2)), next.Current);
+        Assert.Equal((2UL, 1, identity.Incarnation, 2L, Payload),
+            InspectWrite(peers[0].Accepts.Last().Request.Value));
     }
 
     [Fact]
@@ -285,7 +300,8 @@ public sealed class RegisterFailureTests
         foreach (var peer in peers) peer.Accept = null;
         await using var reader = new ReplicatedRegisterService(Routes(peers), new TestBallots(2), Options());
         var current = await reader.ReadAsync("key").AsTask().WaitAsync(Watchdog);
-        Assert.Equal(Envelope(current.Version!.Value, Payload), requests[0].Request.Value);
+        Assert.Equal(new RegisterValue(Payload, Revision(1)), current);
+        Assert.Equal((1UL, 1, 1, 1L, Payload), InspectWrite(requests[0].Request.Value));
     }
 
     [Fact]
@@ -419,7 +435,90 @@ public sealed class RegisterFailureTests
         Assert.Equal(CompareExchangeStatus.Unknown, result.Status);
         Assert.Null(result.Current);
         Assert.IsAssignableFrom<OperationCanceledException>(result.Error);
-        Assert.All(peers, peer => Assert.Equal(Payload.ToArray(), peer.Inner.Snapshot("key")!.AcceptedValue.ToArray()[13..]));
+        Assert.All(peers, peer => Assert.Equal((1UL, 1, 1, 1L, Payload),
+            InspectWrite(peer.Inner.Snapshot("key")!.AcceptedValue)));
+    }
+
+    [Fact]
+    public async Task RevisionOverflowFailsBeforeMutationAndPreservesOtherWarmKeys()
+    {
+        var peers = Peers();
+        foreach (var peer in peers)
+            Assert.True((await peer.Inner.AcceptAsync("full",
+                new(new Ballot(10, 9), EnvelopeV2(ulong.MaxValue - 1, Payload), Ballot.Zero))).IsAccepted);
+        var ballots = new TestBallots(1);
+        await using var service = new ReplicatedRegisterService(Routes(peers), ballots, Options("fast"));
+        var maximum = await service.CompareExchangeAsync("full", Revision(ulong.MaxValue - 1), ByteString.Empty)
+            .AsTask().WaitAsync(Watchdog);
+        Assert.Equal(CompareExchangeStatus.Applied, maximum.Status);
+        Assert.Equal(new RegisterValue(ByteString.Empty, Revision(ulong.MaxValue)), maximum.Current);
+        var mismatch = await service.CompareExchangeAsync("full", Revision(ulong.MaxValue - 1), Payload);
+        Assert.Equal(CompareExchangeStatus.Mismatch, mismatch.Status);
+        Assert.Equal(maximum.Current, mismatch.Current); // Do not overflow a failed condition.
+        var other = await service.CompareExchangeAsync("other", null, Payload);
+        Assert.Equal(CompareExchangeStatus.Applied, other.Status);
+        var before = peers.Select(peer => peer.Inner.Snapshot("full")).ToArray();
+        var prepares = peers.Select(peer => peer.Prepares.Count).ToArray();
+        var accepts = peers.Select(peer => peer.Accepts.Count).ToArray();
+        var reservations = ballots.Reserved.Count;
+
+        await Assert.ThrowsAsync<OverflowException>(() =>
+            service.CompareExchangeAsync("full", maximum.Current!.Version, Payload).AsTask());
+
+        Assert.Equal(before, peers.Select(peer => peer.Inner.Snapshot("full")));
+        Assert.Equal(prepares, peers.Select(peer => peer.Prepares.Count));
+        Assert.Equal(accepts, peers.Select(peer => peer.Accepts.Count));
+        Assert.Equal(reservations, ballots.Reserved.Count);
+        Assert.Equal(maximum.Current, await service.ReadAsync("full"));
+        var warm = await service.CompareExchangeAsync("other", other.Current!.Version, Payload);
+        Assert.Equal(CompareExchangeStatus.Applied, warm.Status);
+        Assert.Equal(new RegisterValue(Payload, Revision(2)), warm.Current);
+        Assert.Equal(prepares, peers.Select(peer => peer.Prepares.Count));
+        Assert.Equal(accepts.Select(count => count + 1), peers.Select(peer => peer.Accepts.Count));
+        Assert.Equal(reservations, ballots.Reserved.Count);
+    }
+
+    [Theory]
+    [InlineData("fast")]
+    [InlineData("leader")]
+    [InlineData("adaptive")]
+    public async Task IdleEvictionNeverDiscardsActiveOrQueuedKey(string mode)
+    {
+        var peers = Peers();
+        using var replies = new Gate();
+        foreach (var peer in peers)
+            peer.Accept = async (key, request, token) =>
+            {
+                var result = await peer.Inner.AcceptAsync(key, request, token);
+                if (key == "blocked" && InspectWrite(request.Value).Revision == 1)
+                    await replies.WaitAsync();
+                return result;
+            };
+        await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(1), Options(mode, capacity: 3));
+        var first = service.CompareExchangeAsync("blocked", null, Payload).AsTask();
+        await replies.Arrived;
+        var queued = service.CompareExchangeAsync("blocked", Revision(1), ByteString.Empty).AsTask();
+        for (var index = 0; index < 4; index++)
+            Assert.Equal(CompareExchangeStatus.Applied,
+                (await service.CompareExchangeAsync($"idle-{index}", null, Payload)).Status);
+        Assert.False(first.IsCompleted);
+        Assert.False(queued.IsCompleted);
+        replies.Release();
+        var created = await first.WaitAsync(Watchdog);
+        Assert.Equal(CompareExchangeStatus.Applied, created.Status);
+        Assert.Equal(new RegisterValue(Payload, Revision(1)), created.Current);
+        var second = await queued.WaitAsync(Watchdog);
+        Assert.Equal(CompareExchangeStatus.Applied, second.Status);
+        Assert.Equal(new RegisterValue(ByteString.Empty, Revision(2)), second.Current);
+        var third = await service.CompareExchangeAsync("blocked", second.Current!.Version, Payload);
+        Assert.Equal(CompareExchangeStatus.Applied, third.Status);
+        Assert.Equal(new RegisterValue(Payload, Revision(3)), third.Current);
+        Assert.All(peers, peer =>
+        {
+            Assert.Equal(mode == "leader" ? 1 : 0, peer.Prepares.Count(item => item.Key == "blocked"));
+            Assert.Equal(new ulong[] { 1, 2, 3 }, peer.Accepts.Where(item => item.Key == "blocked")
+                .Select(item => InspectWrite(item.Request.Value).Revision));
+        });
     }
 
     [Theory]

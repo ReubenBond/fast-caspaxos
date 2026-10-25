@@ -234,15 +234,6 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
             completion.TrySetResult(state);
     }
 
-    private ByteString NewVersion(int node)
-    {
-        // Request IDs are shared by reads and writes and never reset on member restart.
-        Span<byte> bytes = stackalloc byte[8];
-        BinaryPrimitives.WriteInt32BigEndian(bytes, node);
-        BinaryPrimitives.WriteInt32BigEndian(bytes[4..], checked(_nextRequest + 1));
-        return new(bytes);
-    }
-
     private void RequireContext()
     {
         using var guard = _runtime.Guard.Enter();
@@ -328,12 +319,13 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
                 throw new ArgumentException("A register version must be a token returned by this register cluster.", nameof(expectedVersion));
             owner.RequireContext();
             cancellationToken.ThrowIfCancellationRequested();
-            var operation = new ConditionalWrite(key, expectedVersion, value, owner.NewVersion(node));
+            var request = checked(owner._nextRequest + 1);
+            var operation = new ConditionalWrite(key, expectedVersion, value, request);
             try
             {
                 var state = await owner.ExecuteAsync(this, operation, cancellationToken);
                 var current = state.Get(key);
-                var status = current.Version == operation.Version ? CompareExchangeStatus.Applied
+                var status = state.WrittenBy(key, request) ? CompareExchangeStatus.Applied
                     : operation.MayHaveApplied ? CompareExchangeStatus.Unknown : CompareExchangeStatus.Mismatch;
                 owner.Record($"result node={node} status={status}");
                 return new(status, current);
@@ -377,9 +369,8 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
     };
 
     private sealed class ConditionalWrite(
-        string key, ByteString? expectedVersion, ByteString payload, ByteString version) : IOperation<RegisterState>
+        string key, ByteString? expectedVersion, ByteString payload, int request) : IOperation<RegisterState>
     {
-        public ByteString Version => version;
         public bool MayHaveApplied { get; private set; }
         private bool _expired;
 
@@ -388,10 +379,13 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
         public (OperationStatus Status, RegisterState Result) Apply(RegisterState current)
         {
             var existing = current.Get(key);
-            if (_expired || existing.Version == version || existing.Version != expectedVersion)
+            if (_expired || current.WrittenBy(key, request) || existing.Version != expectedVersion)
                 return (OperationStatus.NotApplicable, current);
+            var revision = existing.Version is { } version ? BinaryPrimitives.ReadUInt64BigEndian(version.Span) : 0;
+            Span<byte> bytes = stackalloc byte[8];
+            BinaryPrimitives.WriteUInt64BigEndian(bytes, checked(revision + 1));
             MayHaveApplied = true;
-            return (OperationStatus.Success, current.Set(key, new(payload, version)));
+            return (OperationStatus.Success, current.Set(key, new(payload, new ByteString(bytes)), request));
         }
 
         public override string ToString() => "compare-exchange";

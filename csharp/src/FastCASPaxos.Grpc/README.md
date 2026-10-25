@@ -91,7 +91,7 @@ settings fail startup with diagnostics.
 | `ProposerId` | Cluster-unique positive proposer identity; default `1`. |
 | `ProposerDatabase` | Dedicated retained allocator file; default `data/proposer-1.db`. |
 | `Peers` | Array of `{ "Id": "a", "Endpoint": "https://host:grpc-port", "HttpEndpoint": "https://host:admin-port" }`; unique ordinal ids and unique origins per endpoint family. The advertised HTTP origin is browser-reachable. |
-| `Mode` | `classic` (default), `fast`, `leader`, `fast+leader`, or `adaptive`. |
+| `Mode` | `adaptive` (default: fast and leader-owned rounds), `classic`, `fast`, `leader`, or `fast+leader`. |
 | `QueueCapacity`, `MaxBatchSize` | SQLite admission capacity `256` and transaction batch maximum `64`. |
 | `Capacity` | Register active-plus-queued admission bound, `256`. |
 | `OperationTimeout` | Register operation deadline including queueing, `00:00:10`. |
@@ -274,7 +274,7 @@ await using var registers = new ReplicatedRegisterService(
 
 Reference `FastCASPaxos.Sqlite` for the second example. Reserve proposer `4`
 uniquely and retain its allocator. Raw protocol callers sharing register
-keys preserve the register layer's `FCR1` envelopes and conditional-update
+keys preserve the register layer's `FCR2` envelopes (and retained `FCR1` values) and conditional-update
 semantics. Keep application-owned opaque protocol values in separate namespaces.
 
 ## Wire contract

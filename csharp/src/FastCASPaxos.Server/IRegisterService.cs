@@ -57,7 +57,7 @@ public sealed record AcceptorPeer(string Id, IKeyedAcceptor Acceptor);
 
 public sealed class RegisterServiceOptions
 {
-    public ProposerModePolicy Mode { get; init; } = ProposerModePolicy.StaticClassic;
+    public ProposerModePolicy Mode { get; init; } = ProposerModePolicy.Adaptive();
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
     public TimeSpan OperationTimeout { get; init; } = TimeSpan.FromSeconds(10);
     public TimeSpan AttemptTimeout { get; init; } = TimeSpan.FromSeconds(1);

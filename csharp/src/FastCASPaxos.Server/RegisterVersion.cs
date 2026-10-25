@@ -13,7 +13,14 @@ public static class RegisterVersion
     {
         if (version.IsDefault) return false;
         var bytes = version.Span;
-        return bytes.Length == 8 && BinaryPrimitives.ReadInt32BigEndian(bytes) > 0
-            && BinaryPrimitives.ReadInt32BigEndian(bytes[4..]) > 0;
+        return bytes.Length == 8 && BinaryPrimitives.ReadUInt64BigEndian(bytes) != 0;
+    }
+
+    internal static ByteString Next(ByteString? current)
+    {
+        var revision = current is { } version ? BinaryPrimitives.ReadUInt64BigEndian(version.Span) : 0;
+        Span<byte> bytes = stackalloc byte[8];
+        BinaryPrimitives.WriteUInt64BigEndian(bytes, checked(revision + 1));
+        return new ByteString(bytes);
     }
 }

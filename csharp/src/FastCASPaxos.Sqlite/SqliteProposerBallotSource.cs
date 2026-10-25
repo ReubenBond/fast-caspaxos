@@ -6,7 +6,7 @@ using Microsoft.Data.Sqlite;
 namespace FastCASPaxos.Sqlite;
 
 /// <summary>
-/// Durably allocates classic ballot rounds and logical write identities. Configure a distinct
+/// Durably allocates classic ballot rounds and register-service incarnations. Configure a distinct
 /// positive proposer id per allocator database and retain that database for the identity's lifetime.
 /// Concurrent instances sharing this file serialize reservations with immediate transactions.
 /// </summary>

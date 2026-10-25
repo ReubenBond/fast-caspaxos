@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using FastCASPaxos.Model;
 using FastCASPaxos.Server.Diagnostics;
 
 namespace FastCASPaxos.Server;
@@ -7,16 +6,8 @@ namespace FastCASPaxos.Server;
 internal static class RegisterEncoding
 {
     // The envelope belongs to the register layer; protocol endpoints continue to store opaque bytes.
-    private static ReadOnlySpan<byte> Header => "FCR1"u8;
-    public static ByteString Absent { get; } = new("FCR1\0"u8);
-
-    public static ByteString Version(Ballot allocation)
-    {
-        Span<byte> bytes = stackalloc byte[8];
-        BinaryPrimitives.WriteInt32BigEndian(bytes, allocation.Proposer);
-        BinaryPrimitives.WriteInt32BigEndian(bytes[4..], allocation.Round);
-        return new ByteString(bytes);
-    }
+    private static ReadOnlySpan<byte> Header => "FCR2"u8;
+    public static ByteString Absent { get; } = new("FCR2\0"u8);
 
     public static void ValidateVersion(ByteString version)
     {
@@ -26,30 +17,31 @@ internal static class RegisterEncoding
         }
     }
 
-    public static ByteString Encode(ByteString version, ByteString payload)
+    public static ByteString Encode(ByteString version, ByteString requestIdentity, ByteString payload)
     {
-        var bytes = new byte[checked(13 + payload.Length)];
+        var bytes = new byte[checked(29 + payload.Length)];
         Header.CopyTo(bytes);
         bytes[4] = 1;
-        version.ToArray().CopyTo(bytes, 5);
-        payload.ToArray().CopyTo(bytes, 13);
+        version.Span.CopyTo(bytes.AsSpan(5));
+        requestIdentity.Span.CopyTo(bytes.AsSpan(13));
+        payload.Span.CopyTo(bytes.AsSpan(29));
         return new ByteString(bytes);
     }
 
     public static RegisterValue Decode(ByteString value)
     {
         var bytes = value.Span;
-        var version = DecodeVersion(bytes);
-        return version is null ? new RegisterValue(null, null) : new RegisterValue(new ByteString(bytes[13..]), version);
+        var version = DecodeVersion(bytes, out var payloadOffset);
+        return version is null ? new RegisterValue(null, null) : new RegisterValue(new ByteString(bytes[payloadOffset..]), version);
     }
 
     internal static RegisterPreview Preview(ByteString value)
     {
         try
         {
-            var version = DecodeVersion(value.Span);
+            var version = DecodeVersion(value.Span, out var payloadOffset);
             return version is null ? new("register", false, null, null)
-                : new("register", true, Convert.ToBase64String(version.Value.Span), PayloadPreview.From(value.Span[13..]));
+                : new("register", true, Convert.ToBase64String(version.Value.Span), PayloadPreview.From(value.Span[payloadOffset..]));
         }
         catch (InvalidDataException)
         {
@@ -57,19 +49,25 @@ internal static class RegisterEncoding
         }
     }
 
-    private static ByteString? DecodeVersion(ReadOnlySpan<byte> bytes)
+    private static ByteString? DecodeVersion(ReadOnlySpan<byte> bytes, out int payloadOffset)
     {
-        if (bytes.Length < 5 || !bytes[..4].SequenceEqual(Header))
+        payloadOffset = 29;
+        if (bytes.Length < 5)
         {
             throw new InvalidDataException("Accepted bytes are not a register envelope.");
         }
+
+        var legacy = bytes[..4].SequenceEqual("FCR1"u8);
+        if (legacy) payloadOffset = 13;
+        else if (!bytes[..4].SequenceEqual(Header))
+            throw new InvalidDataException("Accepted bytes are not a register envelope.");
 
         if (bytes[4] == 0 && bytes.Length == 5)
         {
             return null;
         }
 
-        if (bytes[4] != 1 || bytes.Length < 13)
+        if (bytes[4] != 1 || bytes.Length < payloadOffset)
         {
             throw new InvalidDataException("The accepted register envelope is malformed.");
         }
@@ -77,6 +75,18 @@ internal static class RegisterEncoding
         var version = new ByteString(bytes.Slice(5, 8));
         try { ValidateVersion(version); }
         catch (ArgumentException exception) { throw new InvalidDataException("The accepted register version is malformed.", exception); }
+        if (legacy)
+        {
+            if (BinaryPrimitives.ReadInt32BigEndian(bytes[5..]) <= 0
+                || BinaryPrimitives.ReadInt32BigEndian(bytes[9..]) <= 0)
+                throw new InvalidDataException("The legacy register version is malformed.");
+        }
+        else if (BinaryPrimitives.ReadInt32BigEndian(bytes[13..]) <= 0
+            || BinaryPrimitives.ReadInt32BigEndian(bytes[17..]) <= 0
+            || BinaryPrimitives.ReadInt64BigEndian(bytes[21..]) <= 0)
+        {
+            throw new InvalidDataException("The register request identity is malformed.");
+        }
         return version;
     }
 }

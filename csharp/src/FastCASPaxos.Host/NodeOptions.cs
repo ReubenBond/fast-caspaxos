@@ -26,7 +26,7 @@ public sealed class NodeOptions
     public int QueueCapacity { get; set; } = 256;
     public int MaxBatchSize { get; set; } = 64;
     public int Capacity { get; set; } = 256;
-    public string Mode { get; set; } = "classic";
+    public string Mode { get; set; } = "adaptive";
     public TimeSpan OperationTimeout { get; set; } = TimeSpan.FromSeconds(10);
     public TimeSpan AttemptTimeout { get; set; } = TimeSpan.FromSeconds(1);
     public TimeSpan RetryBackoff { get; set; } = TimeSpan.FromMilliseconds(10);

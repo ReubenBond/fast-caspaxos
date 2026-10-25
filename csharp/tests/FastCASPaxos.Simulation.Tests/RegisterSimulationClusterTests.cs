@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using FastCASPaxos.Server;
 using FastCASPaxos.Testing;
 using Xunit;
@@ -6,6 +7,12 @@ namespace FastCASPaxos.Simulation.Tests;
 
 public sealed class RegisterSimulationClusterTests
 {
+    private static ulong ReadRevision(RegisterValue value)
+    {
+        Assert.Equal(8, value.Version!.Value.Length);
+        return BinaryPrimitives.ReadUInt64BigEndian(value.Version.Value.Span);
+    }
+
     [Fact]
     public async Task AbsentCreateUpdateUsesOpaqueVersions()
     {
@@ -18,11 +25,13 @@ public sealed class RegisterSimulationClusterTests
             Assert.Equal(CompareExchangeStatus.Applied, created.Status);
             Assert.Equal(ByteString.Empty, created.Current!.Value);
             Assert.True(created.Current.IsPresent);
+            Assert.Equal(1UL, ReadRevision(created.Current));
             var original = created.Current.Version!.Value;
             var updated = await client.CompareExchangeAsync("key", new(original.ToArray()), ByteString.Empty);
             Assert.Equal(CompareExchangeStatus.Applied, updated.Status);
             Assert.Equal(ByteString.Empty, updated.Current!.Value);
             Assert.NotEqual(original, updated.Current.Version);
+            Assert.Equal(2UL, ReadRevision(updated.Current));
             var mismatch = await client.CompareExchangeAsync("key", original, new([99]));
             Assert.Equal(CompareExchangeStatus.Mismatch, mismatch.Status);
             Assert.Equal(updated.Current, mismatch.Current);
@@ -60,6 +69,7 @@ public sealed class RegisterSimulationClusterTests
             var winnerIndex = Array.IndexOf(results, winner);
             Assert.Equal(new ByteString([existing ? (byte)100 : (byte)winnerIndex]), winner.Current!.Value);
             Assert.NotEqual(expected, winner.Current.Version);
+            Assert.Equal(existing ? 2UL : 1UL, ReadRevision(winner.Current));
             Assert.Equal(winner.Current, await simulation.CreateClient(3).ReadAsync("race"));
         });
     }
@@ -285,10 +295,12 @@ public sealed class RegisterSimulationClusterTests
             {
                 var result = await client.CompareExchangeAsync(keys[index], null, new([(byte)index]));
                 Assert.Equal(CompareExchangeStatus.Applied, result.Status);
+                Assert.Equal(1UL, ReadRevision(result.Current!));
                 values.Add(keys[index], result.Current!);
             }
             var updated = await client.CompareExchangeAsync("key", values["key"].Version, new([99]));
             Assert.Equal(CompareExchangeStatus.Applied, updated.Status);
+            Assert.Equal(2UL, ReadRevision(updated.Current!));
             foreach (var key in keys)
                 Assert.Equal(key == "key" ? updated.Current : values[key], await client.ReadAsync(key));
 
@@ -367,14 +379,17 @@ public sealed class RegisterSimulationClusterTests
         });
     }
 
-    [Fact]
-    public async Task SeparateProposersPreserveGenuineContentionAmbiguity()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SeparateProposersPreserveGenuineContentionAmbiguity(bool samePayload)
     {
         await using var cluster = new RegisterSimulationCluster(746);
         cluster.Run(async simulation =>
         {
             var writes = Enumerable.Range(1, 5).Select(node =>
-                simulation.CreateClient(node).CompareExchangeAsync("race", null, new([(byte)node])).AsTask()).ToArray();
+                simulation.CreateClient(node).CompareExchangeAsync("race", null,
+                    new([samePayload ? (byte)42 : (byte)node])).AsTask()).ToArray();
             Assert.All(writes, write => Assert.False(write.IsCompleted));
             var results = await Task.WhenAll(writes);
             var winner = Assert.Single(results, result => result.Status == CompareExchangeStatus.Applied);
@@ -384,7 +399,9 @@ public sealed class RegisterSimulationClusterTests
                 Assert.Null(result.Error);
                 Assert.Equal(winner.Current, result.Current);
             });
-            Assert.Equal(new ByteString([(byte)(Array.IndexOf(results, winner) + 1)]), winner.Current!.Value);
+            Assert.Equal(new ByteString([samePayload ? (byte)42 : (byte)(Array.IndexOf(results, winner) + 1)]),
+                winner.Current!.Value);
+            Assert.Equal(1UL, ReadRevision(winner.Current));
             Assert.Equal(winner.Current, await simulation.CreateClient().ReadAsync("race"));
         });
     }
@@ -461,6 +478,7 @@ public sealed class RegisterSimulationClusterTests
             var result = await client.CompareExchangeAsync("key", null, new([42]));
             Assert.Equal(CompareExchangeStatus.Applied, result.Status);
             Assert.True(RegisterVersion.IsValid(result.Current!.Version!.Value));
+            Assert.Equal(1UL, ReadRevision(result.Current));
             foreach (var malformed in new[] { default(ByteString), ByteString.Empty, new ByteString([1]), new ByteString(new byte[8]) })
                 await Assert.ThrowsAsync<ArgumentException>(() =>
                     client.CompareExchangeAsync("key", malformed, new([99])).AsTask());

@@ -43,7 +43,9 @@ cluster.Run(async simulation =>
   virtual seconds. Configure it before `Run`.
 - `CrashNode(int)` and `RestartNode(int)` affect both proposer and acceptor
   roles. Restart preserves the existing durable acceptor store and discards
-  volatile proposer state; client version allocation never resets.
+  volatile proposer state. Per-key revisions live in the durable application
+  map and increment on successful conditional transitions. Distinct request IDs
+  identify competing writes and remain unique across member restarts.
 - `Partition(int, int)` blocks both directions between both roles of physical
   members. `SetLinkDelay(int, int, TimeSpan)` configures their bidirectional
   protocol links without jitter. Other links use seeded 1–3 ms delays.

@@ -45,12 +45,15 @@ pattern before passing them to APIs accepting `ByteString`. Nullable equality
 preserves the distinction between absent bytes and present empty bytes.
 Required payloads accept initialized values, including empty bytes, and reject
 default values with `ArgumentException` before mutation or network dispatch.
-Register envelopes, SQLite blobs, and protobuf bytes retain their existing
-encodings.
+Payloads remain opaque across SQLite and protobuf boundaries.
 
 Pass the exact opaque version from a read or successful write as
 `expectedVersion`. Null creates only an absent register. Every applied write
-receives a fresh version, including a write of identical payload bytes. Reads
+increments its per-register revision, including a write of identical payload bytes.
+The opaque eight-byte version encodes a positive unsigned 64-bit revision in
+big-endian order. A new register starts at one; the conditional state transition
+computes the next revision from the accepted value. Exhaustion throws
+`OverflowException` before a wrapped revision can be proposed. Reads
 first gather durable observations using `IKeyedAcceptor.ReadAsync`. Matching
 accepted ballots and complete versioned bytes establish the value at a classic
 majority or `ceil(3N/4)` for a fast ballot. A majority of never-accepted records
@@ -70,14 +73,14 @@ metadata contract; .NET 11 uses the runtime-provided types.
 
 | Status | Established outcome |
 | --- | --- |
-| `Applied` | This operation's unique version reached an accept quorum. `Current` contains that version and payload. |
+| `Applied` | This operation's complete envelope, including its request identity, reached an accept quorum. `Current` contains its revision and payload. |
 | `Mismatch` | The observed condition failed, and this operation's mutations are known to have been rejected or remained unsent. `Current` is the established state. |
 | `Unknown` | A mutation may have applied. `Current`, when available, is a later established observation. `Error`, when available, preserves the interruption or failure. |
 
 The operation identity stays fixed through internal retries. Fast-round
 contenders with identical payloads have distinct identities, so only one can
 return `Applied` for a given expected version. Recovery of the operation's own
-version establishes success. A different later version after an uncertain
+envelope establishes success. A different later write after an uncertain
 mutation preserves `Unknown`: another writer may already have superseded it.
 Applications resolve this using their own business semantics.
 
@@ -108,19 +111,35 @@ provisioning fresh storage. Retain acceptor databases as well.
 immediate SQLite transactions, WAL, and `synchronous=FULL`. Each reservation
 exceeds the previously reserved round and meets the requested minimum.
 Reservations commit before an owned classic ballot, including a piggyback
-promise, becomes observable. Logical versions consume the same monotonic
-identity space. Restarted proposers therefore advance past all of their
-pre-restart owned ballots and logical identities, including delayed traffic.
+promise, becomes observable. On its first write a register-service instance
+reserves one durable incarnation from this source. Requests then use the tuple
+`(proposer, incarnation, in-memory sequence)` to distinguish identical-byte
+contenders and recognize recovery of their own writes. The sequence is checked
+for overflow and remains fixed across retries. Instances sharing a proposer
+receive distinct incarnations. Register revisions advance within the register;
+successive fast writes use only the acceptor commit, with no proposer-side
+allocator transaction after incarnation initialization. Restarted proposers
+advance past all previously reserved ballots and incarnations.
 The source rejects opening an allocator under a different proposer identity.
 Round exhaustion fails with `OverflowException` before a wrapped ballot can
 be emitted; provision a new proposer identity before exhausting its range.
 
-The default mode is classic. `RegisterServiceOptions.Mode` also accepts the
-core fast, leader, fast+leader, and adaptive policies. Shared fast ballots keep
-their protocol identity; recovery uses freshly reserved owned classic ballots.
-Queued operations on a key share their engine and can reuse confirmed
-piggyback promises. An idle key releases its engine; its next operation recovers
-durable state. Adaptive policy controls local ballot selection.
+The default mode is **adaptive**, combining shared fast ballots with leader-owned
+classic recovery and prepared leader rounds. Uncontended creation can use the
+initial fast ballot directly. Successful accepts piggyback the next prepare;
+subsequent writes reuse a quorum-confirmed promise in a single accept round.
+Fast rounds use the fast quorum; leader rounds use a majority. Contention or
+timeouts trigger classic recovery, and successful leader rounds reduce conflict
+debt so the policy can reopen fast mode. Cold existing keys and inconclusive
+prepared state use prepare-based recovery. Explicit classic, fast, leader, and
+fast+leader policies remain available.
+
+Idle keys retain their engine, accepted base, prepared promise, and adaptive
+history in a least-recently-used cache of at most `Capacity` idle keys. Active and
+queued keys retain their state until their callers finish. Eviction releases the
+engine; the next access establishes a fresh base. Quorum reads always gather fresh
+acceptor observations. Cached state permits speculation only through the core
+protocol's prepared-ballot checks and quorum acknowledgements.
 
 ## Quorum-backed key listing
 
@@ -158,8 +177,15 @@ async entry points and cooperate with cancellation to release transport work.
 Disposal closes admission, cancels active work, and waits for admitted calls
 to report their outcomes.
 
-The register layer stores a versioned `FCR1` envelope containing logical
-presence, an operation identity, and payload bytes. Protocol endpoints store
+The register layer writes an `FCR2` envelope containing logical presence, an
+eight-byte revision, a sixteen-byte request identity, and payload bytes. Presence
+occupies one byte after the four-byte header; present payloads begin at offset 29.
+Request identities encode proposer and incarnation as positive big-endian Int32s,
+followed by a positive big-endian Int64 request sequence. Existing `FCR1` envelopes
+remain readable with their exact versions and payloads. Their next successful
+write increments the existing eight-byte version interpreted as a revision and
+writes `FCR2`; recovery preserves the original envelope.
+Protocol endpoints store
 these bytes opaquely. Protocol clients sharing register keys preserve this
 envelope and the register's conditional-update rules. Malformed accepted
 envelopes produce explicit errors. Application namespaces and peer identity

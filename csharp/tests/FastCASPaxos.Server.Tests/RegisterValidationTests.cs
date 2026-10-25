@@ -12,7 +12,7 @@ public sealed class RegisterValidationTests
         var peers = Peers();
         await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(1), Options());
         ByteString[] invalid = [default, ByteString.Empty, new(new byte[7]), new(new byte[9]),
-            Version(0, 1), Version(-1, 1), Version(1, 0), Version(1, -1)];
+            Revision(0)];
         foreach (var version in invalid)
         {
             Assert.False(RegisterVersion.IsValid(version));
@@ -22,9 +22,10 @@ public sealed class RegisterValidationTests
         Assert.All(peers, peer => Assert.Empty(peer.Accepts));
         Assert.All(peers, peer => Assert.Empty(peer.Prepares));
 
-        foreach (var version in new[] { Version(1, 1), Version(1, int.MaxValue),
-            Version(int.MaxValue, 1), Version(int.MaxValue, int.MaxValue) })
+        foreach (var revision in new ulong[] { 1, int.MaxValue, (ulong)int.MaxValue + 1,
+            uint.MaxValue, (ulong)uint.MaxValue + 1, long.MaxValue, (ulong)long.MaxValue + 1, ulong.MaxValue })
         {
+            var version = Revision(revision);
             Assert.True(RegisterVersion.IsValid(version));
             var result = await service.CompareExchangeAsync("absent", version, Payload);
             Assert.Equal(CompareExchangeStatus.Mismatch, result.Status);
@@ -82,7 +83,7 @@ public sealed class RegisterValidationTests
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.ListKeysAsync(limit: 0).AsTask());
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.ListKeysAsync(limit: -1).AsTask());
         ByteString[] invalidVersions = [default, ByteString.Empty, new(new byte[7]), new(new byte[9]),
-            Version(0, 1), Version(-1, 1), Version(1, 0), Version(1, -1)];
+            Revision(0)];
         foreach (var version in invalidVersions)
             await Assert.ThrowsAsync<ArgumentException>(() => service.CompareExchangeAsync("key", version, Payload).AsTask());
         Assert.All(peers, peer => Assert.Empty(peer.Prepares));

@@ -5,6 +5,7 @@ using System.Threading.Channels;
 using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
 using FastCASPaxos.Protocol;
+using Xunit;
 
 namespace FastCASPaxos.Server.Tests;
 
@@ -24,6 +25,46 @@ internal static class TestSupport
     public static ByteString Envelope(ByteString version, ByteString payload) =>
         new([.. "FCR1"u8, 1, .. version.ToArray(), .. payload.ToArray()]);
     public static ByteString Absent => new("FCR1\0"u8);
+    public static ByteString Revision(ulong revision)
+    {
+        var bytes = new byte[8];
+        BinaryPrimitives.WriteUInt64BigEndian(bytes, revision);
+        return new(bytes);
+    }
+    public static ulong ReadRevision(ByteString version)
+    {
+        Assert.Equal(8, version.Length);
+        return BinaryPrimitives.ReadUInt64BigEndian(version.Span);
+    }
+    public static ByteString EnvelopeV2(ulong revision, ByteString payload,
+        int proposer = 9, int incarnation = 1, long sequence = 1)
+    {
+        var bytes = new byte[29 + payload.Length];
+        "FCR2"u8.CopyTo(bytes);
+        bytes[4] = 1;
+        BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(5), revision);
+        BinaryPrimitives.WriteInt32BigEndian(bytes.AsSpan(13), proposer);
+        BinaryPrimitives.WriteInt32BigEndian(bytes.AsSpan(17), incarnation);
+        BinaryPrimitives.WriteInt64BigEndian(bytes.AsSpan(21), sequence);
+        payload.Span.CopyTo(bytes.AsSpan(29));
+        return new(bytes);
+    }
+    public static (ulong Revision, int Proposer, int Incarnation, long Sequence, ByteString Payload)
+        InspectWrite(ByteString envelope)
+    {
+        Assert.True(envelope.Length >= 29);
+        Assert.Equal("FCR2"u8.ToArray(), envelope.Span[..4].ToArray());
+        Assert.Equal(1, envelope.Span[4]);
+        var revision = BinaryPrimitives.ReadUInt64BigEndian(envelope.Span[5..]);
+        var proposer = BinaryPrimitives.ReadInt32BigEndian(envelope.Span[13..]);
+        var incarnation = BinaryPrimitives.ReadInt32BigEndian(envelope.Span[17..]);
+        var sequence = BinaryPrimitives.ReadInt64BigEndian(envelope.Span[21..]);
+        Assert.True(revision > 0);
+        Assert.True(proposer > 0);
+        Assert.True(incarnation > 0);
+        Assert.True(sequence > 0);
+        return (revision, proposer, incarnation, sequence, new(envelope.Span[29..]));
+    }
     public static ControlledPeer[] Peers(int count = 3) =>
         Enumerable.Range(0, count).Select(_ => new ControlledPeer()).ToArray();
     public static ImmutableArray<AcceptorPeer> Routes(ControlledPeer[] peers) =>
