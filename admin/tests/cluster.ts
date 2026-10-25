@@ -5,6 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { AdministrationProxy } from './admin-proxy';
 
 export class Cluster {
   readonly ids = ['a', 'b', 'c'];
@@ -12,8 +13,21 @@ export class Cluster {
   private logs = new Map<number, string>();
   private ports: number[] = [];
   private data = '';
+  private proxies: AdministrationProxy[] = [];
   private readonly dll = resolve('..', 'csharp', 'src', 'FastCASPaxos.Host', 'bin', 'Release', 'net11.0', 'publish', 'FastCASPaxos.Host.dll');
-  origin(index: number): string { return `http://127.0.0.1:${this.ports[index + 3]}`; }
+  constructor(private readonly options: { administrationProxies?: boolean } = {}) {}
+  private hostOrigin(index: number): string { return `http://127.0.0.1:${this.ports[index + 3]}`; }
+  origin(index: number): string { return this.proxies[index]?.origin ?? this.hostOrigin(index); }
+  administrationProxy(index: number): AdministrationProxy {
+    const proxy = this.proxies[index];
+    if (!proxy) throw new Error('Start the cluster with administrationProxies enabled.');
+    return proxy;
+  }
+  diagnostics() {
+    return this.ids.map((nodeId, index) => ({
+      nodeId, log: this.logs.get(index) ?? '', administration: this.proxies[index]?.exchanges ?? [],
+    }));
+  }
 
   async start(): Promise<void> {
     this.data = await mkdtemp(join(tmpdir(), 'fast-caspaxos-admin-'));
@@ -28,9 +42,21 @@ export class Cluster {
       if (!address || typeof address === 'string') throw new Error('Expected a TCP port reservation.');
       return address.port;
     });
-    await Promise.all(reservations.map((server) => new Promise<void>((accept, reject) => server.close((error) => error ? reject(error) : accept()))));
-    try { await Promise.all(this.ids.map((_, index) => this.startNode(index))); }
+    try {
+      if (this.options.administrationProxies) {
+        this.proxies = this.ids.map((_, index) => new AdministrationProxy(this.hostOrigin(index)));
+        // Keep the six Host ports reserved while choosing proxy ports to prevent collisions.
+        const started = await Promise.allSettled(this.proxies.map(proxy => proxy.start()));
+        for (const result of started) if (result.status === 'rejected') throw result.reason;
+      }
+      await Promise.all(reservations.map((server) => new Promise<void>((accept, reject) => server.close((error) => error ? reject(error) : accept()))));
+      await Promise.all(this.ids.map((_, index) => this.startNode(index)));
+    }
     catch (error) { await this.dispose(); throw error; }
+    finally {
+      await Promise.all(reservations.filter(server => server.listening).map(server =>
+        new Promise<void>((accept, reject) => server.close(error => error ? reject(error) : accept()))));
+    }
   }
 
   async startNode(index: number): Promise<void> {
@@ -38,12 +64,18 @@ export class Cluster {
     const args = [
       this.dll, '--contentRoot', dirname(this.dll),
       `--Kestrel:Endpoints:Grpc:Url=http://127.0.0.1:${this.ports[index]}`,
-      `--Kestrel:Endpoints:Rest:Url=${this.origin(index)}`,
+      `--Kestrel:Endpoints:Rest:Url=${this.hostOrigin(index)}`,
       `--FastCASPaxos:AcceptorId=${id}`, `--FastCASPaxos:ProposerId=${index + 1}`,
       `--FastCASPaxos:AcceptorDatabase=${join(this.data, `acceptor-${id}.db`)}`,
       `--FastCASPaxos:ProposerDatabase=${join(this.data, `proposer-${id}.db`)}`,
       '--FastCASPaxos:HeartbeatInterval=00:00:00.250',
       '--FastCASPaxos:OperationTimeout=00:00:03',
+      ...(this.options.administrationProxies ? [
+        // Tests deliberately restart/fence members. Shutdown is not a departure/replication test.
+        '--FastCASPaxos:ShutdownMode=Restart',
+        '--FastCASPaxos:TargetReplicationFactor=3',
+        '--FastCASPaxos:RepairInterval=01:00:00',
+      ] : []),
       '--Logging:LogLevel:Default=Warning',
       ...this.ids.flatMap((peer, peerIndex) => [
         `--FastCASPaxos:Peers:${peerIndex}:Id=${peer}`,
@@ -77,14 +109,26 @@ export class Cluster {
     const child = this.processes.get(index);
     if (!child) return;
     this.processes.delete(index);
-    if (child.exitCode !== null) return;
+    if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
     const exited = new Promise<void>((accept) => child.once('exit', () => accept()));
     child.kill();
-    await exited;
+    const deadline = new AbortController();
+    try {
+      await Promise.race([
+        exited,
+        delay(10_000, undefined, { signal: deadline.signal }).then(async () => {
+          child.kill('SIGKILL'); // Only this fixture-owned process; a teardown watchdog, not a test retry.
+          await exited;
+        }),
+      ]);
+    } finally { deadline.abort(); }
   }
 
   async dispose(): Promise<void> {
-    await Promise.all([...this.processes.keys()].map((index) => this.stopNode(index)));
-    if (this.data) await rm(this.data, { recursive: true, force: true });
+    try { await Promise.all(this.proxies.map(proxy => proxy.dispose())); }
+    finally {
+      await Promise.all([...this.processes.keys()].map((index) => this.stopNode(index)));
+      if (this.data) await rm(this.data, { recursive: true, force: true });
+    }
   }
 }
