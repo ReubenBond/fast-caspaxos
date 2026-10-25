@@ -20,6 +20,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
     private readonly RegisterServiceOptions _options;
     private readonly ILocalAcceptorInspection? _localAcceptor;
     private readonly NodeEventJournal? _diagnostics;
+    private readonly BoundedReadExecutor _localReads;
     private readonly object _gate = new();
     private readonly Dictionary<string, KeyState> _keys = new(StringComparer.Ordinal);
     private readonly LinkedList<string> _idleKeys = new();
@@ -30,15 +31,18 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
     private Ballot _requestIncarnation;
     private long _requestSequence;
     private RegisterNotificationFailure? _lastNotificationFailure;
+    private Exception? _lastInspectionFailure;
 
     /// <summary>Publishes quorum conclusions. Subscribers enqueue delivery and return synchronously.</summary>
     public event Action<RegisterCommit>? Committed;
 
     public RegisterNotificationFailure? LastNotificationFailure => Volatile.Read(ref _lastNotificationFailure);
+    public Exception? LastInspectionFailure => Volatile.Read(ref _lastInspectionFailure);
 
     public ReplicatedRegisterService(
         ImmutableArray<AcceptorPeer> peers, IProposerBallotSource ballots, RegisterServiceOptions? options = null,
-        ILocalAcceptorInspection? localAcceptor = null, NodeEventJournal? diagnostics = null)
+        ILocalAcceptorInspection? localAcceptor = null, NodeEventJournal? diagnostics = null,
+        BoundedReadExecutor? localReads = null)
     {
         if (peers.IsDefault) throw new ArgumentNullException(nameof(peers));
         ArgumentNullException.ThrowIfNull(ballots);
@@ -64,6 +68,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         ArgumentNullException.ThrowIfNull(_options.TimeProvider);
         _options.Mode.Validate();
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.Capacity);
+        _localReads = localReads ?? new(_options.Capacity);
         ValidateTimeout(_options.OperationTimeout, nameof(options));
         ValidateTimeout(_options.AttemptTimeout, nameof(options));
         if (_options.RetryBackoff <= TimeSpan.Zero || _options.RetryBackoff.TotalMilliseconds > uint.MaxValue / 8)
@@ -229,9 +234,25 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
                 return observed;
             }
             var engine = state.Engine;
-            var local = _localAcceptor is not null
-                ? await _localAcceptor.InspectAsync(key, call.Token).ConfigureAwait(false) : null;
-            engine.Start(operation, local);
+            LocalAcceptorBallots? local = null;
+            var recover = false;
+            if (_localAcceptor is not null)
+            {
+                try
+                {
+                    local = await _localReads.RunAsync(token => _localAcceptor.InspectBallotsAsync(key, token),
+                        _options.AttemptTimeout, _options.TimeProvider, call.Token).ConfigureAwait(false);
+                    local?.Validate();
+                }
+                catch (Exception error) when (!call.Token.IsCancellationRequested && IsInspectionUnavailable(error))
+                {
+                    Volatile.Write(ref _lastInspectionFailure, error);
+                    _diagnostics?.Publish("inspection", new InspectionObservation(
+                        "ballots", KeyPreview.From(key), DiagnosticContext.Current?.OperationId, error.GetType().Name));
+                    recover = true;
+                }
+            }
+            engine.Start(operation, local, recover);
             var retries = 0;
             while (engine.Result is null)
             {
@@ -245,7 +266,10 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
             }
             current = RegisterEncoding.Decode(engine.Result.Value);
             operation.Complete(engine.Result.Value, current.Version);
-            notification = new(key, engine.Ballot, engine.Result.Value, engine.PreparedBallot ?? Ballot.Zero);
+            notification = new(key, engine.Ballot, engine.Result.Value, engine.PreparedBallot ?? Ballot.Zero)
+            {
+                AcknowledgedPeers = engine.AcknowledgedPeers.ToImmutable(),
+            };
         }
         catch (OperationCanceledException) when (call.Token.IsCancellationRequested)
         {
@@ -294,8 +318,13 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
                 _diagnostics?.Publish("notification", new NotificationObservation(
                     "commit", KeyPreview.From(commit.Key), DiagnosticContext.Current?.OperationId, error.GetType().Name));
             }
+
         }
     }
+
+    private static bool IsInspectionUnavailable(Exception error) =>
+        error is TimeoutException or OperationCanceledException or RegisterBusyException or ObjectDisposedException
+            or System.Data.Common.DbException or IOException;
 
     private void TrimIdleKeys()
     {
@@ -430,7 +459,10 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
                 else if (reply.Value.Accept is { } resultAccept)
                 {
                     if (resultAccept.IsAccepted)
+                    {
+                        engine.AcknowledgedPeers.Add(route);
                         engine.HandleAcceptAccepted(new AcceptAccepted<string>(request.Round, route, resultAccept.PromisedBallot));
+                    }
                     else
                         engine.HandleAcceptRejected(new AcceptRejected<string>(request.Round, route, resultAccept.ConflictingBallot));
                 }
@@ -677,10 +709,11 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         public ByteString? Result { get; private set; }
         public Engine(IProposerBallotSource source, ImmutableArray<string> peers, ProposerModePolicy mode)
             : base(new ProposerRuntime(), RegisterEncoding.Absent, peers, mode) => _source = source;
-        public void Start(RegisterOperation operation, LocalAcceptorState? local)
+        public void Start(RegisterOperation operation, LocalAcceptorBallots? local, bool recover)
         {
             Result = null;
-            if (local is null) StartProposal(operation);
+            if (recover) StartProposalWithRecovery(operation);
+            else if (local is null) StartProposal(operation);
             else StartProposal(operation, local.AcceptedBallot, local.PromisedBallot);
         }
         protected override Ballot ReserveBallot(Ballot candidate) =>
@@ -688,7 +721,12 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         protected override bool CanReusePreparedBallot(Ballot ballot) =>
             base.CanReusePreparedBallot(ballot) && (ballot.IsFastRoundBallot || ballot == _reservedBallot);
         protected override void OnSendPrepare(PrepareRequest request) => Outgoing = new Outbound(request, null);
-        protected override void OnSendAccept(AcceptRequest<ByteString> request) => Outgoing = new Outbound(null, request);
+        public ImmutableArray<string>.Builder AcknowledgedPeers { get; } = ImmutableArray.CreateBuilder<string>();
+        protected override void OnSendAccept(AcceptRequest<ByteString> request)
+        {
+            AcknowledgedPeers.Clear();
+            Outgoing = new Outbound(null, request);
+        }
         protected override void OnProposalCompleted(ProposeResponse<ByteString> response) => Result = response.CommittedValue;
         protected override void OnValueCommitted(CommittedValue<ByteString> committedValue) { }
     }

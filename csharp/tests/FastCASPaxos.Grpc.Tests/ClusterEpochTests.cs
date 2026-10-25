@@ -15,7 +15,7 @@ namespace FastCASPaxos.Grpc.Tests;
 // All databases belong to TestDirectory; no listeners or external peers are used.
 public sealed class ClusterEpochTests
 {
-    public enum InternalMethod { Prepare, Accept, ListKeys, ListDigests, FetchIfDifferent, Stage, Learn }
+    public enum InternalMethod { Prepare, Accept, ListKeys, ListDigests, FetchIfDifferent, Stage, Learn, LearnDigest }
     public enum InvalidMetadata { Missing, Empty, Malformed, Duplicate, ConflictingDuplicate, LeadingZero, Future, Overflow }
     public enum HandlerOutcome { Success, Exception, Cancellation }
 
@@ -27,6 +27,7 @@ public sealed class ClusterEpochTests
     [InlineData(InternalMethod.FetchIfDifferent)]
     [InlineData(InternalMethod.Stage)]
     [InlineData(InternalMethod.Learn)]
+    [InlineData(InternalMethod.LearnDigest)]
     public async Task EpochInterceptorRejectsDelayedPriorGenerationCalls(InternalMethod method)
     {
         using var directory = new TestDirectory();
@@ -199,6 +200,7 @@ public sealed class ClusterEpochTests
     [InlineData(InternalMethod.FetchIfDifferent)]
     [InlineData(InternalMethod.Stage)]
     [InlineData(InternalMethod.Learn)]
+    [InlineData(InternalMethod.LearnDigest)]
     public async Task EpochClientInterceptorKeepsCapturedEpochAndDiagnosticHeaders(InternalMethod method)
     {
         using var directory = new TestDirectory();
@@ -247,7 +249,7 @@ public sealed class ClusterEpochTests
     {
         InternalMethod.ListDigests or InternalMethod.FetchIfDifferent => "AcceptorDigests/" + method,
         InternalMethod.Stage => "Repair/Stage",
-        InternalMethod.Learn => "RegisterLearner/Learn",
+        InternalMethod.Learn or InternalMethod.LearnDigest => "RegisterLearner/" + method,
         _ => "Acceptor/" + method,
     });
 }

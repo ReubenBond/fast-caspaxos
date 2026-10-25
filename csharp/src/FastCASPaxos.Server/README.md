@@ -154,10 +154,23 @@ Fast rounds use the fast quorum; leader rounds use a majority. Contention or
 timeouts trigger classic recovery, and successful leader rounds reduce conflict
 debt so the policy can reopen fast mode. Before a write, an optional local
 `ILocalAcceptorInspection` advances the proposer's ballot floor using both
-durable accepted and promised ballots. A locally permitted, quorum-confirmed
+durable accepted and promised ballots through `InspectBallotsAsync`. A bounded
+read executor retains each underlying probe's slot until it completes, while
+callers stop waiting at cancellation or the attempt deadline. Ordinary local
+I/O, storage-unavailability, timeout, and probe-capacity failures are recorded in
+`LastInspectionFailure` and the optional diagnostic journal. The operation then
+uses a fresh owned classic Prepare/Accept round through the available quorum.
+Invalid ballot metadata and corrupt storage fail explicitly.
+A locally permitted, quorum-confirmed
 prepared ballot remains reusable. Cold existing keys and inconclusive
 prepared state start prepare above that floor. Explicit classic, fast, leader, and
 fast+leader policies remain available.
+
+`RegisterCommit.AcknowledgedPeers` identifies accept acknowledgements consumed
+for that exact committed ballot/value. A transport can omit value bytes for
+those peers only when the receiver resolves the certificate against an exact
+local ballot and value digest. The host provides this compact path and bounded
+latest-only per-key delivery.
 
 Idle keys retain their engine, accepted base, prepared promise, and adaptive
 history in a least-recently-used cache of at most `Capacity` idle keys. Active and

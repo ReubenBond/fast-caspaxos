@@ -115,6 +115,12 @@ internal sealed class MemoryAcceptor : IKeyedAcceptor, ILocalAcceptorInspection
     private readonly Dictionary<string, AcceptorState<ByteString?>> _states = new(StringComparer.Ordinal);
     public ConcurrentQueue<(string Key, LocalAcceptorState? State)> Inspections { get; } = new();
 
+    public async ValueTask<LocalAcceptorBallots?> InspectBallotsAsync(string key, CancellationToken cancellationToken = default)
+    {
+        var state = await InspectAsync(key, cancellationToken);
+        return state is null ? null : new(state.PromisedBallot, state.AcceptedBallot);
+    }
+
     public ValueTask<LocalAcceptorState?> InspectAsync(string key, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

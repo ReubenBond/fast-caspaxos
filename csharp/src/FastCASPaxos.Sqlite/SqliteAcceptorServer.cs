@@ -232,6 +232,57 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         }, cancellationToken);
     }
 
+    public async ValueTask<LocalAcceptorBallots?> InspectBallotsAsync(string key, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        try
+        {
+            return await Enqueue<LocalAcceptorBallots?>((connection, transaction) =>
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = """
+                    SELECT promised_round, promised_proposer, accepted_round, accepted_proposer
+                    FROM acceptor_state WHERE key = $key;
+                    """;
+                command.Parameters.AddWithValue("$key", EncodeKey(key));
+                using var reader = command.ExecuteReader();
+                if (!reader.Read()) return null;
+                var result = new LocalAcceptorBallots(new(reader.GetInt32(0), reader.GetInt32(1)),
+                    reader.IsDBNull(2) ? Ballot.Zero : new(reader.GetInt32(2), reader.GetInt32(3)));
+                result.Validate();
+                return result;
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        catch (SqliteException error) when (error.SqliteErrorCode is 11 or 26)
+        {
+            throw new InvalidDataException("The local acceptor database is corrupt or invalid.", error);
+        }
+    }
+
+    public ValueTask<ByteString?> ResolveCommittedValueAsync(
+        string key, AcceptedDigest digest, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        ArgumentNullException.ThrowIfNull(digest);
+        digest.Validate();
+        return Enqueue<ByteString?>((connection, transaction) =>
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT value, value_hash FROM acceptor_state
+                WHERE key = $key AND accepted_round = $round AND accepted_proposer = $proposer AND value_hash = $hash;
+                """;
+            command.Parameters.AddWithValue("$key", EncodeKey(key));
+            command.Parameters.AddWithValue("$round", digest.AcceptedBallot.Round);
+            command.Parameters.AddWithValue("$proposer", digest.AcceptedBallot.Proposer);
+            command.Parameters.AddWithValue("$hash", digest.ValueHash.ToArray());
+            using var reader = command.ExecuteReader();
+            return reader.Read() ? ReadAcceptedValue(reader, 0) : null;
+        }, cancellationToken);
+    }
+
     public ValueTask<LocalAcceptorPage> InspectKeysAsync(
         string prefix = "", string? afterKey = null, int limit = 100, CancellationToken cancellationToken = default)
     {

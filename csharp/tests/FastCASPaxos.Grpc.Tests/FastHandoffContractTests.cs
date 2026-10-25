@@ -19,6 +19,81 @@ public sealed class FastHandoffContractTests
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
+    public async Task CompactLearnerWirePreservesDigestPromiseAndExplicitOutcome(bool learned, bool prepared)
+    {
+        var receiver = new DigestLearner(learned);
+        var client = new GrpcRegisterLearner(new ContractCallInvoker(
+            learner: new RegisterLearnerGrpcService(receiver, NullLogger<RegisterLearnerGrpcService>.Instance)));
+        var hash = new ByteString(System.Security.Cryptography.SHA256.HashData(Envelope(1, Payload).ToArray()));
+        var commit = new RegisterCommitDigest("key\0é", new(new(5, 0), hash), prepared ? new(6, 0) : DomainBallot.Zero);
+        Assert.Equal(learned, await client.LearnDigestAsync(commit));
+        Assert.Equal(commit, Assert.Single(receiver.Received));
+        Assert.Equal(32, receiver.Received[0].Accepted.ValueHash.Length);
+    }
+
+    [Fact]
+    public async Task CompactLearnerRejectsUnspecifiedWireOutcome()
+    {
+        var client = new GrpcRegisterLearner(StubCallInvoker.Reply(new Wire.LearnDigestReply()));
+        await Assert.ThrowsAsync<InvalidDataException>(() => client.LearnDigestAsync(
+            new("key", new(new(5, 0), new ByteString(new byte[32])), new(6, 0))).AsTask());
+    }
+
+    public enum InvalidCompact { MissingKey, MissingDigest, MissingBallot, ZeroBallot, ShortHash, LongHash, ExpiredPromise, NegativePromise }
+
+    [Theory]
+    [InlineData(InvalidCompact.MissingKey)]
+    [InlineData(InvalidCompact.MissingDigest)]
+    [InlineData(InvalidCompact.MissingBallot)]
+    [InlineData(InvalidCompact.ZeroBallot)]
+    [InlineData(InvalidCompact.ShortHash)]
+    [InlineData(InvalidCompact.LongHash)]
+    [InlineData(InvalidCompact.ExpiredPromise)]
+    [InlineData(InvalidCompact.NegativePromise)]
+    public async Task CompactLearnerRejectsInvalidWireBeforeDelivery(InvalidCompact scenario)
+    {
+        var receiver = new DigestLearner(true);
+        var wire = new Wire.RegisterLearner.RegisterLearnerClient(new ContractCallInvoker(
+            learner: new RegisterLearnerGrpcService(receiver, NullLogger<RegisterLearnerGrpcService>.Instance)));
+        var request = new Wire.RegisterCommitDigest
+        {
+            Key = "key",
+            Accepted = new() { Ballot = Ballot(5, 0), Sha256 = Google.Protobuf.ByteString.CopyFrom(new byte[32]) },
+            PreparedBallot = Ballot(6, 0),
+        };
+        switch (scenario)
+        {
+            case InvalidCompact.MissingKey: request.ClearKey(); break;
+            case InvalidCompact.MissingDigest: request.Accepted = null; break;
+            case InvalidCompact.MissingBallot: request.Accepted.Ballot = null; break;
+            case InvalidCompact.ZeroBallot: request.Accepted.Ballot = new(); break;
+            case InvalidCompact.ShortHash: request.Accepted.Sha256 = Google.Protobuf.ByteString.CopyFrom(new byte[31]); break;
+            case InvalidCompact.LongHash: request.Accepted.Sha256 = Google.Protobuf.ByteString.CopyFrom(new byte[33]); break;
+            case InvalidCompact.ExpiredPromise: request.PreparedBallot = Ballot(5, 0); break;
+            case InvalidCompact.NegativePromise: request.PreparedBallot = Ballot(-1, 0); break;
+        }
+        var error = await Assert.ThrowsAsync<RpcException>(() => wire.LearnDigestAsync(request).ResponseAsync);
+        Assert.Equal(StatusCode.InvalidArgument, error.StatusCode);
+        Assert.Empty(receiver.Received);
+    }
+
+    private sealed class DigestLearner(bool result) : IRegisterLearner, IRegisterDigestLearner
+    {
+        public List<RegisterCommitDigest> Received { get; } = [];
+        public void Learn(RegisterCommit commit) => throw new InvalidOperationException("Expected compact delivery.");
+        public ValueTask<bool> LearnDigestAsync(RegisterCommitDigest commit, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Received.Add(commit);
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
     public async Task LearnerProtobufRoundTripPreservesKeyBytesAndOptionalPreparedBallot(bool emptyValue, bool prepared)
     {
         var received = new RecordingLearner();

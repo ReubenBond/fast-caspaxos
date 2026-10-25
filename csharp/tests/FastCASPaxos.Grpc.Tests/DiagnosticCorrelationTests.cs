@@ -161,21 +161,23 @@ public sealed class DiagnosticCorrelationTests
 
         // Learning retains the originating user-operation correlation while using a
         // separate transport call ID. It is not another phase of the quorum exchange.
-        var learnedOutbound = allOutbound.Where(p => p.Operation == "learn").ToArray();
-        var learnedInbound = allInbound.Where(p => p.Operation == "learn").ToArray();
+        var learnedOutbound = allOutbound.Where(p => p.Operation is "learn" or "learn-digest").ToArray();
+        var learnedInbound = allInbound.Where(p => p.Operation is "learn" or "learn-digest").ToArray();
         Assert.Equal(outbound.Length + learnedOutbound.Length, allOutbound.Length);
         Assert.Equal(inbound.Length + learnedInbound.Length, allInbound.Length);
         Assert.Equal<string>(["request-initiated", "response-observed"], learnedOutbound.Select(p => p.Phase));
         Assert.Equal<string>(["request-received", "response-produced"], learnedInbound.Select(p => p.Phase));
         var accepted = Assert.Single(outbound, p => p.Operation == "accept" && p.Phase == "request-initiated");
+        var acceptedEnvelope = (await remote.Node.Inspection.InspectAsync("key"))!.AcceptedValue!.Value;
+        var expectedHash = Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(acceptedEnvelope.ToArray()));
         foreach (var sent in learnedOutbound)
         {
             var received = Assert.Single(learnedInbound, p => p.CallId == sent.CallId &&
                 p.Phase == (sent.Phase == "request-initiated" ? "request-received" : "response-produced"));
             Assert.Equal(learned.CallId, sent.CallId);
             Assert.DoesNotContain(outbound, p => p.CallId == sent.CallId);
-            Assert.Equal("learn", sent.Operation);
-            Assert.Equal("learn", received.Operation);
+            Assert.Equal("learn-digest", sent.Operation);
+            Assert.Equal("learn-digest", received.Operation);
             Assert.Equal(operation.OperationId, sent.OperationId);
             Assert.Equal(operation.OperationId, received.OperationId);
             Assert.Equal("b", sent.PeerId);
@@ -189,9 +191,11 @@ public sealed class DiagnosticCorrelationTests
             Assert.Equal(sent.AcceptedBallot, received.AcceptedBallot);
             Assert.Equal(accepted.NextBallot, sent.NextBallot);
             Assert.Equal(sent.NextBallot, received.NextBallot);
-            Assert.Equal(accepted.Value, sent.Value);
-            Assert.Equal(sent.Value, received.Value);
-            Assert.Equal("committed", sent.Outcome);
+            Assert.Null(sent.Value);
+            Assert.Null(received.Value);
+            Assert.Equal(expectedHash, sent.ValueHash);
+            Assert.Equal(expectedHash, received.ValueHash);
+            Assert.Equal(sent.Phase == "response-observed" ? "committed" : null, sent.Outcome);
             Assert.Equal(sent.Outcome, received.Outcome);
             Assert.Null(sent.Error);
             Assert.Null(received.Error);
@@ -262,7 +266,7 @@ public sealed class DiagnosticCorrelationTests
             Assert.True(await reader.MoveNextAsync().AsTask().WaitAsync(Watchdog));
             Assert.NotEqual("reset", reader.Current.Kind);
             if (reader.Current.Data is not ProtocolObservation
-                { Operation: "learn", Direction: "outbound", PeerId: "b" } observation) continue;
+                { Operation: "learn" or "learn-digest", Direction: "outbound", PeerId: "b" } observation) continue;
             Assert.NotEqual("fault-observed", observation.Phase);
             if (observation.Phase == "response-observed") return observation;
         }

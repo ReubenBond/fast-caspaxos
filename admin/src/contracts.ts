@@ -15,6 +15,7 @@ export interface Protocol {
   ballot: Ballot; nextBallot: Ballot; outcome?: string | null;
   promisedBallot?: Ballot | null; acceptedBallot?: Ballot | null; conflictingBallot?: Ballot | null;
   value?: PayloadPreview | null; error?: string | null;
+  valueHash?: string | null;
 }
 export interface Operation {
   operation: string; operationId: string; key: KeyPreview | null; outcome: string;
@@ -55,6 +56,7 @@ interface EventData {
   repair: Repair;
   administration: { nodeId: string; command: string; error: string };
   notification: { operation: string; key: KeyPreview | null; operationId: string | null; error: string };
+  inspection: { operation: string; key: KeyPreview | null; operationId: string | null; error: string };
   reset: { reason: string };
   heartbeat: { storageStatus: string };
 }
@@ -83,7 +85,7 @@ export type WriteResult =
   | { kind: 'unknown'; message: string; currentEtag?: string }
   | { kind: 'rejected'; message: string };
 
-export const eventKinds: EventKind[] = ['protocol', 'operation', 'acceptor-state', 'storage', 'repair', 'administration', 'notification', 'reset', 'heartbeat'];
+export const eventKinds: EventKind[] = ['protocol', 'operation', 'acceptor-state', 'storage', 'repair', 'administration', 'notification', 'inspection', 'reset', 'heartbeat'];
 
 export function parseEvent(text: string, kind: EventKind, nodeId: string): NodeEvent {
   const item = JSON.parse(text) as NodeEvent;

@@ -3,6 +3,8 @@ using FastCASPaxos.Host;
 using FastCASPaxos.Server;
 using FastCASPaxos.Sqlite;
 using Grpc.Net.Client;
+using Grpc.Core;
+using Grpc.Core.Interceptors;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -27,14 +29,25 @@ internal sealed class RepairEndpoint(WebApplication app, string address) : IAsyn
 
     public static async Task<RepairEndpoint> StartAsync(
         IKeyedAcceptor acceptor, IAcceptorDigestSource digests, IRepairScheduler scheduler, NodeRuntime? node = null,
-        IRegisterLearner? learner = null)
+        IRegisterLearner? learner = null, Func<NodeRuntime>? epochNode = null,
+        Func<object, ServerCallContext, Task>? beforeLearning = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
         builder.Configuration.Sources.Clear();
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(server =>
             server.Listen(IPAddress.Loopback, 0, listen => listen.Protocols = HttpProtocols.Http2));
-        builder.Services.AddGrpc();
+        builder.Services.AddGrpc(options =>
+        {
+            if (epochNode is not null)
+            {
+                options.Interceptors.Add<DiagnosticServerInterceptor>();
+                options.Interceptors.Add<EpochServerInterceptor>();
+            }
+            if (beforeLearning is not null) options.Interceptors.Add<LearningHookInterceptor>();
+        });
+        if (epochNode is not null) builder.Services.AddSingleton(_ => new EpochServerInterceptor(epochNode()));
+        if (beforeLearning is not null) builder.Services.AddSingleton(new LearningHookInterceptor(beforeLearning));
         builder.Services.AddSingleton(acceptor);
         builder.Services.AddSingleton(digests);
         builder.Services.AddSingleton(scheduler);
@@ -44,6 +57,7 @@ internal sealed class RepairEndpoint(WebApplication app, string address) : IAsyn
             builder.Services.AddSingleton(node);
             builder.Services.AddHostedService<NodeRepairService>();
         }
+
         var app = builder.Build();
         app.MapGrpcService<AcceptorGrpcService>();
         app.MapGrpcService<AcceptorDigestGrpcService>();
@@ -63,6 +77,17 @@ internal sealed class RepairEndpoint(WebApplication app, string address) : IAsyn
         Channel.Dispose();
         // Tests explicitly exercise StopAsync. Cleanup must not initiate another replication barrier.
         await App.DisposeAsync().AsTask().WaitAsync(Watchdog);
+    }
+}
+
+internal sealed class LearningHookInterceptor(Func<object, ServerCallContext, Task> beforeLearning) : Interceptor
+{
+    public override async Task<TResponse> UnaryServerHandler<TRequest, TResponse>(
+        TRequest request, ServerCallContext context, UnaryServerMethod<TRequest, TResponse> continuation)
+    {
+        if (request is Wire.RegisterCommit or Wire.RegisterCommitDigest)
+            await beforeLearning(request, context);
+        return await continuation(request, context);
     }
 }
 

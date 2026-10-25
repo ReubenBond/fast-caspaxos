@@ -26,6 +26,19 @@ service Repair {
 
 service RegisterLearner {
   rpc Learn(RegisterCommit) returns (Empty);
+  rpc LearnDigest(RegisterCommitDigest) returns (LearnDigestReply);
+}
+
+message RegisterCommitDigest {
+  optional string key = 1;
+  AcceptedDigest accepted = 2;
+  Ballot prepared_ballot = 3;
+}
+message LearnDigestReply {
+  oneof outcome {
+    Empty learned = 1;
+    Empty stale = 2;
+  }
 }
 
 message RegisterCommit {

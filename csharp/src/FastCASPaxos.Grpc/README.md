@@ -297,6 +297,17 @@ classic promises remain restricted to their owning proposer and configured mode.
 The receiver's durable local acceptor ballots fence reuse. Protect this endpoint
 with the same cluster access controls as `Acceptor`.
 
+`RegisterLearner.LearnDigest` carries an accepted ballot/SHA256 pair and the
+quorum-confirmed higher prepared ballot. A sender uses it for peers whose accept
+acknowledgements it observed for that exact committed ballot/value; other peers
+receive full-value `Learn`. The receiver resolves the certificate against its
+atomic local ballot/hash match and returns an explicit `learned` or `stale`
+oneof. This preserves correctness when a peer advances between acknowledgement
+and delivery. The host bounds compact-resolution waits and underlying I/O,
+coalesces each peer/key to its latest pending conclusion, and dispatches unrelated
+keys concurrently within `Capacity`. Both learning RPCs carry the host's
+generation fence and the original operation correlation.
+
 Message presence distinguishes unaccepted protocol state from accepted empty
 bytes. Register state explicitly selects `absent` or `present`; a present
 state carries both bytes and opaque version. CompareExchange selects `applied`,

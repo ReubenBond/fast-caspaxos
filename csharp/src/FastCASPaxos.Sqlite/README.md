@@ -151,6 +151,14 @@ pagination, including promise-only rows. Both execute read-only SQL on the
 provider's existing serialized queue. Administrative inspection therefore
 preserves protocol state while exposing each node's actual durable contents.
 
+`InspectBallotsAsync` reads only the promised and accepted ballot columns for
+proposal-floor hints. `ResolveCommittedValueAsync` selects value bytes only when
+the local accepted ballot and persisted SHA256 exactly match a compact commit
+certificate; selection and byte validation share one serialized transaction.
+Missing or advanced state returns null, preserving the distinction from an I/O
+or corrupt-state exception. Hosts bound the caller's wait and the number of
+underlying probes independently.
+
 An optional `NodeEventJournal` supplied to `OpenAsync` receives bounded
 immutable state observations after successful COMMIT and before replies are
 released. Rolled-back batches emit storage failure; exact retries and

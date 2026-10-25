@@ -2,6 +2,9 @@ using FastCASPaxos.Host;
 using FastCASPaxos.Model;
 using FastCASPaxos.Server;
 using FastCASPaxos.Server.Diagnostics;
+using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using Grpc.Core;
 using Xunit;
 using static FastCASPaxos.Grpc.Tests.ContractTestSupport;
 using static FastCASPaxos.Grpc.Tests.FastHandoffContractTests;
@@ -103,14 +106,14 @@ public sealed class FastHandoffHostTests
         Assert.Equal(before, await node.Inspection.InspectAsync("key"));
     }
 
-    private static async Task WaitForLearnAsync(NodeEventJournal journal, string cursor, Ballot ballot)
+    private static async Task WaitForLearnAsync(NodeEventJournal journal, string cursor, Ballot ballot, string key = "key")
     {
         using var timeout = new CancellationTokenSource(Watchdog);
         await foreach (var entry in journal.ReadAsync(cursor, Watchdog, timeout.Token))
             if (entry.Data is ProtocolObservation
                 {
-                    Operation: "learn", Direction: "inbound", Phase: "response-produced"
-                } observation && observation.Key?.Text == "key" && observation.Ballot == ballot)
+                    Operation: "learn" or "learn-digest", Direction: "inbound", Phase: "response-produced", Outcome: "committed"
+                } observation && observation.Key?.Text == key && observation.Ballot == ballot)
                 return;
         Assert.Fail("The journal stopped before the expected learn arrival.");
     }
@@ -131,13 +134,263 @@ public sealed class FastHandoffHostTests
         return events;
     }
 
+    [Fact]
+    [Trait("Category", "Loopback")]
+    public async Task GatedLearnCoalescesLatestWithoutBlockingWritesOtherKeysOrHealthyPeers()
+    {
+        using var directory = new TestDirectory();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var arrivals = new ConcurrentQueue<LearningArrival>();
+        var held = 0;
+        await using var cluster = await LearningCluster.OpenAsync(directory, capacity: 2, beforeLearning: async (slot, message, context) =>
+        {
+            var arrival = LearningArrival.From(slot, message, context);
+            arrivals.Enqueue(arrival);
+            if (slot == 1 && arrival.Key == "key" && Interlocked.Increment(ref held) == 1)
+            {
+                entered.TrySetResult();
+                await release.Task.WaitAsync(context.CancellationToken);
+            }
+        });
+        var source = cluster.Nodes[0];
+        var cursors = cluster.Nodes.Select(node => node.Diagnostics.Cursor).ToArray();
+        var previous = DiagnosticContext.Current;
+        try
+        {
+            ByteString? version = null;
+            for (var step = 1; step <= 4; step++)
+            {
+                DiagnosticContext.Current = new("a", $"coalesced-{step}", null);
+                var result = await source.Registers.CompareExchangeAsync("key", version, new([(byte)step])).AsTask().WaitAsync(Watchdog);
+                Assert.Equal(CompareExchangeStatus.Applied, result.Status);
+                Assert.Equal(new RegisterValue(new([(byte)step]), Revision((ulong)step)), result.Current);
+                version = result.Current!.Version;
+                if (step == 1) await entered.Task.WaitAsync(Watchdog);
+            }
+            Assert.False(release.Task.IsCompleted);
+            await WaitForLearnAsync(cluster.Nodes[2].Diagnostics, cursors[2], new(4, 0));
+            DiagnosticContext.Current = new("a", "unrelated-key", null);
+            var other = await source.Registers.CompareExchangeAsync("other", null, new([70])).AsTask().WaitAsync(Watchdog);
+            Assert.Equal(new RegisterValue(new([70]), Revision(1)), other.Current);
+            await WaitForLearnAsync(cluster.Nodes[1].Diagnostics, cursors[1], new(1, 0), "other");
+            Assert.False(release.Task.IsCompleted); // Neither unrelated-key nor healthy-peer progress needed the gate.
+            Assert.Single(arrivals, item => item.Node == 1 && item.Key == "key");
+            release.TrySetResult();
+            await WaitForLearnAsync(cluster.Nodes[1].Diagnostics, cursors[1], new(4, 0));
+            var delivered = arrivals.Where(item => item.Node == 1 && item.Key == "key").ToArray();
+            Assert.Equal([new Ballot(1, 0), new Ballot(4, 0)], delivered.Select(item => item.Ballot));
+            Assert.All(delivered, item =>
+            {
+                Assert.True(item.Compact);
+                Assert.Equal("0", item.Epoch);
+            });
+            Assert.Equal("coalesced-4", delivered[1].OperationId);
+            Assert.Equal(new Ballot(5, 0), delivered[1].Prepared);
+            var envelope = (await source.Inspection.InspectAsync("key"))!.AcceptedValue!.Value;
+            Assert.Equal(new ByteString(SHA256.HashData(envelope.ToArray())), delivered[1].Hash);
+            var observations = await SinceAsync(source.Diagnostics, cursors[0]);
+            Assert.DoesNotContain(observations.OfType<ProtocolObservation>(),
+                item => item.Error?.Contains("capacity", StringComparison.Ordinal) == true);
+        }
+        finally { release.TrySetResult(); DiagnosticContext.Current = previous; }
+    }
+
+    [Fact]
+    [Trait("Category", "Loopback")]
+    public async Task LearnCapacityCountsActiveKeysAndReportsOnlyTrueOverflow()
+    {
+        using var directory = new TestDirectory();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var arrivals = new ConcurrentQueue<LearningArrival>();
+        var active = 0;
+        var concurrency = new ConcurrentQueue<int>();
+        var first = new ConcurrentDictionary<string, bool>();
+        await using var cluster = await LearningCluster.OpenAsync(directory, capacity: 2, beforeLearning: async (slot, message, context) =>
+        {
+            var arrival = LearningArrival.From(slot, message, context);
+            arrivals.Enqueue(arrival);
+            if (slot != 1 || !first.TryAdd(arrival.Key, true)) return;
+            var count = Interlocked.Increment(ref active);
+            concurrency.Enqueue(count);
+            if (count == 2) entered.TrySetResult();
+            try { await release.Task.WaitAsync(context.CancellationToken); }
+            finally { Interlocked.Decrement(ref active); }
+        });
+        var source = cluster.Nodes[0];
+        var cursors = cluster.Nodes.Select(node => node.Diagnostics.Cursor).ToArray();
+        var previous = DiagnosticContext.Current;
+        try
+        {
+            foreach (var key in new[] { "key", "other" })
+            {
+                var result = await source.Registers.CompareExchangeAsync(key, null, Payload).AsTask().WaitAsync(Watchdog);
+                Assert.Equal(new RegisterValue(Payload, Revision(1)), result.Current);
+            }
+            await entered.Task.WaitAsync(Watchdog);
+            Assert.Equal(2, Volatile.Read(ref active));
+            DiagnosticContext.Current = new("a", "actual-overflow", null);
+            Assert.Equal(CompareExchangeStatus.Applied,
+                (await source.Registers.CompareExchangeAsync("overflow", null, Payload).AsTask().WaitAsync(Watchdog)).Status);
+            DiagnosticContext.Current = new("a", "latest-pending", null);
+            var latest = await source.Registers.CompareExchangeAsync("key", Revision(1), ByteString.Empty).AsTask().WaitAsync(Watchdog);
+            Assert.Equal(new RegisterValue(ByteString.Empty, Revision(2)), latest.Current);
+            var latestState = (await source.Inspection.InspectAsync("key"))!;
+            var observations = await SinceAsync(source.Diagnostics, cursors[0]);
+            var drop = Assert.Single(observations.OfType<ProtocolObservation>(), item =>
+                item.PeerId == "b" && item.Error?.Contains("capacity", StringComparison.Ordinal) == true);
+            Assert.Equal("overflow", drop.Key!.Text);
+            Assert.Equal("actual-overflow", drop.OperationId);
+            Assert.DoesNotContain(arrivals, item => item.Node == 1 && item.Key == "overflow");
+            Assert.Equal(2, concurrency.Max());
+            release.TrySetResult();
+            await WaitForLearnAsync(cluster.Nodes[1].Diagnostics, cursors[1], latestState.AcceptedBallot);
+            var delivered = arrivals.Where(item => item.Node == 1 && item.Key == "key").ToArray();
+            Assert.Equal(2, delivered.Length);
+            Assert.Equal(latestState.AcceptedBallot, delivered[1].Ballot);
+            Assert.Equal("latest-pending", delivered[1].OperationId);
+            Assert.Equal(new ByteString(SHA256.HashData(latestState.AcceptedValue!.Value.ToArray())), delivered[1].Hash);
+        }
+        finally { release.TrySetResult(); DiagnosticContext.Current = previous; }
+    }
+
+    private sealed record LearningArrival(int Node, string Key, Ballot Ballot, Ballot Prepared, ByteString Hash,
+        bool Compact, string? Epoch, string? OperationId)
+    {
+        public static LearningArrival From(int node, object request, ServerCallContext context)
+        {
+            if (request is Wire.RegisterCommitDigest compact)
+                return new(node, compact.Key, new(compact.Accepted.Ballot.Round, compact.Accepted.Ballot.ProposerId),
+                    new(compact.PreparedBallot.Round, compact.PreparedBallot.ProposerId), new(compact.Accepted.Sha256.ToByteArray()),
+                    true, context.RequestHeaders.GetValue(EpochClientInterceptor.Header), DiagnosticContext.Current?.OperationId);
+            var full = (Wire.RegisterCommit)request;
+            return new(node, full.Key, new(full.Accepted.Ballot.Round, full.Accepted.Ballot.ProposerId),
+                new(full.PreparedBallot.Round, full.PreparedBallot.ProposerId), new(SHA256.HashData(full.Accepted.Value.ToByteArray())),
+                false, context.RequestHeaders.GetValue(EpochClientInterceptor.Header), DiagnosticContext.Current?.OperationId);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Loopback")]
+    public async Task ResetDiscardsOldPendingLearnWithoutRestampingItsEpoch()
+    {
+        using var directory = new TestDirectory();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var arrivals = new ConcurrentQueue<LearningArrival>();
+        await using var cluster = await LearningCluster.OpenAsync(directory, capacity: 2, beforeLearning: async (slot, message, context) =>
+        {
+            var arrival = LearningArrival.From(slot, message, context);
+            arrivals.Enqueue(arrival);
+            if (slot == 1 && arrival.Epoch == "0")
+            {
+                entered.TrySetResult();
+                await release.Task.WaitAsync(context.CancellationToken);
+            }
+        });
+        try
+        {
+            var first = await cluster.Nodes[0].Registers.CompareExchangeAsync("key", null, Payload).AsTask().WaitAsync(Watchdog);
+            Assert.Equal(CompareExchangeStatus.Applied, first.Status);
+            await entered.Task.WaitAsync(Watchdog);
+            var second = await cluster.Nodes[0].Registers.CompareExchangeAsync("key", first.Current!.Version, ByteString.Empty).AsTask().WaitAsync(Watchdog);
+            Assert.Equal(new RegisterValue(ByteString.Empty, Revision(2)), second.Current);
+            Assert.Single(arrivals, item => item.Node == 1);
+            var reset = HostLifecycleTests.NewReset();
+            // The source cancels/drains its old workers before the receiver's
+            // protocol lease is drained. All state belongs to this temporary fixture.
+            foreach (var phase in new[] { "prepare", "clear", "activate" })
+                foreach (var node in cluster.Nodes)
+                    await node.ApplyResetPhaseAsync(reset, phase).WaitAsync(Watchdog);
+            release.TrySetResult();
+            foreach (var node in cluster.Nodes)
+            {
+                Assert.Equal("1", node.Administration.Epoch);
+                Assert.Null(await node.Inspection.InspectAsync("key"));
+            }
+            var cursor = cluster.Nodes[1].Diagnostics.Cursor;
+            var fresh = await cluster.Nodes[0].Registers.CompareExchangeAsync("key", null, new([90])).AsTask().WaitAsync(Watchdog);
+            Assert.Equal(CompareExchangeStatus.Applied, fresh.Status);
+            Assert.Equal(new RegisterValue(new([90]), new ByteString([.. Revision(1).ToArray(), .. Revision(1).ToArray()])), fresh.Current);
+            await WaitForLearnAsync(cluster.Nodes[1].Diagnostics, cursor, new(1, 0));
+            var deliveries = arrivals.Where(item => item.Node == 1).ToArray();
+            Assert.Equal(2, deliveries.Length);
+            Assert.Equal("0", deliveries[0].Epoch);
+            Assert.Equal("1", deliveries[1].Epoch);
+            Assert.Equal(new Ballot(1, 0), deliveries[1].Ballot);
+            var current = (await cluster.Nodes[1].Inspection.InspectAsync("key"))!;
+            Assert.Equal(new ByteString(SHA256.HashData(current.AcceptedValue!.Value.ToArray())), deliveries[1].Hash);
+        }
+        finally { release.TrySetResult(); }
+    }
+
+    [Fact]
+    [Trait("Category", "Loopback")]
+    public async Task CompactDeliveryRequiresExactConsumedAckAndCarriesOnlyConfirmedPromise()
+    {
+        using var directory = new TestDirectory();
+        var arrivals = new ConcurrentQueue<LearningArrival>();
+        await using var cluster = await LearningCluster.OpenAsync(directory, capacity: 2, beforeLearning: (slot, message, context) =>
+        {
+            arrivals.Enqueue(LearningArrival.From(slot, message, context));
+            return Task.CompletedTask;
+        });
+        // Remote floors force recovery from the initial fast attempt. Do not seed
+        // the sender's local floor: that would choose a different initial path.
+        foreach (var node in cluster.Nodes.Skip(1))
+            Assert.True((await node.Acceptor.PrepareAsync("key", new(new(10, 7)))).IsPromised);
+        var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        cluster.Acceptors[2].Accept = async (key, request, token) =>
+        {
+            var result = await cluster.Nodes[2].Acceptor.AcceptAsync(key, request, token);
+            if (result.IsAccepted && request.Ballot.IsClassicRoundBallot)
+            {
+                arrived.TrySetResult();
+                await release.Task.WaitAsync(token);
+            }
+            return result;
+        };
+        var cursors = cluster.Nodes.Select(node => node.Diagnostics.Cursor).ToArray();
+        var previous = DiagnosticContext.Current;
+        DiagnosticContext.Current = new("a", "ack-eligibility", null);
+        try
+        {
+            var write = await cluster.Nodes[0].Registers.CompareExchangeAsync("key", null, Payload).AsTask().WaitAsync(Watchdog);
+            Assert.Equal(CompareExchangeStatus.Applied, write.Status);
+            await arrived.Task.WaitAsync(Watchdog);
+            var state = (await cluster.Nodes[0].Inspection.InspectAsync("key"))!;
+            Assert.True(state.AcceptedBallot.IsClassicRoundBallot);
+            await WaitForLearnAsync(cluster.Nodes[1].Diagnostics, cursors[1], state.AcceptedBallot);
+            await WaitForLearnAsync(cluster.Nodes[2].Diagnostics, cursors[2], state.AcceptedBallot);
+            var compact = Assert.Single(arrivals, item => item.Node == 1);
+            var full = Assert.Single(arrivals, item => item.Node == 2);
+            Assert.True(compact.Compact);
+            Assert.False(full.Compact); // c accepted bytes durably, but its ACK was withheld.
+            var hash = new ByteString(SHA256.HashData(state.AcceptedValue!.Value.ToArray()));
+            foreach (var delivery in new[] { compact, full })
+            {
+                Assert.Equal(state.AcceptedBallot, delivery.Ballot);
+                Assert.Equal(hash, delivery.Hash);
+                Assert.Equal(FastCASPaxos.Model.Ballot.Zero, delivery.Prepared);
+                Assert.Equal("ack-eligibility", delivery.OperationId);
+                Assert.Equal("0", delivery.Epoch);
+            }
+            Assert.False(release.Task.IsCompleted);
+        }
+        finally { release.TrySetResult(); DiagnosticContext.Current = previous; }
+    }
+
     private sealed class LearningCluster : IAsyncDisposable
     {
         public List<NodeRuntime> Nodes { get; } = [];
+        public List<DelegateAcceptor> Acceptors { get; } = [];
         private List<RepairEndpoint> Endpoints { get; } = [];
         private static readonly string[] Ids = ["a", "b", "c"];
 
-        public static async Task<LearningCluster> OpenAsync(TestDirectory directory)
+        public static async Task<LearningCluster> OpenAsync(TestDirectory directory, int? capacity = null,
+            Func<int, object, ServerCallContext, Task>? beforeLearning = null)
         {
             var cluster = new LearningCluster();
             try
@@ -156,13 +409,18 @@ public sealed class FastHandoffHostTests
                     {
                         List = (prefix, after, limit, token) => cluster.Nodes[slot].Digests.ListDigestsAsync(prefix, after, limit, token)
                     };
+                    cluster.Acceptors.Add(acceptor);
                     cluster.Endpoints.Add(await RepairEndpoint.StartAsync(acceptor, digests, new CountingRepairScheduler(),
-                        learner: new ForwardingLearner(commit => cluster.Nodes[slot].Learner.Learn(commit))));
+                        learner: new ForwardingLearner(() => cluster.Nodes[slot]),
+                        epochNode: () => cluster.Nodes[slot],
+                        beforeLearning: beforeLearning is null ? null : (request, context) => beforeLearning(slot, request, context)));
                 }
                 for (var index = 0; index < Ids.Length; index++)
                 {
                     var options = DiagnosticHost.Options(directory, Ids[index], index + 1);
                     options.Mode = "fast";
+                    if (capacity is { } limit) options.Capacity = limit;
+                    options.PeerCallTimeout = Watchdog;
                     options.Peers = [.. cluster.Endpoints.Select((endpoint, slot) => new PeerOptions
                     {
                         Id = Ids[slot], Endpoint = endpoint.Address,
@@ -186,8 +444,10 @@ public sealed class FastHandoffHostTests
         }
     }
 
-    private sealed class ForwardingLearner(Action<RegisterCommit> forward) : IRegisterLearner
+    private sealed class ForwardingLearner(Func<NodeRuntime> node) : IRegisterLearner, IRegisterDigestLearner
     {
-        public void Learn(RegisterCommit commit) => forward(commit);
+        public void Learn(RegisterCommit commit) => node().Learn(commit);
+        public ValueTask<bool> LearnDigestAsync(RegisterCommitDigest commit, CancellationToken cancellationToken = default) =>
+            node().LearnDigestAsync(commit, cancellationToken);
     }
 }

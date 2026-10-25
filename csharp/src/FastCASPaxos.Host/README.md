@@ -13,13 +13,33 @@ register editing with direct per-node streams, local snapshots, and message
 diagnostics. Building the host with console assets requires Node.js 24+ and npm.
 
 Each host distributes quorum-committed register values and quorum-confirmed
-next-ballot promises over the `RegisterLearner` gRPC service. Independent bounded
-per-peer queues deliver learning asynchronously, so an unavailable peer leaves
-healthy peers' delivery independent. Queue overflow and delivery failures appear
-as `learn` protocol faults. Delivered learning enables one-accept-RTT fast writes
+next-ballot promises over the `RegisterLearner` gRPC service. Each peer admits up
+to `Capacity` distinct learning keys and dispatches up to that many independent
+RPCs. A key has one in-flight delivery and its latest pending conclusion;
+successive commits coalesce while unrelated keys and healthy peers progress.
+Distinct-key capacity exhaustion and delivery failures appear as protocol faults.
+Delivered learning enables one-accept-RTT fast writes
 when switching nodes; delayed learning starts recovery above the receiving node's
 durable local ballot floor. Protect the learning RPC with the same trusted-cluster
 access controls as the acceptor protocol.
+
+An observed successful accept acknowledgement for the exact committed ballot and
+value makes that peer eligible for `LearnDigest`: accepted ballot, SHA256, and
+the actual quorum-confirmed successor promise. The sender hashes the shared value
+once per commit. Other peers receive full-value `Learn`. SQLite resolves a compact
+certificate against one atomic local ballot/hash match before supplying its
+bytes to the learner. A receiver that has advanced returns the explicit `stale`
+outcome. Both paths retain operation correlation and generation fencing.
+Independent delivery keeps the final write's handoff timely, including when
+there is no subsequent message available for piggybacking.
+
+Ballot-only local inspection selects promised/accepted ballot columns. Its wait
+is bounded by the attempt timeout and operation cancellation, with underlying
+read slots retained until storage actually completes. Compact resolution uses
+the same host-owned `Capacity` pool across settings changes and resets. Ordinary
+inspection unavailability is observable and starts a fresh owned classic
+Prepare/Accept recovery, preserving healthy remote-quorum availability. Invalid
+ballot state and database corruption are explicit errors.
 
 ## Configuration and access
 
@@ -261,7 +281,7 @@ type NodeEvent<T> = {
   bootId: string;
   sequence: string;
   timestamp: string;
-  kind: "protocol" | "operation" | "acceptor-state" | "storage" | "repair" | "administration" | "notification" | "reset" | "heartbeat";
+  kind: "protocol" | "operation" | "acceptor-state" | "storage" | "repair" | "administration" | "notification" | "inspection" | "reset" | "heartbeat";
   data: T;
   id: string;
 };
@@ -275,13 +295,14 @@ observations advance it. Consumers use `addEventListener` for the named events.
 
 | Event | `data` fields and semantics |
 | --- | --- |
-| `protocol` | `operation` (`read`/`prepare`/`accept`/`learn`), `direction` (`local`/`outbound`/`inbound`), `phase`, nullable `peerId`, `callId`, nullable `operationId`, `key:KeyPreview`, `ballot`, `nextBallot`, nullable `outcome`, `promisedBallot`, `acceptedBallot`, `conflictingBallot`, `value:PayloadPreview`, `error`. |
+| `protocol` | `operation` (`read`/`prepare`/`accept`/`learn`/`learn-digest`), `direction` (`local`/`outbound`/`inbound`), `phase`, nullable `peerId`, `callId`, nullable `operationId`, `key:KeyPreview`, `ballot`, `nextBallot`, nullable `outcome`, `promisedBallot`, `acceptedBallot`, `conflictingBallot`, `value:PayloadPreview`, `valueHash` (Base64 SHA256 for compact learning), `error`. |
 | `operation` | `operation` (`read`/`compare-exchange`/`list`), `operationId`, `key:KeyPreview` (list uses its prefix), `outcome`, nullable `isPresent`, `value:PayloadPreview`, `version` (Base64), and `error`. |
 | `acceptor-state` | `key:KeyPreview`, `promisedBallot`, `acceptedBallot`, nullable `acceptedValue:PayloadPreview` and `register:RegisterPreview`. A transition in a successfully committed local SQLite batch. |
 | `storage` | `status` (`ready`/`failed`/`stopped`), nullable exception-type `error`. |
 | `repair` | `state` (`staged`/`draining`/`running`/`complete`/`pending`/`cancelled`/`failed`), `departing`, `targetReplicas`, `examined`, `repaired`, `pending`, nullable diagnostic `error`, `timestamp`. |
 | `administration` | Target `nodeId`, participant `command`, and explicit `error` for an unconfirmed cluster step. |
 | `notification` | `operation: commit`, bounded `key`, nullable correlation `operationId`, and exception-type `error`. Subscriber delivery failures have an outcome separate from the quorum operation. |
+| `inspection` | `operation: ballots`, bounded `key`, nullable `operationId`, and exception-type `error`. Ordinary local-inspection unavailability triggers classic quorum recovery. |
 | `reset` | `reason`: `initial`, `invalid-cursor`, `restarted`, `history-unavailable`, `proposer-settings-changed`, or `cluster-prepare`/`cluster-clear`/`cluster-activate`. |
 | `heartbeat` | `storageStatus`: current local writer lifecycle status. |
 

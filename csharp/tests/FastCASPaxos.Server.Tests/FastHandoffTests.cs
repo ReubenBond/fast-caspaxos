@@ -259,6 +259,55 @@ public sealed class FastHandoffTests
     }
 
     [Fact]
+    public async Task ClassicAcceptedQuorumWithoutFastPromiseQuorumReadsThenPreparesWithoutLocalInspection()
+    {
+        var peers = Peers();
+        var accepted = new Ballot(5, 7);
+        var requestedFastPromise = new Ballot(6, 0);
+        var committed = EnvelopeV2(1, Payload);
+        // Two matching classic accepts establish the value, but two promises do
+        // not establish a shared fast successor in a three-member configuration.
+        for (var index = 0; index < 2; index++)
+            Assert.True((await peers[index].Inner.AcceptAsync("key",
+                new(accepted, committed, requestedFastPromise))).IsAccepted);
+        Assert.Null(peers[2].Inner.Snapshot("key"));
+        // Intentionally omit localAcceptor: a local promise floor would force
+        // recovery independently and could conceal an incorrectly certified fast promise.
+        await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(3), Options("fast"));
+
+        var read = await service.ReadAsync("key").AsTask().WaitAsync(Watchdog);
+
+        Assert.Equal(new RegisterValue(Payload, Revision(1)), read);
+        Assert.All(peers, peer =>
+        {
+            Assert.Single(peer.Reads);
+            Assert.Empty(peer.Prepares);
+            Assert.Empty(peer.Accepts);
+            Assert.Empty(peer.Inner.Inspections);
+        });
+        Assert.Null(peers[2].Inner.Snapshot("key"));
+        var before = Counts(peers);
+
+        var write = await service.CompareExchangeAsync("key", Revision(1), ByteString.Empty).AsTask().WaitAsync(Watchdog);
+
+        Assert.Equal(CompareExchangeStatus.Applied, write.Status);
+        Assert.Equal(new RegisterValue(ByteString.Empty, Revision(2)), write.Current);
+        Assert.Null(write.Error);
+        for (var index = 0; index < peers.Length; index++)
+        {
+            var peer = peers[index];
+            Assert.Equal(before[index].Reads, peer.Reads.Count);
+            Assert.Equal(before[index].Prepares + 1, peer.Prepares.Count);
+            Assert.Equal(before[index].Accepts + 1, peer.Accepts.Count);
+            var prepared = peer.Prepares.Last().Request.Ballot;
+            Assert.Equal(requestedFastPromise, prepared);
+            Assert.Equal(prepared, peer.Accepts.Last().Request.Ballot);
+            Assert.Equal(peer.Accepts.Last().Request.Value, peer.Inner.Snapshot("key")!.AcceptedValue);
+            Assert.Empty(peer.Inner.Inspections);
+        }
+    }
+
+    [Fact]
     public async Task DuplicateAndOlderLearnedCommitsCannotRollBackLatestCertificate()
     {
         var peers = Peers();
@@ -519,6 +568,298 @@ public sealed class FastHandoffTests
 
     private static (int Reads, int Prepares, int Accepts)[] Counts(ControlledPeer[] peers) =>
         peers.Select(peer => (peer.Reads.Count, peer.Prepares.Count, peer.Accepts.Count)).ToArray();
+
+    public enum InspectionFailure { Io, DerivedIo, Database, Timeout, Busy, Disposed, ProviderCancellation }
+
+    [Theory]
+    [InlineData(InspectionFailure.Io)]
+    [InlineData(InspectionFailure.DerivedIo)]
+    [InlineData(InspectionFailure.Database)]
+    [InlineData(InspectionFailure.Timeout)]
+    [InlineData(InspectionFailure.Busy)]
+    [InlineData(InspectionFailure.Disposed)]
+    [InlineData(InspectionFailure.ProviderCancellation)]
+    public async Task OrdinaryBallotInspectionFailureUsesHealthyRemoteClassicQuorum(InspectionFailure scenario)
+    {
+        Exception error = scenario switch
+        {
+            InspectionFailure.Io => new IOException("local read unavailable"),
+            InspectionFailure.DerivedIo => new EndOfStreamException("local stream ended"),
+            InspectionFailure.Database => new InspectionDbException(),
+            InspectionFailure.Timeout => new TimeoutException(),
+            InspectionFailure.Busy => new RegisterBusyException(),
+            InspectionFailure.Disposed => new ObjectDisposedException("local inspection"),
+            _ => new OperationCanceledException(),
+        };
+        var peers = Peers();
+        peers[0].GoOffline();
+        var inspection = new BallotInspector((_, _) => ValueTask.FromException<LocalAcceptorBallots?>(error));
+        using var journal = new NodeEventJournal("source");
+        await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(3), Options("fast"), inspection, journal);
+        var cursor = journal.Cursor;
+        var previousContext = DiagnosticContext.Current;
+        DiagnosticContext.Current = new("source", "inspection-operation", "inspection-call");
+        try
+        {
+            var result = await service.CompareExchangeAsync("key", null, Payload).AsTask().WaitAsync(Watchdog);
+            Assert.Equal(CompareExchangeStatus.Applied, result.Status);
+            Assert.Equal(new RegisterValue(Payload, Revision(1)), result.Current);
+            Assert.Null(result.Error);
+            Assert.Same(error, service.LastInspectionFailure);
+            Assert.Equal(1, inspection.Calls);
+            foreach (var peer in peers)
+            {
+                var prepare = Assert.Single(peer.Prepares).Request.Ballot;
+                Assert.True(prepare.IsClassicRoundBallot);
+                Assert.Equal(3, prepare.Proposer);
+                Assert.Equal(prepare, Assert.Single(peer.Accepts).Request.Ballot);
+            }
+            using var timeout = new CancellationTokenSource(Watchdog);
+            await using var events = journal.ReadAsync(cursor, Watchdog, timeout.Token).GetAsyncEnumerator();
+            Assert.True(await events.MoveNextAsync());
+            Assert.Equal("inspection", events.Current.Kind);
+            var observed = Assert.IsType<InspectionObservation>(events.Current.Data);
+            Assert.Equal("ballots", observed.Operation);
+            Assert.Equal("key", observed.Key!.Text);
+            Assert.Equal("inspection-operation", observed.OperationId);
+            Assert.Equal(error.GetType().Name, observed.Error);
+        }
+        finally { DiagnosticContext.Current = previousContext; }
+    }
+
+    [Fact]
+    public async Task LocalBallotInspectionUsesOnlyBallotsAndPreservesPromiseFloor()
+    {
+        var peers = Peers();
+        var floor = new Ballot(20, 7);
+        var inspection = new BallotInspector((_, _) => ValueTask.FromResult<LocalAcceptorBallots?>(new(floor, Ballot.Zero)));
+        await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(3), Options("fast"), inspection);
+        var result = await service.CompareExchangeAsync("key", null, Payload).AsTask().WaitAsync(Watchdog);
+        Assert.Equal(new RegisterValue(Payload, Revision(1)), result.Current);
+        Assert.Equal(1, inspection.Calls);
+        Assert.Null(service.LastInspectionFailure);
+        Assert.All(peers, peer =>
+        {
+            var prepared = Assert.Single(peer.Prepares).Request.Ballot;
+            Assert.True(prepared > floor);
+            Assert.Equal(new Ballot(21, 0), prepared);
+            Assert.Equal(prepared, Assert.Single(peer.Accepts).Request.Ballot);
+        });
+    }
+
+    public enum CorruptBallots { ProviderError, ZeroPromise, NegativePromise, NegativeProposer, MalformedAcceptedZero, NegativeAccepted }
+
+    [Theory]
+    [InlineData(CorruptBallots.ProviderError)]
+    [InlineData(CorruptBallots.ZeroPromise)]
+    [InlineData(CorruptBallots.NegativePromise)]
+    [InlineData(CorruptBallots.NegativeProposer)]
+    [InlineData(CorruptBallots.MalformedAcceptedZero)]
+    [InlineData(CorruptBallots.NegativeAccepted)]
+    public async Task CorruptBallotInspectionFailsWithoutProtocolFallback(CorruptBallots scenario)
+    {
+        var peers = Peers();
+        var inspection = new BallotInspector((_, _) => scenario switch
+        {
+            CorruptBallots.ProviderError => ValueTask.FromException<LocalAcceptorBallots?>(new InvalidDataException("corrupt local store")),
+            CorruptBallots.ZeroPromise => ValueTask.FromResult<LocalAcceptorBallots?>(new(Ballot.Zero, Ballot.Zero)),
+            CorruptBallots.NegativePromise => ValueTask.FromResult<LocalAcceptorBallots?>(new(new(-1, 1), Ballot.Zero)),
+            CorruptBallots.NegativeProposer => ValueTask.FromResult<LocalAcceptorBallots?>(new(new(1, -1), Ballot.Zero)),
+            CorruptBallots.MalformedAcceptedZero => ValueTask.FromResult<LocalAcceptorBallots?>(new(new(1, 1), new(0, 1))),
+            _ => ValueTask.FromResult<LocalAcceptorBallots?>(new(new(2, 1), new(-1, 1))),
+        });
+        await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(3), Options("fast"), inspection);
+        await Assert.ThrowsAsync<InvalidDataException>(() => service.CompareExchangeAsync("key", null, Payload).AsTask());
+        Assert.Null(service.LastInspectionFailure);
+        Assert.All(peers, peer =>
+        {
+            Assert.Empty(peer.Prepares);
+            Assert.Empty(peer.Accepts);
+            Assert.Null(peer.Inner.Snapshot("key"));
+        });
+    }
+
+    [Fact]
+    public async Task BallotInspectionAcceptsIndependentAcceptedFloorAboveEarlierPromise()
+    {
+        var peers = Peers();
+        foreach (var peer in peers)
+            Assert.True((await peer.Inner.AcceptAsync("key", new(new(5, 0), EnvelopeV2(1, Payload), Ballot.Zero))).IsAccepted);
+        var state = await peers[0].Inner.InspectBallotsAsync("key");
+        Assert.Equal(Ballot.InitialFast(), state!.PromisedBallot);
+        Assert.Equal(new Ballot(5, 0), state.AcceptedBallot);
+        await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(3), Options("fast"), peers[0].Inner);
+
+        var result = await service.CompareExchangeAsync("key", Revision(1), ByteString.Empty);
+
+        Assert.Equal(CompareExchangeStatus.Applied, result.Status);
+        Assert.Equal(new RegisterValue(ByteString.Empty, Revision(2)), result.Current);
+        Assert.Null(service.LastInspectionFailure);
+        Assert.All(peers, peer => Assert.True(Assert.Single(peer.Prepares).Request.Ballot > new Ballot(5, 0)));
+    }
+
+    [Fact]
+    public async Task BallotInspectionBudgetExpiresWithoutAwaitingIgnoringProvider()
+    {
+        var peers = Peers();
+        var clock = new ManualTime();
+        var underlying = new TaskCompletionSource<LocalAcceptorBallots?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var inspection = new BallotInspector((_, _) => new(underlying.Task));
+        await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(3), Options("fast", clock), inspection);
+        var writing = service.CompareExchangeAsync("key", null, Payload).AsTask();
+        try
+        {
+            await clock.WaitForDelayAsync(TimeSpan.FromSeconds(1));
+            clock.Advance(TimeSpan.FromSeconds(1) - TimeSpan.FromTicks(1));
+            Assert.False(writing.IsCompleted);
+            Assert.All(peers, peer => Assert.Empty(peer.Accepts));
+            clock.Advance(TimeSpan.FromTicks(1));
+            var result = await writing.WaitAsync(Watchdog);
+            Assert.Equal(new RegisterValue(Payload, Revision(1)), result.Current);
+            Assert.IsType<TimeoutException>(service.LastInspectionFailure);
+            Assert.False(underlying.Task.IsCompleted);
+            Assert.All(peers, peer =>
+            {
+                var prepared = Assert.Single(peer.Prepares).Request.Ballot;
+                Assert.True(prepared.IsClassicRoundBallot);
+                Assert.Equal(prepared, Assert.Single(peer.Accepts).Request.Ballot);
+            });
+        }
+        finally { underlying.TrySetResult(new(new(99, 7), Ballot.Zero)); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CancelledOrExpiredOperationCannotResumeAfterIgnoringBallotInspection(bool deadline)
+    {
+        var peers = Peers();
+        var clock = new ManualTime();
+        var underlying = new TaskCompletionSource<LocalAcceptorBallots?>();
+        using var cancellation = new CancellationTokenSource();
+        var inspection = new BallotInspector((_, _) => new(underlying.Task));
+        await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(3), Options("fast", clock), inspection);
+        var writing = service.CompareExchangeAsync("key", null, Payload, cancellation.Token).AsTask();
+        try
+        {
+            await clock.WaitForDelayAsync(TimeSpan.FromSeconds(1));
+            if (deadline)
+            {
+                clock.Advance(TimeSpan.FromSeconds(5));
+                await Assert.ThrowsAsync<RegisterUnavailableException>(() => writing.WaitAsync(Watchdog));
+            }
+            else
+            {
+                cancellation.Cancel();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => writing.WaitAsync(Watchdog));
+            }
+            Assert.False(underlying.Task.IsCompleted);
+            underlying.SetResult(new(new(99, 7), Ballot.Zero));
+            Assert.Null(service.LastInspectionFailure);
+            Assert.All(peers, peer =>
+            {
+                Assert.Empty(peer.Prepares);
+                Assert.Empty(peer.Accepts);
+                Assert.Null(peer.Inner.Snapshot("key"));
+            });
+        }
+        finally { underlying.TrySetResult(null); }
+    }
+
+    private sealed class BallotInspector(Func<string, CancellationToken, ValueTask<LocalAcceptorBallots?>> read) : ILocalAcceptorInspection
+    {
+        public int Calls { get; private set; }
+        public ValueTask<LocalAcceptorBallots?> InspectBallotsAsync(string key, CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            return read(key, cancellationToken);
+        }
+        public ValueTask<LocalAcceptorState?> InspectAsync(string key, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("Preflight must not fetch accepted payloads.");
+        public ValueTask<LocalAcceptorPage> InspectKeysAsync(string prefix = "", string? afterKey = null, int limit = 100, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("Preflight must not enumerate local state.");
+    }
+
+    private sealed class InspectionDbException() : System.Data.Common.DbException("local database unavailable");
+
+    public enum UnconfirmedAck { Withheld, Rejected, Failed }
+
+    [Theory]
+    [InlineData(UnconfirmedAck.Withheld)]
+    [InlineData(UnconfirmedAck.Rejected)]
+    [InlineData(UnconfirmedAck.Failed)]
+    public async Task CommitAcknowledgementsExcludeDispatchedButUnconfirmedPeers(UnconfirmedAck scenario)
+    {
+        var peers = Peers();
+        using var held = new Gate();
+        peers[2].Accept = async (key, request, token) =>
+        {
+            if (scenario == UnconfirmedAck.Rejected)
+                return FastCASPaxos.Protocol.AcceptorAcceptResult.Rejected(new(99, 7));
+            if (scenario == UnconfirmedAck.Failed) throw new IOException("reply unavailable");
+            var accepted = await peers[2].Inner.AcceptAsync(key, request, token);
+            await held.WaitAsync();
+            return accepted;
+        };
+        await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(3), Options("classic"));
+        var commits = new ConcurrentQueue<RegisterCommit>();
+        service.Committed += commits.Enqueue;
+        try
+        {
+            var result = await service.CompareExchangeAsync("key", null, Payload).AsTask().WaitAsync(Watchdog);
+            Assert.Equal(CompareExchangeStatus.Applied, result.Status);
+            var commit = Assert.Single(commits);
+            Assert.Equal(["peer-0", "peer-1"], commit.AcknowledgedPeers.ToArray());
+            Assert.Single(peers[2].Accepts); // A send is not an acknowledgement.
+            foreach (var peer in peers.Take(2))
+            {
+                Assert.Equal(commit.AcceptedBallot, peer.Accepts.Last().Request.Ballot);
+                Assert.Equal(commit.Value, peer.Accepts.Last().Request.Value);
+            }
+            if (scenario == UnconfirmedAck.Withheld)
+            {
+                await held.Arrived;
+                Assert.Equal(commit.Value, peers[2].Inner.Snapshot("key")!.AcceptedValue);
+                Assert.False(held.IsReleased); // Even durable bytes do not imply a received ACK.
+            }
+        }
+        finally { held.Release(); }
+    }
+
+    [Fact]
+    public async Task CommitAcknowledgementsBelongOnlyToFinalAcceptedBallotAndValue()
+    {
+        var peers = Peers();
+        var winner = EnvelopeV2(1, Payload);
+        foreach (var peer in peers.Skip(1))
+            Assert.True((await peer.Inner.AcceptAsync("key", new(new(10, 7), winner, new(11, 7)))).IsAccepted);
+        using var held = new Gate();
+        peers[0].Accept = async (key, request, token) =>
+        {
+            var result = await peers[0].Inner.AcceptAsync(key, request, token);
+            if (request.Ballot.IsClassicRoundBallot) await held.WaitAsync();
+            return result;
+        };
+        await using var service = new ReplicatedRegisterService(Routes(peers), new TestBallots(3), Options("fast"));
+        var commits = new ConcurrentQueue<RegisterCommit>();
+        service.Committed += commits.Enqueue;
+        try
+        {
+            var result = await service.CompareExchangeAsync("key", null, ByteString.Empty).AsTask().WaitAsync(Watchdog);
+            Assert.Equal(CompareExchangeStatus.Mismatch, result.Status);
+            Assert.Equal(new RegisterValue(Payload, Revision(1)), result.Current);
+            var commit = Assert.Single(commits);
+            Assert.True(commit.AcceptedBallot.IsClassicRoundBallot);
+            Assert.Equal(winner, commit.Value);
+            Assert.Equal(Ballot.Zero, commit.PreparedBallot); // Two ACKs cannot certify the requested fast successor.
+            Assert.Equal(["peer-1", "peer-2"], commit.AcknowledgedPeers.ToArray());
+            Assert.NotEqual(winner, peers[0].Accepts.First().Request.Value);
+            Assert.True(peers[0].Accepts.First().Request.Ballot.IsFastRoundBallot);
+            await held.Arrived;
+            Assert.False(held.IsReleased);
+        }
+        finally { held.Release(); }
+    }
 
     private static void AssertOneAcceptRound(ControlledPeer[] peers, (int Reads, int Prepares, int Accepts)[] before)
     {

@@ -62,6 +62,7 @@ internal sealed class ContractCallInvoker(
             Wire.ReadRequest value => await register!.Read(value, context),
             Wire.CompareExchangeRequest value => await register!.CompareExchange(value, context),
             Wire.RegisterCommit value => await learner!.Learn(value, context),
+            Wire.RegisterCommitDigest value => await learner!.LearnDigest(value, context),
             Wire.ListKeysRequest value when method.ServiceName.EndsWith(".Acceptor", StringComparison.Ordinal) =>
                 await acceptor!.ListKeys(value, context),
             Wire.ListKeysRequest value => await register!.ListKeys(value, context),

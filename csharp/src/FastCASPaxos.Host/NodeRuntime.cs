@@ -10,7 +10,7 @@ using System.Threading.Channels;
 namespace FastCASPaxos.Host;
 
 /// <summary>Owns one durable acceptor, one proposer allocator, and its fixed-peer register service.</summary>
-public sealed partial class NodeRuntime : IRepairScheduler, IRegisterLearner, IAsyncDisposable
+public sealed partial class NodeRuntime : IRepairScheduler, IRegisterLearner, IRegisterDigestLearner, IAsyncDisposable
 {
     private readonly List<GrpcChannel> _channels = [];
     private SqliteProposerBallotSource? _ballots;
@@ -46,11 +46,13 @@ public sealed partial class NodeRuntime : IRepairScheduler, IRegisterLearner, IA
     private EpochAcceptor? _epochAcceptor;
     private RegisterGeneration? _registerGeneration;
     private ImmutableArray<AcceptorPeer> _peers;
+    private readonly BoundedReadExecutor _localReads;
 
     private int _eventStreams;
     private NodeRuntime(NodeOptions options, TimeProvider timeProvider)
     {
         _options = options;
+        _localReads = new(options.Capacity);
         _clock = timeProvider;
         _repairInterval = options.RepairInterval;
         _repairRetryInterval = options.RepairRetryInterval;
@@ -148,11 +150,7 @@ public sealed partial class NodeRuntime : IRepairScheduler, IRegisterLearner, IA
                 digests = new GrpcAcceptorDigestSource(invoker, options.PeerCallTimeout, _clock);
                 _remoteSchedulers.Add(new GrpcRepairScheduler(invoker, options.PeerCallTimeout, _clock));
                 _learners.Add(new(peer.Id, new GrpcRegisterLearner(invoker, options.PeerCallTimeout, _clock),
-                    Channel.CreateBounded<LearningNotification>(new BoundedChannelOptions(options.Capacity)
-                    {
-                        SingleReader = true,
-                        FullMode = BoundedChannelFullMode.Wait,
-                    })));
+                    new LatestLearningQueue(options.Capacity)));
             }
             peers.Add(new(peer.Id, new ObservedAcceptor(acceptor, Diagnostics,
                 peer.Id == options.AcceptorId ? "local" : "outbound", peer.Id)));
@@ -162,7 +160,8 @@ public sealed partial class NodeRuntime : IRepairScheduler, IRegisterLearner, IA
         }
         _peers = peers.MoveToImmutable();
         OpenRegisters(epoch, _admin!.State.Settings);
-        foreach (var peer in _learners) peer.Worker = BroadcastCommitsAsync(peer);
+        foreach (var peer in _learners)
+            peer.Worker = Task.WhenAll(Enumerable.Range(0, options.Capacity).Select(_ => BroadcastCommitsAsync(peer)));
         _repair = new(options.AcceptorId, repairPeers.MoveToImmutable(), _ballots!, new()
         {
             TargetReplicas = options.TargetReplicationFactor,
@@ -176,7 +175,7 @@ public sealed partial class NodeRuntime : IRepairScheduler, IRegisterLearner, IA
 
     private void OpenRegisters(string epoch, ProposerSettings settings)
     {
-        _registers = new(_peers, _ballots!, _options.RegisterOptions(_clock, settings), _acceptor, Diagnostics);
+        _registers = new(_peers, _ballots!, _options.RegisterOptions(_clock, settings), _acceptor, Diagnostics, _localReads);
         _registers.Committed += QueueCommit;
         var observed = new ObservedRegisterService(_registers, Diagnostics);
         Volatile.Write(ref _registerGeneration, new(epoch, observed, _registers));
@@ -204,12 +203,13 @@ public sealed partial class NodeRuntime : IRepairScheduler, IRegisterLearner, IA
 
     private void QueueCommit(RegisterCommit commit)
     {
-        var notification = new LearningNotification(commit, DiagnosticContext.Current?.OperationId);
+        var notification = new LearningNotification(commit,
+            new(commit.AcceptedBallot, AcceptedDigest.Hash(commit.Value)), DiagnosticContext.Current?.OperationId);
         foreach (var peer in _learners)
         {
-            if (!peer.Queue.Writer.TryWrite(notification))
+            if (!peer.Queue.TryWrite(notification))
                 ObserveLearning(commit, "outbound", "fault-observed", peer.Id, Guid.NewGuid().ToString("N"),
-                    "Commit learning queue is full; the peer will recover through a quorum.");
+                    "Commit learning key capacity is full; the peer will recover through a quorum.");
         }
     }
 
@@ -218,23 +218,41 @@ public sealed partial class NodeRuntime : IRepairScheduler, IRegisterLearner, IA
         var token = _learningStopping.Token;
         try
         {
-            await foreach (var notification in peer.Queue.Reader.ReadAllAsync(token).ConfigureAwait(false))
+            while (true)
             {
+                var notification = await peer.Queue.ReadAsync(token).ConfigureAwait(false);
                 var commit = notification.Commit;
                 var callId = Guid.NewGuid().ToString("N");
                 DiagnosticContext.Current = new(Diagnostics.NodeId, notification.OperationId, callId);
-                ObserveLearning(commit, "outbound", "request-initiated", peer.Id, callId);
+                var compact = commit.AcknowledgedPeers.Contains(peer.Id)
+                    ? new RegisterCommitDigest(commit.Key, notification.Digest, commit.PreparedBallot) : null;
+                if (compact is null) ObserveLearning(commit, "outbound", "request-initiated", peer.Id, callId);
+                else ObserveCompactLearning(compact, "outbound", "request-initiated", peer.Id, callId);
                 try
                 {
-                    await peer.Client.LearnAsync(commit, token).ConfigureAwait(false);
-                    ObserveLearning(commit, "outbound", "response-observed", peer.Id, callId);
+                    if (compact is null)
+                    {
+                        await peer.Client.LearnAsync(commit, token).ConfigureAwait(false);
+                        ObserveLearning(commit, "outbound", "response-observed", peer.Id, callId);
+                    }
+                    else
+                    {
+                        var learned = await peer.Client.LearnDigestAsync(compact, token).ConfigureAwait(false);
+                        ObserveCompactLearning(compact, "outbound", "response-observed", peer.Id, callId,
+                            learned ? "committed" : "stale");
+                    }
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
                 catch (Exception error)
                 {
-                    ObserveLearning(commit, "outbound", "fault-observed", peer.Id, callId, error.GetType().Name);
+                    if (compact is null) ObserveLearning(commit, "outbound", "fault-observed", peer.Id, callId, error.GetType().Name);
+                    else ObserveCompactLearning(compact, "outbound", "fault-observed", peer.Id, callId, error: error.GetType().Name);
                 }
-                finally { DiagnosticContext.Current = null; }
+                finally
+                {
+                    DiagnosticContext.Current = null;
+                    peer.Queue.Complete(commit.Key);
+                }
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
@@ -462,12 +480,6 @@ public sealed partial class NodeRuntime : IRepairScheduler, IRegisterLearner, IA
         if (errors.Count > 0) throw new AggregateException("Node shutdown failed.", errors);
     }
 
-    private readonly record struct LearningNotification(RegisterCommit Commit, string? OperationId);
-
-    private sealed record LearningPeer(string Id, GrpcRegisterLearner Client, Channel<LearningNotification> Queue)
-    {
-        public Task Worker { get; set; } = Task.CompletedTask;
-    }
 }
 
 public sealed record RepairObservation(

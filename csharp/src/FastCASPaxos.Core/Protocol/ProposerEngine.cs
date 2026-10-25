@@ -142,6 +142,20 @@ public abstract class ProposerEngine<TValue, TRoute>
         }
     }
 
+    /// <summary>Establishes the value through a fresh owned classic prepare after an unavailable local hint.</summary>
+    public void StartProposalWithRecovery(IOperation<TValue> operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        if (CurrentOperation is not null) throw new InvalidOperationException("Recovery requires an idle proposer.");
+        CurrentOperation = operation;
+        _runtime.Diagnostics.OnProposalStarted(this, ProposerId, Ballot);
+        var floor = Ballot.Max(Ballot, PreparedBallot ?? Ballot.Zero);
+        ClearAcceptState();
+        PreparedBallot = null;
+        Ballot = ReserveBallot(floor.IsZero ? Ballot.InitialClassic(ProposerId) : floor.NextRound(ProposerId));
+        SendPrepareForCurrentBallot();
+    }
+
     public void LearnCommittedValue(Ballot acceptedBallot, TValue value, Ballot preparedBallot = default)
     {
         if (acceptedBallot.IsZero)
