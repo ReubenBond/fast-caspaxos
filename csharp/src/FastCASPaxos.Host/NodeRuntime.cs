@@ -10,7 +10,7 @@ using System.Threading.Channels;
 namespace FastCASPaxos.Host;
 
 /// <summary>Owns one durable acceptor, one proposer allocator, and its fixed-peer register service.</summary>
-public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
+public sealed class NodeRuntime : IRepairScheduler, IRegisterLearner, IAsyncDisposable
 {
     private readonly List<GrpcChannel> _channels = [];
     private SqliteProposerBallotSource? _ballots;
@@ -21,6 +21,8 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
     private QuiescingAcceptor? _admission;
     private DurabilityRepair? _repair;
     private readonly List<GrpcRepairScheduler> _remoteSchedulers = [];
+    private readonly List<LearningPeer> _learners = [];
+    private readonly CancellationTokenSource _learningStopping = new();
     private readonly CancellationTokenSource _maintenanceStopping = new();
     private readonly CancellationTokenSource _shutdownAborted = new();
     private readonly Channel<bool> _staged = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
@@ -61,6 +63,7 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
 
     public IKeyedAcceptor Acceptor => _observedAcceptor ?? throw new InvalidOperationException("The node is not open.");
     public IRegisterService Registers => _observedRegisters ?? throw new InvalidOperationException("The node is not open.");
+    public IRegisterLearner Learner => this;
     public ILocalAcceptorInspection Inspection => _acceptor ?? throw new InvalidOperationException("The node is not open.");
     public IAcceptorDigestSource Digests => _acceptor ?? throw new InvalidOperationException("The node is not open.");
     private DurabilityRepair Repair => _repair ?? throw new InvalidOperationException("The node is not open.");
@@ -115,6 +118,12 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
                     acceptor = new GrpcKeyedAcceptor(invoker, options.PeerCallTimeout, clock);
                     digests = new GrpcAcceptorDigestSource(invoker, options.PeerCallTimeout, clock);
                     runtime._remoteSchedulers.Add(new GrpcRepairScheduler(invoker, options.PeerCallTimeout, clock));
+                    runtime._learners.Add(new(peer.Id, new GrpcRegisterLearner(invoker, options.PeerCallTimeout, clock),
+                        Channel.CreateBounded<RegisterCommit>(new BoundedChannelOptions(options.Capacity)
+                        {
+                            SingleReader = true,
+                            FullMode = BoundedChannelFullMode.Wait,
+                        })));
                 }
                 peers.Add(new AcceptorPeer(peer.Id, new ObservedAcceptor(acceptor, runtime.Diagnostics,
                     peer.Id == options.AcceptorId ? "local" : "outbound", peer.Id)));
@@ -122,7 +131,10 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
                     ? new ObservedAcceptor(runtime._acceptor, runtime.Diagnostics, "local", peer.Id)
                     : peers[^1].Acceptor, digests));
             }
-            runtime._registers = new ReplicatedRegisterService(peers.MoveToImmutable(), runtime._ballots, options.RegisterOptions(clock));
+            runtime._registers = new ReplicatedRegisterService(
+                peers.MoveToImmutable(), runtime._ballots, options.RegisterOptions(clock), runtime._acceptor);
+            runtime._registers.Committed += runtime.QueueCommit;
+            foreach (var peer in runtime._learners) peer.Worker = runtime.BroadcastCommitsAsync(peer);
             runtime._observedRegisters = new ObservedRegisterService(runtime._registers, runtime.Diagnostics);
             runtime._repair = new DurabilityRepair(options.AcceptorId, repairPeers.MoveToImmutable(), runtime._ballots, new()
             {
@@ -142,6 +154,67 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
             throw;
         }
     }
+
+    public void Learn(RegisterCommit commit)
+    {
+        ArgumentNullException.ThrowIfNull(commit);
+        var context = DiagnosticContext.Current;
+        var callId = context?.CallId ?? Guid.NewGuid().ToString("N");
+        ObserveLearning(commit, "inbound", "request-received", context?.NodeId, callId);
+        try
+        {
+            (_registers ?? throw new InvalidOperationException("The node is not open.")).Learn(commit);
+            ObserveLearning(commit, "inbound", "response-produced", context?.NodeId, callId);
+        }
+        catch (Exception error)
+        {
+            ObserveLearning(commit, "inbound", "fault-observed", context?.NodeId, callId, error.GetType().Name);
+            throw;
+        }
+    }
+
+    private void QueueCommit(RegisterCommit commit)
+    {
+        foreach (var peer in _learners)
+        {
+            if (!peer.Queue.Writer.TryWrite(commit))
+                ObserveLearning(commit, "outbound", "fault-observed", peer.Id, Guid.NewGuid().ToString("N"),
+                    "Commit learning queue is full; the peer will recover through a quorum.");
+        }
+    }
+
+    private async Task BroadcastCommitsAsync(LearningPeer peer)
+    {
+        var token = _learningStopping.Token;
+        try
+        {
+            await foreach (var commit in peer.Queue.Reader.ReadAllAsync(token).ConfigureAwait(false))
+            {
+                var callId = Guid.NewGuid().ToString("N");
+                DiagnosticContext.Current = new(Diagnostics.NodeId, null, callId);
+                ObserveLearning(commit, "outbound", "request-initiated", peer.Id, callId);
+                try
+                {
+                    await peer.Client.LearnAsync(commit, token).ConfigureAwait(false);
+                    ObserveLearning(commit, "outbound", "response-observed", peer.Id, callId);
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+                catch (Exception error)
+                {
+                    ObserveLearning(commit, "outbound", "fault-observed", peer.Id, callId, error.GetType().Name);
+                }
+                finally { DiagnosticContext.Current = null; }
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+    }
+
+    private void ObserveLearning(RegisterCommit commit, string direction, string phase, string? peer, string callId,
+        string? error = null) =>
+        Diagnostics.Publish("protocol", new ProtocolObservation("learn", direction, phase, peer, callId,
+            DiagnosticContext.Current?.OperationId, KeyPreview.From(commit.Key), commit.AcceptedBallot,
+            commit.PreparedBallot, error is null ? "committed" : null, AcceptedBallot: commit.AcceptedBallot,
+            Value: PayloadPreview.From(commit.Value), Error: error));
 
     internal bool TryOpenEventStream()
     {
@@ -237,6 +310,8 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
         {
             if (_periodic is not null) await _periodic.WaitAsync(cancellationToken).ConfigureAwait(false);
             await Task.WhenAll(admitted, registers).WaitAsync(cancellationToken).ConfigureAwait(false);
+            _learningStopping.Cancel();
+            await Task.WhenAll(_learners.Select(peer => peer.Worker)).WaitAsync(cancellationToken).ConfigureAwait(false);
             if (!departing)
             {
                 PublishRepair(new("complete", false, Repair.TargetReplicas));
@@ -288,6 +363,7 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
         List<Exception> errors = [];
         _shutdownAborted.Cancel();
         _maintenanceStopping.Cancel();
+        _learningStopping.Cancel();
         if (_shutdown is not null)
         {
             try { await _shutdown.ConfigureAwait(false); }
@@ -304,6 +380,8 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
             try { await _registers.DisposeAsync().ConfigureAwait(false); }
             catch (Exception error) { errors.Add(error); }
         }
+        try { await Task.WhenAll(_learners.Select(peer => peer.Worker)).ConfigureAwait(false); }
+        catch (Exception error) { errors.Add(error); }
         _repair?.Dispose();
         foreach (var channel in _channels)
         {
@@ -322,6 +400,11 @@ public sealed class NodeRuntime : IRepairScheduler, IAsyncDisposable
         }
         Diagnostics.Dispose();
         if (errors.Count > 0) throw new AggregateException("Node shutdown failed.", errors);
+    }
+
+    private sealed record LearningPeer(string Id, GrpcRegisterLearner Client, Channel<RegisterCommit> Queue)
+    {
+        public Task Worker { get; set; } = Task.CompletedTask;
     }
 }
 

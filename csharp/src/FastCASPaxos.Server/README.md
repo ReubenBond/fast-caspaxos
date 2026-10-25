@@ -131,10 +131,21 @@ The default mode is **adaptive**, combining shared fast ballots with leader-owne
 classic recovery and prepared leader rounds. Uncontended creation can use the
 initial fast ballot directly. Successful accepts piggyback the next prepare;
 subsequent writes reuse a quorum-confirmed promise in a single accept round.
+The service publishes `Committed` conclusions containing the accepted ballot,
+complete envelope, and the next promise actually confirmed by a quorum.
+Trusted cluster peers deliver these conclusions through `IRegisterLearner.Learn`.
+Learning uses the same bounded key cache and applies pending conclusions under
+the key's operation gate. Fast-mode writers can consequently alternate between
+nodes using the shared prepared ballot; leader promises remain proposer-owned.
+Quorum reads also seed the committed value and any matching quorum-confirmed
+next promise.
 Fast rounds use the fast quorum; leader rounds use a majority. Contention or
 timeouts trigger classic recovery, and successful leader rounds reduce conflict
-debt so the policy can reopen fast mode. Cold existing keys and inconclusive
-prepared state use prepare-based recovery. Explicit classic, fast, leader, and
+debt so the policy can reopen fast mode. Before a write, an optional local
+`ILocalAcceptorInspection` advances the proposer's ballot floor using both
+durable accepted and promised ballots. A locally permitted, quorum-confirmed
+prepared ballot remains reusable. Cold existing keys and inconclusive
+prepared state start prepare above that floor. Explicit classic, fast, leader, and
 fast+leader policies remain available.
 
 Idle keys retain their engine, accepted base, prepared promise, and adaptive
@@ -143,6 +154,13 @@ queued keys retain their state until their callers finish. Eviction releases the
 engine; the next access establishes a fresh base. Quorum reads always gather fresh
 acceptor observations. Cached state permits speculation only through the core
 protocol's prepared-ballot checks and quorum acknowledgements.
+
+Hosts deliver commit learning asynchronously, outside the write's accept RTT.
+A receiver with a delivered value and usable prepared promise can issue a
+one-RTT update. Delayed learning, eviction, restart, or an intervening higher
+promise causes quorum recovery from the locally known ballot floor.
+Local accepted bytes alone supply a candidate for recovery; quorum evidence
+establishes the value used for a prepare-free operation.
 
 ## Quorum-backed key listing
 

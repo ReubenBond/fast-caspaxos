@@ -10,13 +10,14 @@ namespace FastCASPaxos.Server;
 /// A bounded, transport-independent client and server implementation over fixed acceptor membership.
 /// The caller owns the peer endpoints and durable ballot source.
 /// </summary>
-public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposable
+public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearner, IAsyncDisposable
 {
     private readonly ImmutableArray<AcceptorPeer> _peers;
     private readonly ImmutableArray<string> _peerIds;
     private readonly SemaphoreSlim[] _peerSlots;
     private readonly IProposerBallotSource _ballots;
     private readonly RegisterServiceOptions _options;
+    private readonly ILocalAcceptorInspection? _localAcceptor;
     private readonly object _gate = new();
     private readonly Dictionary<string, KeyState> _keys = new(StringComparer.Ordinal);
     private readonly LinkedList<string> _idleKeys = new();
@@ -27,8 +28,12 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
     private Ballot _requestIncarnation;
     private long _requestSequence;
 
+    /// <summary>Publishes quorum conclusions. Subscribers enqueue delivery and return synchronously.</summary>
+    public event Action<RegisterCommit>? Committed;
+
     public ReplicatedRegisterService(
-        ImmutableArray<AcceptorPeer> peers, IProposerBallotSource ballots, RegisterServiceOptions? options = null)
+        ImmutableArray<AcceptorPeer> peers, IProposerBallotSource ballots, RegisterServiceOptions? options = null,
+        ILocalAcceptorInspection? localAcceptor = null)
     {
         if (peers.IsDefault) throw new ArgumentNullException(nameof(peers));
         ArgumentNullException.ThrowIfNull(ballots);
@@ -48,6 +53,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
 
         _ballots = ballots;
         _options = options ?? new RegisterServiceOptions();
+        _localAcceptor = localAcceptor;
         ArgumentNullException.ThrowIfNull(_options.Mode);
         ArgumentNullException.ThrowIfNull(_options.TimeProvider);
         _options.Mode.Validate();
@@ -59,6 +65,44 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
             throw new ArgumentOutOfRangeException(nameof(options), "RetryBackoff must be positive and support timer delays.");
         }
         _peerSlots = _peers.Select(_ => new SemaphoreSlim(_options.Capacity)).ToArray();
+    }
+
+    public void Learn(RegisterCommit commit)
+    {
+        ArgumentNullException.ThrowIfNull(commit);
+        ArgumentNullException.ThrowIfNull(commit.Key);
+        if (commit.AcceptedBallot.Round <= 0 || commit.AcceptedBallot.Proposer < 0
+            || (!commit.PreparedBallot.IsZero && (commit.PreparedBallot <= commit.AcceptedBallot
+                || commit.PreparedBallot.Proposer < 0)))
+            throw new ArgumentException("A commit requires an accepted ballot and an optional higher prepared ballot.", nameof(commit));
+        RegisterEncoding.Decode(commit.Value);
+
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!_keys.TryGetValue(commit.Key, out var state))
+            {
+                state = new KeyState(NewEngine());
+                _keys.Add(commit.Key, state);
+            }
+            if (state.Learned is { } pending)
+            {
+                if (pending.AcceptedBallot > commit.AcceptedBallot) return;
+                if (pending.AcceptedBallot == commit.AcceptedBallot)
+                {
+                    if (pending.Value != commit.Value)
+                        throw new InvalidDataException("A committed ballot must identify one value.");
+                    if (pending.PreparedBallot >= commit.PreparedBallot) return;
+                }
+            }
+            state.Learned = commit;
+            if (state.Users == 0)
+            {
+                if (state.Idle is { } idle) _idleKeys.Remove(idle);
+                state.Idle = _idleKeys.AddLast(commit.Key);
+                TrimIdleKeys();
+            }
+        }
     }
 
     public async ValueTask<RegisterValue> ReadAsync(string key, CancellationToken cancellationToken = default)
@@ -163,13 +207,23 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
             await state.Gate.WaitAsync(call.Token).ConfigureAwait(false);
             acquired = true;
             call.Token.ThrowIfCancellationRequested();
+            RegisterCommit? learned;
+            lock (_gate)
+            {
+                learned = state.Learned;
+                state.Learned = null;
+            }
+            if (learned is not null)
+                state.Engine.LearnCommittedValue(learned.AcceptedBallot, learned.Value, learned.PreparedBallot);
             if (operation.Payload is null
                 && await TryReadQuorumAsync(key, state.Engine, call).ConfigureAwait(false) is { } observed)
             {
                 return observed;
             }
             var engine = state.Engine;
-            engine.Start(operation);
+            var local = _localAcceptor is not null
+                ? await _localAcceptor.InspectAsync(key, call.Token).ConfigureAwait(false) : null;
+            engine.Start(operation, local);
             var retries = 0;
             while (engine.Result is null)
             {
@@ -183,6 +237,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
             }
             var current = RegisterEncoding.Decode(engine.Result.Value);
             operation.Complete(engine.Result.Value, current.Version);
+            Committed?.Invoke(new(key, engine.Ballot, engine.Result.Value, engine.PreparedBallot ?? Ballot.Zero));
             return current;
         }
         catch (OperationCanceledException) when (call.Token.IsCancellationRequested)
@@ -211,17 +266,20 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
                     else
                     {
                         state.Idle = _idleKeys.AddLast(key);
-                        if (_idleKeys.Count > _options.Capacity)
-                        {
-                            var oldest = _idleKeys.First!;
-                            _idleKeys.RemoveFirst();
-                            _keys.Remove(oldest.Value, out var evicted);
-                            evicted!.Dispose();
-                        }
+                        TrimIdleKeys();
                     }
                 }
             }
         }
+    }
+
+    private void TrimIdleKeys()
+    {
+        if (_idleKeys.Count <= _options.Capacity) return;
+        var oldest = _idleKeys.First!;
+        _idleKeys.RemoveFirst();
+        _keys.Remove(oldest.Value, out var evicted);
+        evicted!.Dispose();
     }
 
     private async Task<RegisterValue?> TryReadQuorumAsync(string key, Engine engine, Call call)
@@ -231,6 +289,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
         var pending = Enumerable.Range(0, _peers.Length).Select(index =>
             InvokePeerAsync(index, (peer, token) => peer.ReadAsync(key, cancellationToken: token), phase.Token)).ToList();
         var matching = new Dictionary<(Ballot Ballot, ByteString Value), int>();
+        var promises = new Dictionary<(Ballot Ballot, ByteString Value, Ballot Promised), int>();
         var missing = 0;
         try
         {
@@ -263,8 +322,18 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
                         var candidate = (accepted.AcceptedBallot, accepted.AcceptedValue);
                         matching.TryGetValue(candidate, out var count);
                         matching[candidate] = ++count;
+                        var promise = (accepted.AcceptedBallot, accepted.AcceptedValue, accepted.PromisedBallot);
+                        promises.TryGetValue(promise, out var promised);
+                        promises[promise] = ++promised;
                         // A fast ballot can contain competing values, so its certificate needs the fast quorum.
-                        if (engine.HasQuorum(accepted.AcceptedBallot, count)) return value;
+                        if (engine.HasQuorum(accepted.AcceptedBallot, count))
+                        {
+                            var prepared = accepted.PromisedBallot > accepted.AcceptedBallot
+                                && engine.HasQuorum(accepted.PromisedBallot, promised)
+                                    ? accepted.PromisedBallot : Ballot.Zero;
+                            engine.LearnCommittedValue(accepted.AcceptedBallot, accepted.AcceptedValue, prepared);
+                            return value;
+                        }
                         break;
                     case AcceptorUnchanged:
                         throw new InvalidDataException("An unconditional acceptor read must return its accepted state.");
@@ -517,6 +586,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
     private sealed class KeyState(Engine engine) : IDisposable
     {
         public Engine Engine = engine;
+        public RegisterCommit? Learned;
         public readonly SemaphoreSlim Gate = new(1);
         public int Users;
         public LinkedListNode<string>? Idle;
@@ -582,10 +652,11 @@ public sealed class ReplicatedRegisterService : IRegisterService, IAsyncDisposab
         public ByteString? Result { get; private set; }
         public Engine(IProposerBallotSource source, ImmutableArray<string> peers, ProposerModePolicy mode)
             : base(new ProposerRuntime(), RegisterEncoding.Absent, peers, mode) => _source = source;
-        public void Start(RegisterOperation operation)
+        public void Start(RegisterOperation operation, LocalAcceptorState? local)
         {
             Result = null;
-            StartProposal(operation);
+            if (local is null) StartProposal(operation);
+            else StartProposal(operation, local.AcceptedBallot, local.PromisedBallot);
         }
         protected override Ballot ReserveBallot(Ballot candidate) =>
             candidate.IsFastRoundBallot ? candidate : _source.Reserve(candidate.Round);

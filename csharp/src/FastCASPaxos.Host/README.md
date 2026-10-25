@@ -12,6 +12,15 @@ by the normal host build and publish path. Its workbench combines conditional
 register editing with direct per-node streams, local snapshots, and message
 diagnostics. Building the host with console assets requires Node.js 24+ and npm.
 
+Each host distributes quorum-committed register values and quorum-confirmed
+next-ballot promises over the `RegisterLearner` gRPC service. Independent bounded
+per-peer queues deliver learning asynchronously, so an unavailable peer leaves
+healthy peers' delivery independent. Queue overflow and delivery failures appear
+as `learn` protocol faults. Delivered learning enables one-accept-RTT fast writes
+when switching nodes; delayed learning starts recovery above the receiving node's
+durable local ballot floor. Protect the learning RPC with the same trusted-cluster
+access controls as the acceptor protocol.
+
 ## Configuration and access
 
 Every member in the authoritative `FastCASPaxos:Peers` array has:
@@ -182,7 +191,7 @@ observations advance it. Consumers use `addEventListener` for the named events.
 
 | Event | `data` fields and semantics |
 | --- | --- |
-| `protocol` | `operation` (`read`/`prepare`/`accept`), `direction` (`local`/`outbound`/`inbound`), `phase`, nullable `peerId`, `callId`, nullable `operationId`, `key:KeyPreview`, `ballot`, `nextBallot`, nullable `outcome`, `promisedBallot`, `acceptedBallot`, `conflictingBallot`, `value:PayloadPreview`, `error`. |
+| `protocol` | `operation` (`read`/`prepare`/`accept`/`learn`), `direction` (`local`/`outbound`/`inbound`), `phase`, nullable `peerId`, `callId`, nullable `operationId`, `key:KeyPreview`, `ballot`, `nextBallot`, nullable `outcome`, `promisedBallot`, `acceptedBallot`, `conflictingBallot`, `value:PayloadPreview`, `error`. |
 | `operation` | `operation` (`read`/`compare-exchange`/`list`), `operationId`, `key:KeyPreview` (list uses its prefix), `outcome`, nullable `isPresent`, `value:PayloadPreview`, `version` (Base64), and `error`. |
 | `acceptor-state` | `key:KeyPreview`, `promisedBallot`, `acceptedBallot`, nullable `acceptedValue:PayloadPreview` and `register:RegisterPreview`. A transition in a successfully committed local SQLite batch. |
 | `storage` | `status` (`ready`/`failed`/`stopped`), nullable exception-type `error`. |
@@ -197,6 +206,7 @@ and `fault-observed`. A received request has passed transport decoding.
 An initiated request records an attempt at the client boundary; the destination's
 received observation establishes delivery. Read outcomes are `present`/`missing`/
 `unchanged`; prepare and accept outcomes are `promised`/`accepted`/`rejected`.
+Learning reports `committed`, with the accepted ballot and certified next promise.
 Faults include an exception type.
 
 `callId` pairs each invocation and completion. Host gRPC interceptors propagate

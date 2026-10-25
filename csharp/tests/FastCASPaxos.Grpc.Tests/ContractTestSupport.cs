@@ -46,7 +46,8 @@ internal static class ContractTestSupport
 internal sealed class ContractCallInvoker(
     Wire.Acceptor.AcceptorBase? acceptor = null,
     Wire.Register.RegisterBase? register = null,
-    Wire.AcceptorDigests.AcceptorDigestsBase? digests = null) : TestCallInvoker
+    Wire.AcceptorDigests.AcceptorDigestsBase? digests = null,
+    Wire.RegisterLearner.RegisterLearnerBase? learner = null) : TestCallInvoker
 {
     protected override async Task<TResponse> Invoke<TRequest, TResponse>(
         Method<TRequest, TResponse> method, TRequest request, CallOptions options)
@@ -60,6 +61,7 @@ internal sealed class ContractCallInvoker(
             Wire.FetchIfDifferentRequest value => await digests!.FetchIfDifferent(value, context),
             Wire.ReadRequest value => await register!.Read(value, context),
             Wire.CompareExchangeRequest value => await register!.CompareExchange(value, context),
+            Wire.RegisterCommit value => await learner!.Learn(value, context),
             Wire.ListKeysRequest value when method.ServiceName.EndsWith(".Acceptor", StringComparison.Ordinal) =>
                 await acceptor!.ListKeys(value, context),
             Wire.ListKeysRequest value => await register!.ListKeys(value, context),

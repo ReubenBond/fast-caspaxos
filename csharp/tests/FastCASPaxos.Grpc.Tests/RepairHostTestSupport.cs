@@ -26,7 +26,8 @@ internal sealed class RepairEndpoint(WebApplication app, string address) : IAsyn
     public GrpcAcceptorDigestSource Digests => new(Channel.CreateCallInvoker());
 
     public static async Task<RepairEndpoint> StartAsync(
-        IKeyedAcceptor acceptor, IAcceptorDigestSource digests, IRepairScheduler scheduler, NodeRuntime? node = null)
+        IKeyedAcceptor acceptor, IAcceptorDigestSource digests, IRepairScheduler scheduler, NodeRuntime? node = null,
+        IRegisterLearner? learner = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
         builder.Configuration.Sources.Clear();
@@ -37,6 +38,7 @@ internal sealed class RepairEndpoint(WebApplication app, string address) : IAsyn
         builder.Services.AddSingleton(acceptor);
         builder.Services.AddSingleton(digests);
         builder.Services.AddSingleton(scheduler);
+        if (learner is not null) builder.Services.AddSingleton(learner);
         if (node is not null)
         {
             builder.Services.AddSingleton(node);
@@ -46,6 +48,7 @@ internal sealed class RepairEndpoint(WebApplication app, string address) : IAsyn
         app.MapGrpcService<AcceptorGrpcService>();
         app.MapGrpcService<AcceptorDigestGrpcService>();
         app.MapGrpcService<RepairGrpcService>();
+        if (learner is not null) app.MapGrpcService<RegisterLearnerGrpcService>();
         try
         {
             await app.StartAsync().WaitAsync(Watchdog);

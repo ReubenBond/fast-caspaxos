@@ -113,6 +113,27 @@ public abstract class ProposerEngine<TValue, TRoute>
         BeginOperation();
     }
 
+    /// <summary>
+    /// Starts above locally observed ballots, retaining a certified prepared ballot while the
+    /// local acceptor still permits it. Value recovery remains governed by quorum evidence.
+    /// </summary>
+    public void StartProposal(IOperation<TValue> operation, Ballot acceptedBallot, Ballot promisedBallot)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        if (CurrentOperation is not null)
+            throw new InvalidOperationException("A local observation can seed only an idle proposer.");
+
+        if (PreparedBallot is { } prepared && _modePolicy.CanReusePreparedBallot(prepared, ProposerId)
+            && acceptedBallot < prepared && promisedBallot <= prepared)
+        {
+            StartProposal(operation);
+            return;
+        }
+
+        Ballot = Ballot.Max(Ballot, Ballot.Max(acceptedBallot, promisedBallot));
+        StartProposal(operation);
+    }
+
     public void StartCurrentRequest()
     {
         if (CurrentOperation is not null)
@@ -405,7 +426,7 @@ public abstract class ProposerEngine<TValue, TRoute>
         }
 
         if (PreparedBallot is { } reusableBallot
-            && (reusableBallot.IsFastRoundBallot || reusableBallot.Proposer == ProposerId))
+            && _modePolicy.CanReusePreparedBallot(reusableBallot, ProposerId))
         {
             // Reuse the piggybacked promise exactly once, jumping straight into operation execution
             // as if a standalone prepare for that ballot had already succeeded.

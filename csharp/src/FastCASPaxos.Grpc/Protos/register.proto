@@ -24,6 +24,16 @@ service Repair {
   rpc Stage(Empty) returns (Empty);
 }
 
+service RegisterLearner {
+  rpc Learn(RegisterCommit) returns (Empty);
+}
+
+message RegisterCommit {
+  optional string key = 1;
+  AcceptedState accepted = 2;
+  Ballot prepared_ballot = 3;
+}
+
 message AcceptedDigest {
   Ballot ballot = 1;
   bytes sha256 = 2;

@@ -125,6 +125,11 @@ public sealed class ProposerModePolicy
     internal bool ShouldSkipInitialPrepare(int proposerId) =>
         IsAdaptive ? PreferFastPath(proposerId) : StaticFastCommitEnabled;
 
+    internal bool CanReusePreparedBallot(Ballot ballot, int proposerId) =>
+        ballot.IsFastRoundBallot
+            ? ShouldSkipInitialPrepare(proposerId)
+            : ballot.Proposer == proposerId && (StaticLeaderEnabled || IsAdaptive);
+
     internal Ballot CreateProposalBallot(int proposerId, Ballot currentBallot)
     {
         if (currentBallot.IsZero)
