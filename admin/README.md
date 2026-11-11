@@ -8,13 +8,13 @@ all node subscriptions remain active.
 
 ## Build and run
 
-Prerequisites: .NET 11 RC2 SDK (pinned in `global.json`) and Node.js 24+ with npm.
+Prerequisites: .NET 11 SDK (pinned in `global.json`) and Node.js 24+ with npm.
 
 From the repository root in PowerShell:
 
 ```powershell
 dotnet build csharp\src\FastCASPaxos.Host -c Release
-dotnet run --project csharp\src\FastCASPaxos.Host -f net11.0 -c Release --no-build
+dotnet run --project csharp\src\FastCASPaxos.Host -c Release --no-build
 ```
 
 Open `http://127.0.0.1:5000/admin/`. For a cluster, use the existing
@@ -22,12 +22,10 @@ Open `http://127.0.0.1:5000/admin/`. For a cluster, use the existing
 
 The host's normal build restores the lockfile with `npm ci` when needed, runs
 TypeScript checking and the Vite production build, and copies assets into
-`wwwroot/admin` beside the executable. Both target frameworks share one
-`build.proj` request, keeping dependency installation and asset generation
-serialized. Publish includes the same assets:
+`wwwroot/admin` beside the executable. Publish includes the same assets:
 
 ```powershell
-dotnet publish csharp\src\FastCASPaxos.Host -f net11.0 -c Release
+dotnet publish csharp\src\FastCASPaxos.Host -c Release
 Set-Location csharp\src\FastCASPaxos.Host\bin\Release\net11.0\publish
 dotnet .\FastCASPaxos.Host.dll
 ```
@@ -185,7 +183,7 @@ streams and cancels requests and timers.
 
 ```powershell
 npm --prefix admin test
-dotnet publish csharp\src\FastCASPaxos.Host -f net11.0 -c Release
+dotnet publish csharp\src\FastCASPaxos.Host -c Release
 Set-Location admin
 npx playwright install chromium
 npm run test:browser

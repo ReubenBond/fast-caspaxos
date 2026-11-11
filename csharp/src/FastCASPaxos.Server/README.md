@@ -69,10 +69,6 @@ returns `AcceptorUnchanged`. Each result is a fresh durable local observation;
 the register service combines distinct peer observations from one read attempt
 to establish a linearizable value. Promised ballots may differ.
 
-The projects target .NET 10 and .NET 11 using the .NET 11 RC2 SDK pinned in
-`global.json` and C# `latest`. The .NET 10 assembly includes the compiler's union
-metadata contract; .NET 11 uses the runtime-provided types.
-
 | Status | Established outcome |
 | --- | --- |
 | `Applied` | This operation's complete envelope, including its request identity, reached an accept quorum. `Current` contains its revision and payload. |

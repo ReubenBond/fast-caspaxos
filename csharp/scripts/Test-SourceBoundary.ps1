@@ -10,6 +10,8 @@ $clientSmoke = Join-Path $root 'ClientSmoke'
 
 try {
     New-Item -ItemType Directory -Path $source, $consumer, $clientSmoke -Force | Out-Null
+    # An embedding repository pins its own SDK; this one uses the upstream pin.
+    Copy-Item (Join-Path (Split-Path $upstream -Parent) 'global.json') (Join-Path $root 'global.json')
     foreach ($file in @('.editorconfig', 'Directory.Build.props', 'Directory.Build.targets', 'Directory.Packages.props')) {
         Copy-Item (Join-Path $upstream $file) (Join-Path $source $file)
     }

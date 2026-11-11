@@ -233,8 +233,8 @@ for repair staging, configuration, and storage migration.
 ### Run a local three-node cluster
 
 Install [Just](https://just.systems/) 1.44+ (1.59 tested), PowerShell 7 (`pwsh`),
-the .NET 11 RC2 SDK pinned in `global.json`, and Node.js 24+ with npm. The C#
-projects target .NET 10 and .NET 11 using the latest C# language version.
+the .NET 11 SDK pinned in `global.json`, and Node.js 24+ with npm. The C#
+projects target .NET 11 using the latest C# language version.
 From the repository root:
 
 ```powershell

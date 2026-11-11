@@ -4,15 +4,15 @@
 `IRegisterService`. `FastCASPaxos.Host` serves these routes using its existing
 SQLite-backed replicated register service. Each key has a linearizable read
 and conditional write, an opaque logical version, and quorum-backed listing.
-The transport library targets .NET 10 and .NET 11 with the latest C# language version.
+The transport library targets .NET 11 with the latest C# language version.
 
 ## Run and embed
 
-From the repository root with the .NET 11 RC2 SDK pinned in `global.json`:
+From the repository root with the .NET 11 SDK pinned in `global.json`:
 
 ```powershell
 dotnet build csharp\src\FastCASPaxos.Host -c Release
-dotnet run --project csharp\src\FastCASPaxos.Host -f net11.0 -c Release --no-build
+dotnet run --project csharp\src\FastCASPaxos.Host -c Release --no-build
 ```
 
 The default single-member host serves REST at `http://127.0.0.1:5000` over
@@ -239,5 +239,4 @@ Deterministic fake-service and phase-barrier cases establish HTTP validation,
 cancellation, and outcome translation. Real HTTP/1.1 plus SQLite cases
 establish transport, gRPC interoperability, and retained values/versions.
 The shared executable smoke checks three processes, one-node outage, and a
-full restart over both transports. CI also runs the existing protocol DST
-suite for both .NET 10 and .NET 11.
+full restart over both transports. CI also runs the protocol DST suite.
