@@ -109,7 +109,7 @@ internal sealed class RepairHostCluster : IAsyncDisposable
         {
             for (var index = 0; index < 2; index++)
             {
-                var store = cluster.Stores[index] = await SqliteAcceptorServer.OpenAsync(directory.Database($"remote-{index}"));
+                var store = cluster.Stores[index] = await SqliteAcceptorServer.OpenAsync(directory.Database($"remote-{index}"), FatalErrors);
                 var acceptor = cluster.RemoteAcceptors[index] = new DelegateAcceptor
                 {
                     Read = store.ReadAsync,
@@ -130,7 +130,7 @@ internal sealed class RepairHostCluster : IAsyncDisposable
             cluster.Options.TargetReplicationFactor = target;
             cluster.Options.ShutdownMode = shutdownMode;
             cluster.Options.RepairPageSize = 2;
-            cluster.Node = await NodeRuntime.OpenAsync(cluster.Options, timeProvider: cluster.Clock).WaitAsync(Watchdog);
+            cluster.Node = await NodeRuntime.OpenAsync(cluster.Options, FatalErrors, timeProvider: cluster.Clock).WaitAsync(Watchdog);
             return cluster;
         }
         catch { await cluster.DisposeAsync(); throw; }

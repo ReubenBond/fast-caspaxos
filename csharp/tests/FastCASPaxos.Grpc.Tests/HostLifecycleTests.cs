@@ -131,7 +131,7 @@ public sealed class HostLifecycleTests
         var options = Options(directory);
         options.Peers.Add(new() { Id = "b", Endpoint = "http://127.0.0.1:2", HttpEndpoint = "http://127.0.0.1:12" });
         options.Peers.Add(new() { Id = "c", Endpoint = "https://127.0.0.1:3", HttpEndpoint = "https://127.0.0.1:13" });
-        await using var runtime = await NodeRuntime.OpenAsync(options).WaitAsync(Watchdog);
+        await using var runtime = await NodeRuntime.OpenAsync(options, FatalErrors).WaitAsync(Watchdog);
         // Only the local acceptor is exercised; constructing remote channels must not connect.
         var result = await runtime.Acceptor.AcceptAsync("local", new(new(2, 1), Payload, new())).AsTask().WaitAsync(Watchdog);
         Assert.True(result.IsAccepted);
@@ -148,7 +148,7 @@ public sealed class HostLifecycleTests
         using var directory = new TestDirectory();
         var options = Options(directory);
         RegisterValue current;
-        await using (var runtime = await NodeRuntime.OpenAsync(options).WaitAsync(Watchdog))
+        await using (var runtime = await NodeRuntime.OpenAsync(options, FatalErrors).WaitAsync(Watchdog))
         {
             var client = new GrpcRegisterService(new ContractCallInvoker(register: Service(runtime.Registers)));
             var created = await client.CompareExchangeAsync("durable", null, Payload).AsTask().WaitAsync(Watchdog);
@@ -165,7 +165,7 @@ public sealed class HostLifecycleTests
             await Assert.ThrowsAsync<ObjectDisposedException>(() => runtime.Registers.ReadAsync("durable").AsTask());
             await Assert.ThrowsAsync<ObjectDisposedException>(() => runtime.Acceptor.ListKeysAsync().AsTask());
         }
-        await using var reopened = await NodeRuntime.OpenAsync(options).WaitAsync(Watchdog);
+        await using var reopened = await NodeRuntime.OpenAsync(options, FatalErrors).WaitAsync(Watchdog);
         Assert.Equal(current, await reopened.Registers.ReadAsync("durable").AsTask().WaitAsync(Watchdog));
         var page = await reopened.Acceptor.ListKeysAsync("queued-");
         Assert.Equal(16, page.Entries.Length);
@@ -187,7 +187,7 @@ public sealed class HostLifecycleTests
         var options = Options(directory);
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => NodeRuntime.OpenAsync(options, cancellationToken: cancellation.Token));
+        var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => NodeRuntime.OpenAsync(options, FatalErrors, cancellationToken: cancellation.Token));
         Assert.Equal(cancellation.Token, error.CancellationToken);
         Assert.Empty(Directory.GetFiles(directory.Path));
     }
@@ -196,10 +196,10 @@ public sealed class HostLifecycleTests
     public async Task NodeRuntimeInvalidStartupRejectsBeforeCreatingDatabase()
     {
         using var directory = new TestDirectory();
-        await Assert.ThrowsAsync<ArgumentNullException>(() => NodeRuntime.OpenAsync(null!));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => NodeRuntime.OpenAsync(null!, FatalErrors));
         var options = Options(directory);
         options.Peers.Clear();
-        await Assert.ThrowsAsync<ArgumentException>(() => NodeRuntime.OpenAsync(options));
+        await Assert.ThrowsAsync<ArgumentException>(() => NodeRuntime.OpenAsync(options, FatalErrors));
         Assert.Empty(Directory.GetFiles(directory.Path));
     }
 
@@ -208,14 +208,14 @@ public sealed class HostLifecycleTests
     {
         using var directory = new TestDirectory();
         var options = Options(directory);
-        using (var other = new SqliteProposerBallotSource(options.ProposerDatabase, 2))
+        using (var other = new SqliteProposerBallotSource(options.ProposerDatabase, 2, FatalErrors))
             Assert.Equal(new FastCASPaxos.Model.Ballot(1, 2), other.Reserve(1));
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => NodeRuntime.OpenAsync(options).WaitAsync(Watchdog));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => NodeRuntime.OpenAsync(options, FatalErrors).WaitAsync(Watchdog));
         Assert.Contains("different proposer identity", error.Message, StringComparison.Ordinal);
         // No leaked SQLite owner may retain an exclusive file handle after partial startup.
         using (File.Open(options.AcceptorDatabase, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
         options.ProposerId = 2;
-        await using var recovered = await NodeRuntime.OpenAsync(options).WaitAsync(Watchdog);
+        await using var recovered = await NodeRuntime.OpenAsync(options, FatalErrors).WaitAsync(Watchdog);
         var created = await recovered.Registers.CompareExchangeAsync("recovered", null, Payload).AsTask().WaitAsync(Watchdog);
         Assert.Equal(CompareExchangeStatus.Applied, created.Status);
         Assert.Equal(Payload, created.Current!.Value);
@@ -230,7 +230,7 @@ public sealed class HostLifecycleTests
     public async Task ProposerSettingsApplyEachSupportedMode(string mode, bool prepares, bool preparesNext)
     {
         using var directory = new TestDirectory();
-        await using var node = await NodeRuntime.OpenAsync(Options(directory));
+        await using var node = await NodeRuntime.OpenAsync(Options(directory), FatalErrors);
         var registers = node.Registers;
         var status = await node.ApplySettingsAsync(new() { Mode = " " + mode.ToUpperInvariant() + " " });
         Assert.Equal(mode, status.Settings.Mode);
@@ -258,9 +258,9 @@ public sealed class HostLifecycleTests
         using var directory = new TestDirectory();
         var options = Options(directory);
         options.Mode = "classic";
-        await using (var node = await NodeRuntime.OpenAsync(options))
+        await using (var node = await NodeRuntime.OpenAsync(options, FatalErrors))
             await node.ApplySettingsAsync(SelectedSettings(enabled) with { EnableForwarding = forwarding });
-        await using var reopened = await NodeRuntime.OpenAsync(options);
+        await using var reopened = await NodeRuntime.OpenAsync(options, FatalErrors);
 
         AssertSelectedSettings(reopened.Administration.Settings, enabled, forwarding);
         var cursor = reopened.Diagnostics.Cursor;
@@ -288,7 +288,7 @@ public sealed class HostLifecycleTests
     public async Task ProposerSettingsRejectInvalidValuesWithoutMutation(InvalidSettings scenario)
     {
         using var directory = new TestDirectory();
-        await using var node = await NodeRuntime.OpenAsync(Options(directory));
+        await using var node = await NodeRuntime.OpenAsync(Options(directory), FatalErrors);
         var created = await node.Registers.CompareExchangeAsync("retained", null, Payload);
         var before = node.Administration;
         var durable = await node.Inspection.InspectAsync("retained");
@@ -317,7 +317,7 @@ public sealed class HostLifecycleTests
     public async Task ProposerSettingsAcceptInt32Boundaries(bool maximum)
     {
         using var directory = new TestDirectory();
-        await using var node = await NodeRuntime.OpenAsync(Options(directory));
+        await using var node = await NodeRuntime.OpenAsync(Options(directory), FatalErrors);
         var result = await node.ApplySettingsAsync(new()
         {
             ConflictDebtIncrement = maximum ? int.MaxValue : 0,
@@ -340,7 +340,7 @@ public sealed class HostLifecycleTests
     public async Task ProposerSettingsDrainAdmittedWorkBeforeFacadeSwap()
     {
         using var directory = new TestDirectory();
-        await using var node = await NodeRuntime.OpenAsync(Options(directory));
+        await using var node = await NodeRuntime.OpenAsync(Options(directory), FatalErrors);
         var registers = node.Registers;
         var acceptor = node.Acceptor;
         var digests = node.Digests;
@@ -386,7 +386,7 @@ public sealed class HostLifecycleTests
         RegisterValue value;
         LocalAcceptorState? promise;
         LocalAcceptorState? accepted;
-        await using (var node = await NodeRuntime.OpenAsync(options))
+        await using (var node = await NodeRuntime.OpenAsync(options, FatalErrors))
         {
             value = (await node.Registers.CompareExchangeAsync("", null, ByteString.Empty)).Current!;
             Assert.True((await node.Acceptor.AcceptAsync("binary", new(new(17, 1), Payload, new(18, 1)))).IsAccepted);
@@ -401,7 +401,7 @@ public sealed class HostLifecycleTests
                 Assert.Equal(promise, await node.Inspection.InspectAsync("promise-only"));
             }
         }
-        await using var reopened = await NodeRuntime.OpenAsync(options);
+        await using var reopened = await NodeRuntime.OpenAsync(options, FatalErrors);
         Assert.Equal(value, await reopened.Registers.ReadAsync(""));
         Assert.Equal(accepted, await reopened.Inspection.InspectAsync("binary"));
         Assert.Equal(promise, await reopened.Inspection.InspectAsync("promise-only"));
@@ -411,7 +411,7 @@ public sealed class HostLifecycleTests
     public async Task ProposerSettingsSwapDiscardsLearnedPolicyCache()
     {
         using var directory = new TestDirectory();
-        await using var node = await NodeRuntime.OpenAsync(Options(directory));
+        await using var node = await NodeRuntime.OpenAsync(Options(directory), FatalErrors);
         await node.ApplySettingsAsync(new() { Mode = "fast" });
         node.Learn(new("learned-only", new(50, 0), Envelope(7, Payload), new(51, 0)));
         var registers = node.Registers;
@@ -427,7 +427,7 @@ public sealed class HostLifecycleTests
     public async Task ClusterAdministrationPreCancelledCommandsLeaveDurableStateUnchanged()
     {
         using var directory = new TestDirectory();
-        await using var node = await NodeRuntime.OpenAsync(Options(directory));
+        await using var node = await NodeRuntime.OpenAsync(Options(directory), FatalErrors);
         var written = await node.Registers.CompareExchangeAsync("retained", null, Payload);
         var before = node.Administration;
         using var cancellation = new CancellationTokenSource();
@@ -444,7 +444,7 @@ public sealed class HostLifecycleTests
     public async Task ClusterSettingsCoordinatorAppliesAndReportsLocalMember()
     {
         using var directory = new TestDirectory();
-        await using var node = await NodeRuntime.OpenAsync(Options(directory));
+        await using var node = await NodeRuntime.OpenAsync(Options(directory), FatalErrors);
         var result = await node.ApplyClusterSettingsAsync(SelectedSettings(false));
         Assert.Equal("complete", result.State);
         Assert.Equal(new AdminNodeResult("a", "active"), Assert.Single(result.Nodes));
@@ -466,7 +466,7 @@ public sealed class HostLifecycleTests
             new() { Id = "a2", Endpoint = "http://127.0.0.1:2", HttpEndpoint = "http://127.0.0.1:12" },
             new() { Id = "a10", Endpoint = "http://127.0.0.1:3", HttpEndpoint = "http://127.0.0.1:13" },
         ];
-        await using var node = await NodeRuntime.OpenAsync(options);
+        await using var node = await NodeRuntime.OpenAsync(options, FatalErrors);
         Assert.Equal("a10", node.CoordinatorId);
         Assert.Contains("'a10'", (await Assert.ThrowsAsync<InvalidOperationException>(() =>
             node.ApplyClusterSettingsAsync(new()))).Message, StringComparison.Ordinal);
@@ -484,7 +484,7 @@ public sealed class HostLifecycleTests
     {
         using var directory = new TestDirectory();
         var options = Options(directory);
-        await using var node = await NodeRuntime.OpenAsync(options);
+        await using var node = await NodeRuntime.OpenAsync(options, FatalErrors);
         var selected = node.Administration.Settings;
         IDisposable? lease = node.EnterProtocol("0");
         try
@@ -516,7 +516,7 @@ public sealed class HostLifecycleTests
     {
         using var directory = new TestDirectory();
         var options = Options(directory);
-        await using (var node = await NodeRuntime.OpenAsync(options))
+        await using (var node = await NodeRuntime.OpenAsync(options, FatalErrors))
         {
             await node.ApplySettingsAsync(SelectedSettings(false));
             if (populated)
@@ -546,7 +546,7 @@ public sealed class HostLifecycleTests
             var next = await node.Registers.CompareExchangeAsync("learned-only", null, ByteString.Empty);
             Assert.Equal(new RegisterValue(ByteString.Empty, EpochVersion(1, 1)), next.Current);
         }
-        await using var reopened = await NodeRuntime.OpenAsync(options);
+        await using var reopened = await NodeRuntime.OpenAsync(options, FatalErrors);
         Assert.Equal("1", reopened.Administration.Epoch);
         AssertSelectedSettings(reopened.Administration.Settings, false);
         Assert.Equal(new RegisterValue(ByteString.Empty, EpochVersion(1, 1)), await reopened.Registers.ReadAsync("learned-only"));
@@ -561,13 +561,13 @@ public sealed class HostLifecycleTests
         using var directory = new TestDirectory();
         var options = Options(directory);
         var request = NewReset();
-        await using (var node = await NodeRuntime.OpenAsync(options))
+        await using (var node = await NodeRuntime.OpenAsync(options, FatalErrors))
         {
             await node.Registers.CompareExchangeAsync("old", null, Payload);
             await node.ApplyResetPhaseAsync(request, "prepare");
             if (phase == "clear") await node.ApplyResetPhaseAsync(request, "clear");
         }
-        await using var reopened = await NodeRuntime.OpenAsync(options);
+        await using var reopened = await NodeRuntime.OpenAsync(options, FatalErrors);
         Assert.Equal(durablePhase, reopened.Administration.State);
         Assert.Equal(request, reopened.Administration.PendingReset);
         Assert.Equal("0", reopened.Administration.Epoch);
@@ -592,9 +592,9 @@ public sealed class HostLifecycleTests
         using var directory = new TestDirectory();
         var options = Options(directory);
         var first = NewReset();
-        await using (var node = await NodeRuntime.OpenAsync(options))
+        await using (var node = await NodeRuntime.OpenAsync(options, FatalErrors))
             Assert.Equal("complete", (await node.ResetClusterAsync(first)).State);
-        await using var reopened = await NodeRuntime.OpenAsync(options);
+        await using var reopened = await NodeRuntime.OpenAsync(options, FatalErrors);
         var written = await reopened.Registers.CompareExchangeAsync("new", null, Payload);
         foreach (var phase in new[] { "prepare", "clear", "activate" })
         {
@@ -623,7 +623,7 @@ public sealed class HostLifecycleTests
     public async Task ClusterResetRejectsPreResetRegisterPreconditions()
     {
         using var directory = new TestDirectory();
-        await using var node = await NodeRuntime.OpenAsync(Options(directory));
+        await using var node = await NodeRuntime.OpenAsync(Options(directory), FatalErrors);
         var original = await node.Registers.CompareExchangeAsync("key", null, Payload);
         Assert.Equal(Revision(1), original.Current!.Version);
         await node.ResetClusterAsync(NewReset());
@@ -643,7 +643,7 @@ public sealed class HostLifecycleTests
     public async Task ClusterResetRejectsConflictingOrOutOfOrderOperations()
     {
         using var directory = new TestDirectory();
-        await using var node = await NodeRuntime.OpenAsync(Options(directory));
+        await using var node = await NodeRuntime.OpenAsync(Options(directory), FatalErrors);
         var request = NewReset();
         await node.Registers.CompareExchangeAsync("retained", null, Payload);
         var before = await node.Inspection.InspectAsync("retained");
@@ -686,7 +686,7 @@ public sealed class HostLifecycleTests
     public async Task ClusterResetRejectsNoncanonicalIdentityWithoutMutation(InvalidReset scenario)
     {
         using var directory = new TestDirectory();
-        await using var node = await NodeRuntime.OpenAsync(Options(directory));
+        await using var node = await NodeRuntime.OpenAsync(Options(directory), FatalErrors);
         var request = scenario switch
         {
             InvalidReset.ZeroId => new ResetRequest(new string('0', 32), "0"),
@@ -714,7 +714,7 @@ public sealed class HostLifecycleTests
     public async Task ClusterResetAcceptsFullWidthDecimalEpochSyntaxButRejectsUnobservedEpoch(string epoch)
     {
         using var directory = new TestDirectory();
-        await using var node = await NodeRuntime.OpenAsync(Options(directory));
+        await using var node = await NodeRuntime.OpenAsync(Options(directory), FatalErrors);
         // Valid UInt64 syntax beyond double precision must reach the durable epoch conflict check,
         // rather than fail input validation (ArgumentException).
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -731,14 +731,14 @@ public sealed class HostLifecycleTests
         var options = Options(directory);
         int before;
         int after;
-        await using (var node = await NodeRuntime.OpenAsync(options))
+        await using (var node = await NodeRuntime.OpenAsync(options, FatalErrors))
         {
             before = await WriteIncarnation(node);
             await node.ResetClusterAsync(NewReset());
             after = await WriteIncarnation(node);
             Assert.True(after > before, $"Reset must retain the durable allocator: {before} -> {after}.");
         }
-        await using var reopened = await NodeRuntime.OpenAsync(options);
+        await using var reopened = await NodeRuntime.OpenAsync(options, FatalErrors);
         var restart = await WriteIncarnation(reopened);
         Assert.True(restart > after, $"Restart must reserve a new incarnation: {after} -> {restart}.");
     }

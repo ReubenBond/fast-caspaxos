@@ -22,6 +22,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
     private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _stopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly string _databasePath;
+    private readonly IFatalErrorHandler _fatalErrors;
     private readonly int _maxBatchSize;
     private readonly NodeEventJournal? _diagnostics;
     private readonly List<AcceptorStateObservation> _changes = [];
@@ -31,9 +32,11 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
     // Exposes the durability boundary to deterministic fault/cancellation tests.
     internal Action<SqliteConnection, SqliteTransaction, int>? BeforeCommit { get; set; }
 
-    private SqliteAcceptorServer(string databasePath, int queueCapacity, int maxBatchSize, NodeEventJournal? diagnostics)
+    private SqliteAcceptorServer(
+        string databasePath, IFatalErrorHandler fatalErrors, int queueCapacity, int maxBatchSize, NodeEventJournal? diagnostics)
     {
         _databasePath = databasePath;
+        _fatalErrors = fatalErrors;
         _maxBatchSize = maxBatchSize;
         _diagnostics = diagnostics;
         _queue = Channel.CreateBounded<WorkItem>(new BoundedChannelOptions(queueCapacity)
@@ -46,17 +49,21 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
 
     /// <summary>
     /// Opens a database using WAL and synchronous=FULL. Initialization and all SQLite I/O run
-    /// on a dedicated thread. Cancellation applies before initialization starts.
+    /// on a dedicated thread. Cancellation applies before initialization starts. Before the open
+    /// completes, the database's directory is flushed so the database and WAL names are durable;
+    /// a failed flush is reported to <paramref name="fatalErrors"/> and fails the open.
     /// </summary>
     public static async ValueTask<SqliteAcceptorServer> OpenAsync(
-        string databasePath, int queueCapacity = 256, int maxBatchSize = 64,
+        string databasePath, IFatalErrorHandler fatalErrors, int queueCapacity = 256, int maxBatchSize = 64,
         NodeEventJournal? diagnostics = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
+        ArgumentNullException.ThrowIfNull(fatalErrors);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(queueCapacity);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxBatchSize);
         cancellationToken.ThrowIfCancellationRequested();
-        var server = new SqliteAcceptorServer(Path.GetFullPath(databasePath), queueCapacity, maxBatchSize, diagnostics);
+        var server = new SqliteAcceptorServer(
+            Path.GetFullPath(databasePath), fatalErrors, queueCapacity, maxBatchSize, diagnostics);
         new Thread(server.Run) { IsBackground = true, Name = "FastCASPaxos SQLite writer" }.Start();
         try
         {
@@ -390,6 +397,9 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
             {
                 connection.Open();
                 Initialize(connection);
+                // This connection holds the WAL until disposal, so no file is created after the flush.
+                Debug.Assert(File.Exists(_databasePath + "-wal"), "Initialization opens the WAL.");
+                DurableDirectory.FlushFiles(Path.GetDirectoryName(_databasePath)!, _fatalErrors);
                 _diagnostics?.Publish("storage", new StorageObservation("ready"));
                 _ready.SetResult();
                 while (_queue.Reader.WaitToReadAsync().AsTask().GetAwaiter().GetResult())

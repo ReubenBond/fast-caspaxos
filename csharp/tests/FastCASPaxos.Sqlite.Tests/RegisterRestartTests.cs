@@ -22,7 +22,7 @@ public sealed class RegisterRestartTests
         AcceptRequest<ByteString> oldAccept;
         RegisterValue firstValue;
         var options = new RegisterServiceOptions { Mode = ProposerModePolicy.Parse(mode) };
-        using (var ballots = new SqliteProposerBallotSource(ballotDatabase.Path, 8))
+        using (var ballots = new SqliteProposerBallotSource(ballotDatabase.Path, 8, TestDatabase.FatalErrors))
         {
             await using var a = await firstDatabase.OpenAsync();
             await using var b = await secondDatabase.OpenAsync();
@@ -52,7 +52,7 @@ public sealed class RegisterRestartTests
         }
 
         // Close and reopen every durable participant, retaining the same proposer identity/database.
-        using var reopenedBallots = new SqliteProposerBallotSource(ballotDatabase.Path, 8);
+        using var reopenedBallots = new SqliteProposerBallotSource(ballotDatabase.Path, 8, TestDatabase.FatalErrors);
         await using var first = await firstDatabase.OpenAsync();
         await using var second = await secondDatabase.OpenAsync();
         await using var third = await thirdDatabase.OpenAsync();

@@ -244,7 +244,7 @@ public sealed class RegisterContractTests
     public async Task LocalStorageRetainsFullUtf16CapacityWhileGrpcRejectsMalformedText()
     {
         using var directory = new TestDirectory();
-        await using var sqlite = await SqliteAcceptorServer.OpenAsync(directory.Database("acceptor"));
+        await using var sqlite = await SqliteAcceptorServer.OpenAsync(directory.Database("acceptor"), FatalErrors);
         var key = "\ud800";
         Assert.True((await sqlite.AcceptAsync(key, new(new(2, 1), Payload, new()))).IsAccepted);
         var entry = Assert.Single((await sqlite.ListKeysAsync()).Entries);

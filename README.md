@@ -259,7 +259,9 @@ just cluster "./cluster data/demo" 15001
 ```
 
 The base port is 1-65530; gRPC uses offsets 0-2 and REST/admin uses offsets 3-5.
-Relative data paths resolve from the repository root. By default, all six
+Relative data paths resolve from the repository root. For local development the
+launcher creates the data directory's parent; each node creates the data
+directory and makes its name durable. By default, all six
 SQLite databases and their WAL files live in the git-ignored
 `csharp/src/FastCASPaxos.Host/data/cluster` directory. Restart with the same
 directory to retain values, acceptor identities, and proposer allocators.

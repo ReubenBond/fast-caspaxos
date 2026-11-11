@@ -620,7 +620,7 @@ internal sealed class DiagnosticHost(NodeRuntime node, WebApplication app, strin
 
     public static async Task<DiagnosticHost> Start(NodeOptions options, TimeProvider? clock = null)
     {
-        var node = await NodeRuntime.OpenAsync(options, timeProvider: clock).WaitAsync(Watchdog);
+        var node = await NodeRuntime.OpenAsync(options, FatalErrors, timeProvider: clock).WaitAsync(Watchdog);
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
         builder.Configuration.Sources.Clear();
         builder.Logging.ClearProviders();

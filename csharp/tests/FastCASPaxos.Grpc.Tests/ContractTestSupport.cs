@@ -3,6 +3,7 @@ using FastCASPaxos.Messages;
 using FastCASPaxos.Model;
 using FastCASPaxos.Protocol;
 using FastCASPaxos.Server;
+using FastCASPaxos.Testing;
 using Google.Protobuf;
 using Grpc.Core;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -14,6 +15,8 @@ namespace FastCASPaxos.Grpc.Tests;
 internal static class ContractTestSupport
 {
     public static readonly TimeSpan Watchdog = TimeSpan.FromSeconds(20);
+    // A healthy test's storage reports nothing, and a reported failure fails the open which reported it.
+    public static readonly RecordingFatalErrorHandler FatalErrors = new();
     public static readonly Bytes Payload = new([0, 10, 255]);
     public static readonly Bytes Version = new([0, 0, 0, 1, 0, 0, 0, 2]);
     public static Wire.Ballot Ballot(int round = 3, int proposer = 1) => new() { Round = round, ProposerId = proposer };

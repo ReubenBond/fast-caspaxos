@@ -208,7 +208,7 @@ public sealed class SqliteDigestTests
     {
         var databases = Enumerable.Range(0, 5).Select(_ => new TestDatabase()).ToArray();
         using var allocator = new TestDatabase();
-        using var ballots = new SqliteProposerBallotSource(allocator.Path, 3);
+        using var ballots = new SqliteProposerBallotSource(allocator.Path, 3, TestDatabase.FatalErrors);
         ballots.Reserve(10);
         var servers = new List<SqliteAcceptorServer>();
         InvalidDataException? integrityFailure = null;

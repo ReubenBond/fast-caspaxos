@@ -26,7 +26,7 @@ builder.Services.AddGrpc(grpc =>
 builder.Services.AddAdminCors(options);
 builder.Services.Configure<HostOptions>(builder.Configuration.GetSection("HostOptions"));
 
-await using var node = await NodeRuntime.OpenAsync(options);
+await using var node = await NodeRuntime.OpenAsync(options, new ExitingFatalErrorHandler());
 builder.Services.AddSingleton(node.Acceptor);
 builder.Services.AddSingleton(node.Registers);
 builder.Services.AddSingleton(node.Learner);

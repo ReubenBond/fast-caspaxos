@@ -12,7 +12,7 @@ using FastCASPaxos.Model;
 using FastCASPaxos.Server;
 using FastCASPaxos.Sqlite;
 
-await using var acceptor = await SqliteAcceptorServer.OpenAsync("acceptor.db");
+await using var acceptor = await SqliteAcceptorServer.OpenAsync("acceptor.db", fatalErrors);
 var ballot = Ballot.InitialFast();
 var result = await acceptor.AcceptAsync(
     "accounts/42",
@@ -20,6 +20,9 @@ var result = await acceptor.AcceptAsync(
 
 var page = await acceptor.ListKeysAsync(prefix: "accounts/", limit: 100);
 ```
+
+`fatalErrors` is the application's `IFatalErrorHandler`; see
+[durability and lifecycle](#durability-and-lifecycle).
 
 ## Protocol contract
 
@@ -52,7 +55,23 @@ Opening validates effective `journal_mode=WAL`, `synchronous=FULL`, and foreign
 key enforcement. The database has a versioned application/schema identity;
 fresh initialization requires an empty database. Use a local filesystem with
 SQLite WAL locking and durable-flush support, and retain the database and its
-WAL together through crashes. File access and backups follow SQLite's
+WAL together through crashes.
+
+The database's directory exists durably in its parent before opening.
+`DurableDirectory.Create` creates a directory under an existing parent and
+flushes the parent; repeating it on every start makes durable a name which a
+crashed creator left unflushed. Opening `SqliteAcceptorServer` or
+`SqliteProposerBallotSource` creates the database and WAL, then flushes their
+directory, so their names are durable before the open completes. Each opener's
+connection holds its WAL until disposal, so no file is created in the directory
+after that flush. A failed flush is reported to the opener's
+`IFatalErrorHandler` and fails the open: afterward the process cannot know what
+the device holds, so the application's handler stops the process. Linux and
+macOS flush a directory with `fsync`, and Windows with `FlushFileBuffers` on a
+directory handle; on Windows only local NTFS volumes implement a directory flush,
+and other volumes fail the open with `PlatformNotSupportedException`.
+
+File access and backups follow SQLite's
 [WAL](https://www.sqlite.org/wal.html) and
 [backup](https://www.sqlite.org/backup.html) requirements.
 

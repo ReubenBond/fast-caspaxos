@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using FastCASPaxos.Server;
+using FastCASPaxos.Testing;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -16,6 +17,8 @@ public enum ApiOperation { Read, Write, List }
 internal static class RestTestSupport
 {
     internal static readonly TimeSpan Watchdog = TimeSpan.FromSeconds(30);
+    // A healthy test's storage reports nothing, and a reported failure fails the open which reported it.
+    internal static readonly RecordingFatalErrorHandler FatalErrors = new();
     internal static readonly ByteString Payload = new([0, 255, 128, 13, 10, 34, 92]);
     internal static readonly ByteString OpaqueVersion = new([255, 0, 17, 128, 42]);
     internal const string Secret = "private-database-path-and-secret";

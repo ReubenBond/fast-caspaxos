@@ -10,10 +10,10 @@ opaque payload bytes.
 using FastCASPaxos.Server;
 using FastCASPaxos.Sqlite;
 
-await using var a = await SqliteAcceptorServer.OpenAsync("acceptor-a.db");
-await using var b = await SqliteAcceptorServer.OpenAsync("acceptor-b.db");
-await using var c = await SqliteAcceptorServer.OpenAsync("acceptor-c.db");
-using var ballots = new SqliteProposerBallotSource("proposer-1.db", proposerId: 1);
+await using var a = await SqliteAcceptorServer.OpenAsync("acceptor-a.db", fatalErrors);
+await using var b = await SqliteAcceptorServer.OpenAsync("acceptor-b.db", fatalErrors);
+await using var c = await SqliteAcceptorServer.OpenAsync("acceptor-c.db", fatalErrors);
+using var ballots = new SqliteProposerBallotSource("proposer-1.db", proposerId: 1, fatalErrors);
 await using var registers = new ReplicatedRegisterService(
     [new("a", a), new("b", b), new("c", c)], ballots);
 
@@ -25,7 +25,9 @@ var page = await registers.ListKeysAsync(prefix: "catalog/", limit: 100);
 ```
 
 The caller owns the endpoints and ballot source. Dispose the register service
-before disposing those dependencies.
+before disposing those dependencies. `fatalErrors` is the application's
+`IFatalErrorHandler`, which stops the process after a failed local flush; see the
+[SQLite durability guide](../FastCASPaxos.Sqlite/README.md#durability-and-lifecycle).
 
 ## Values and conditional outcomes
 

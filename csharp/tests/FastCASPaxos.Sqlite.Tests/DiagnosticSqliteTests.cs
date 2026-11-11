@@ -13,7 +13,7 @@ public sealed class DiagnosticSqliteTests
     {
         using var database = new TestDatabase();
         using var journal = new NodeEventJournal("a");
-        await using var server = await SqliteAcceptorServer.OpenAsync(database.Path, diagnostics: journal);
+        await using var server = await SqliteAcceptorServer.OpenAsync(database.Path, TestDatabase.FatalErrors, diagnostics: journal);
         Assert.Equal("ready", journal.Storage.Status);
         var emptyCursor = journal.Cursor;
         Assert.Null(await server.InspectAsync("missing"));
@@ -57,7 +57,7 @@ public sealed class DiagnosticSqliteTests
     {
         using var database = new TestDatabase();
         using var journal = new NodeEventJournal("a");
-        var server = await SqliteAcceptorServer.OpenAsync(database.Path, diagnostics: journal);
+        var server = await SqliteAcceptorServer.OpenAsync(database.Path, TestDatabase.FatalErrors, diagnostics: journal);
         using var barrier = new CommitBarrier();
         using var cancellation = new CancellationTokenSource();
         var before = journal.Cursor;
@@ -149,7 +149,7 @@ public sealed class DiagnosticSqliteTests
             BEGIN INSERT INTO child VALUES (42); END;
             """);
         using var journal = new NodeEventJournal("a");
-        var server = await SqliteAcceptorServer.OpenAsync(database.Path, 16, 16, diagnostics: journal);
+        var server = await SqliteAcceptorServer.OpenAsync(database.Path, TestDatabase.FatalErrors, 16, 16, diagnostics: journal);
         using var first = new CommitBarrier();
         using var batch = new CommitBarrier();
         using var cancellation = new CancellationTokenSource();
@@ -209,7 +209,7 @@ public sealed class DiagnosticSqliteTests
     {
         using var database = new TestDatabase();
         using var journal = new NodeEventJournal("a");
-        await using var server = await SqliteAcceptorServer.OpenAsync(database.Path, diagnostics: journal);
+        await using var server = await SqliteAcceptorServer.OpenAsync(database.Path, TestDatabase.FatalErrors, diagnostics: journal);
         var before = journal.Cursor;
         await Assert.ThrowsAsync<ArgumentNullException>(() => server.InspectAsync(null!).AsTask());
         await Assert.ThrowsAsync<ArgumentNullException>(() => server.InspectKeysAsync(null!).AsTask());

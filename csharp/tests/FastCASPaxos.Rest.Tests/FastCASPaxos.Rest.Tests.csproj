@@ -18,5 +18,6 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="..\..\src\FastCASPaxos.Rest\FastCASPaxos.Rest.csproj" />
     <ProjectReference Include="..\..\src\FastCASPaxos.Host\FastCASPaxos.Host.csproj" />
+    <ProjectReference Include="..\..\src\FastCASPaxos.Testing\FastCASPaxos.Testing.csproj" />
   </ItemGroup>
 </Project>

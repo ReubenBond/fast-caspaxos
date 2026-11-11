@@ -172,7 +172,7 @@ public sealed class FastHandoffContractTests
             var commit = new RegisterCommit("key", new(5, 0), Envelope(1, Payload), new(6, 0));
             for (var index = 0; index < 3; index++)
             {
-                var store = await SqliteAcceptorServer.OpenAsync(directory.Database($"acceptor-{index}"));
+                var store = await SqliteAcceptorServer.OpenAsync(directory.Database($"acceptor-{index}"), FatalErrors);
                 stores.Add(store);
                 Assert.True((await store.AcceptAsync("key",
                     new(commit.AcceptedBallot, commit.Value, commit.PreparedBallot))).IsAccepted);
@@ -184,7 +184,7 @@ public sealed class FastHandoffContractTests
                 Accept = (key, request, token) => { Interlocked.Increment(ref accepts[index]); return store.AcceptAsync(key, request, token); },
                 List = store.ListKeysAsync
             })).ToArray();
-            using var ballots = new SqliteProposerBallotSource(directory.Database("proposer"), 3);
+            using var ballots = new SqliteProposerBallotSource(directory.Database("proposer"), 3, FatalErrors);
             await using var registers = new ReplicatedRegisterService([.. routes], ballots,
                 new() { Mode = ProposerModePolicy.StaticFast }, stores[2]);
             var service = new RegisterLearnerGrpcService(registers, NullLogger<RegisterLearnerGrpcService>.Instance);

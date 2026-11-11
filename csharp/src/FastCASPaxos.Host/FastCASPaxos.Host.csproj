@@ -10,6 +10,7 @@
     <ProjectReference Include="..\FastCASPaxos.Grpc\FastCASPaxos.Grpc.csproj" />
     <ProjectReference Include="..\FastCASPaxos.Rest\FastCASPaxos.Rest.csproj" />
     <ProjectReference Include="..\FastCASPaxos.Sqlite\FastCASPaxos.Sqlite.csproj" />
+    <InternalsVisibleTo Include="FastCASPaxos.Grpc.Tests" />
   </ItemGroup>
   <Target Name="BuildAdminAssets" BeforeTargets="PrepareForBuild" Condition="'$(BuildAdminConsole)' == 'true'">
     <!-- Both target frameworks share one build request for node_modules and dist. -->

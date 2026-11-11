@@ -1,3 +1,4 @@
+using FastCASPaxos.Testing;
 using Microsoft.Data.Sqlite;
 
 namespace FastCASPaxos.Sqlite.Tests;
@@ -5,6 +6,8 @@ namespace FastCASPaxos.Sqlite.Tests;
 internal sealed class TestDatabase : IDisposable
 {
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(20);
+    // A healthy test's storage reports nothing, and a reported failure fails the open which reported it.
+    public static readonly RecordingFatalErrorHandler FatalErrors = new();
     private readonly string _directory = System.IO.Path.Combine(
         System.IO.Path.GetTempPath(), "FastCASPaxos.Sqlite.Tests", Guid.NewGuid().ToString("N"));
 
@@ -13,7 +16,7 @@ internal sealed class TestDatabase : IDisposable
     public string Path => System.IO.Path.Combine(_directory, "acceptor.db");
 
     public async Task<SqliteAcceptorServer> OpenAsync(int queueCapacity = 256, int maxBatchSize = 64) =>
-        await SqliteAcceptorServer.OpenAsync(Path, queueCapacity, maxBatchSize).AsTask().WaitAsync(Timeout);
+        await SqliteAcceptorServer.OpenAsync(Path, TestDatabase.FatalErrors, queueCapacity, maxBatchSize).AsTask().WaitAsync(Timeout);
 
     public SqliteConnection Connect()
     {

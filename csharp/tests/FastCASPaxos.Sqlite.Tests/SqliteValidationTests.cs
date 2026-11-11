@@ -66,7 +66,7 @@ public sealed class SqliteValidationTests
     {
         using var database = new TestDatabase();
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
-            SqliteAcceptorServer.OpenAsync(database.Path, capacity, batchSize).AsTask());
+            SqliteAcceptorServer.OpenAsync(database.Path, TestDatabase.FatalErrors, capacity, batchSize).AsTask());
         Assert.False(File.Exists(database.Path));
     }
 
@@ -74,16 +74,16 @@ public sealed class SqliteValidationTests
     public async Task InvalidPathAndCancelledOpenDoNotCreateDatabase()
     {
         using var database = new TestDatabase();
-        await Assert.ThrowsAsync<ArgumentNullException>(() => SqliteAcceptorServer.OpenAsync(null!).AsTask());
+        await Assert.ThrowsAsync<ArgumentNullException>(() => SqliteAcceptorServer.OpenAsync(null!, TestDatabase.FatalErrors).AsTask());
         foreach (var path in new[] { "", " " })
         {
-            await Assert.ThrowsAsync<ArgumentException>(() => SqliteAcceptorServer.OpenAsync(path).AsTask());
+            await Assert.ThrowsAsync<ArgumentException>(() => SqliteAcceptorServer.OpenAsync(path, TestDatabase.FatalErrors).AsTask());
         }
 
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            SqliteAcceptorServer.OpenAsync(database.Path, cancellationToken: cancellation.Token).AsTask());
+            SqliteAcceptorServer.OpenAsync(database.Path, TestDatabase.FatalErrors, cancellationToken: cancellation.Token).AsTask());
         Assert.False(File.Exists(database.Path));
     }
 
