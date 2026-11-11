@@ -19,5 +19,6 @@
     <ProjectReference Include="..\..\src\Clockwork\Clockwork.csproj" />
     <ProjectReference Include="..\..\src\FastCASPaxos.Sqlite\FastCASPaxos.Sqlite.csproj" />
     <ProjectReference Include="..\..\src\FastCASPaxos.Host\FastCASPaxos.Host.csproj" />
+    <ProjectReference Include="..\..\src\FastCASPaxos.Testing\FastCASPaxos.Testing.csproj" />
   </ItemGroup>
 </Project>

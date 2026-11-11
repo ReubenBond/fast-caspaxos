@@ -90,21 +90,31 @@ public sealed partial class NodeRuntime : IRepairScheduler, IRegisterLearner, IR
     public TimeSpan HeartbeatInterval { get; }
     public int MaxEventStreams { get; }
 
+    /// <summary>
+    /// Opens the node's storage and fixed-peer services. Each database's directory is created under its existing parent
+    /// when missing, and the parent is flushed so the directory's name is durable; each SQLite opener then flushes its
+    /// database's directory. A failed flush is reported to <paramref name="fatalErrors"/> and fails the open.
+    /// </summary>
+    /// <exception cref="DirectoryNotFoundException">The parent of a database's directory does not exist.</exception>
+    /// <exception cref="IOException">A directory could not be created, opened, or flushed.</exception>
+    /// <exception cref="PlatformNotSupportedException">A directory lies on a volume without a durable directory flush.</exception>
     public static async Task<NodeRuntime> OpenAsync(
-        NodeOptions options, TimeProvider? timeProvider = null, CancellationToken cancellationToken = default)
+        NodeOptions options, IFatalErrorHandler fatalErrors, TimeProvider? timeProvider = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(fatalErrors);
         options.Validate();
         cancellationToken.ThrowIfCancellationRequested();
         var clock = timeProvider ?? TimeProvider.System;
         var runtime = new NodeRuntime(options, clock);
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(options.AcceptorDatabase))!);
-            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(options.ProposerDatabase))!);
-            runtime._acceptor = await SqliteAcceptorServer.OpenAsync(options.AcceptorDatabase,
+            DurableDirectory.Create(Path.GetDirectoryName(Path.GetFullPath(options.AcceptorDatabase))!, fatalErrors);
+            DurableDirectory.Create(Path.GetDirectoryName(Path.GetFullPath(options.ProposerDatabase))!, fatalErrors);
+            runtime._acceptor = await SqliteAcceptorServer.OpenAsync(options.AcceptorDatabase, fatalErrors,
                 options.QueueCapacity, options.MaxBatchSize, runtime.Diagnostics, cancellationToken).ConfigureAwait(false);
-            runtime._ballots = new SqliteProposerBallotSource(options.ProposerDatabase, options.ProposerId);
+            runtime._ballots = new SqliteProposerBallotSource(options.ProposerDatabase, options.ProposerId, fatalErrors);
             runtime._admin = new(options.ProposerDatabase, options.ProposerSettings ?? new() { Mode = options.Mode });
             runtime.OpenGeneration(runtime._admin.State.Epoch);
             if (runtime._admin.State.Phase != "active")

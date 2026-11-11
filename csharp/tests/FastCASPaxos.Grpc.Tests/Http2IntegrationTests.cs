@@ -35,10 +35,10 @@ public sealed class Http2IntegrationTests
         try
         {
             for (var index = 0; index < 5; index++)
-                acceptors.Add(await SqliteAcceptorServer.OpenAsync(directory.Database($"member-{index}")));
+                acceptors.Add(await SqliteAcceptorServer.OpenAsync(directory.Database($"member-{index}"), FatalErrors));
             for (var index = 0; index < 3; index++)
             {
-                var allocator = new SqliteProposerBallotSource(directory.Database($"proposer-{index}"), index + 1);
+                var allocator = new SqliteProposerBallotSource(directory.Database($"proposer-{index}"), index + 1, FatalErrors);
                 ballots.Add(allocator);
                 var service = new ReplicatedRegisterService(
                     [.. acceptors.Select((acceptor, id) => new AcceptorPeer($"member-{id}", acceptor))], allocator,
@@ -270,7 +270,7 @@ public sealed class Http2IntegrationTests
         await using var a = await RunningNode.StartAsync(directory, "a", 1);
         await using var b = await RunningNode.StartAsync(directory, "b", 2);
         await using var c = await RunningNode.StartAsync(directory, "c", 3);
-        using var ballots = new SqliteProposerBallotSource(directory.Database("external-proposer"), 4);
+        using var ballots = new SqliteProposerBallotSource(directory.Database("external-proposer"), 4, FatalErrors);
         await using var registers = new ReplicatedRegisterService(
             [new("a", a.Endpoint.Acceptor), new("b", b.Endpoint.Acceptor), new("c", c.Endpoint.Acceptor)],
             ballots, new() { AttemptTimeout = TimeSpan.FromSeconds(1), RetryBackoff = TimeSpan.FromMilliseconds(1) });
@@ -414,7 +414,7 @@ public sealed class Http2IntegrationTests
                 ProposerId = proposer,
                 ProposerDatabase = directory.Database($"proposer-{id}"),
                 Peers = [new() { Id = id, Endpoint = "http://127.0.0.1:1", HttpEndpoint = "http://127.0.0.1:11" }],
-            });
+            }, FatalErrors);
             try
             {
                 var endpoint = await Http2Endpoint.StartAsync(runtime.Acceptor,

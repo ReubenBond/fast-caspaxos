@@ -19,7 +19,7 @@ public sealed class CompactLearningTests
     public async Task SqliteBallotInspectionClassifiesCorruptionSeparatelyFromOrdinaryFailure(int code)
     {
         using var directory = new TestDirectory();
-        var store = await SqliteAcceptorServer.OpenAsync(directory.Database("inspection"));
+        var store = await SqliteAcceptorServer.OpenAsync(directory.Database("inspection"), FatalErrors);
         var error = new Microsoft.Data.Sqlite.SqliteException("injected read failure", code);
         try
         {
@@ -48,7 +48,7 @@ public sealed class CompactLearningTests
     public async Task CompactLearnResolvesOnlyExactLocalBallotAndHash(LocalMatch match)
     {
         using var directory = new TestDirectory();
-        await using var node = await NodeRuntime.OpenAsync(HostLifecycleTests.Options(directory));
+        await using var node = await NodeRuntime.OpenAsync(HostLifecycleTests.Options(directory), FatalErrors);
         var envelope = Envelope(1, Payload);
         var commit = new RegisterCommitDigest("key", new(new(5, 0), new(SHA256.HashData(envelope.ToArray()))), new(6, 0));
         if (match != LocalMatch.Missing)
@@ -69,7 +69,7 @@ public sealed class CompactLearningTests
     public async Task CompactLearnReorderingCannotRollBackNewerCertificate()
     {
         using var directory = new TestDirectory();
-        await using var node = await NodeRuntime.OpenAsync(HostLifecycleTests.Options(directory));
+        await using var node = await NodeRuntime.OpenAsync(HostLifecycleTests.Options(directory), FatalErrors);
         var first = Envelope(1, Payload);
         var latest = Envelope(2, ByteString.Empty);
         var old = new RegisterCommitDigest("key", new(new(5, 0), new(SHA256.HashData(first.ToArray()))), new(6, 0));
@@ -88,7 +88,7 @@ public sealed class CompactLearningTests
     public async Task CompactLearnMatchingHashWithCorruptEnvelopeIsAnError()
     {
         using var directory = new TestDirectory();
-        await using var node = await NodeRuntime.OpenAsync(HostLifecycleTests.Options(directory));
+        await using var node = await NodeRuntime.OpenAsync(HostLifecycleTests.Options(directory), FatalErrors);
         var invalid = new ByteString("not a register"u8);
         Assert.True((await node.Acceptor.AcceptAsync("key", new(new(5, 0), invalid, new(6, 0)))).IsAccepted);
         var before = await node.Inspection.InspectAsync("key");
@@ -107,7 +107,7 @@ public sealed class CompactLearningTests
         options.Capacity = 1;
         options.AttemptTimeout = TimeSpan.FromSeconds(1);
         var clock = new RepairClock();
-        await using var node = await NodeRuntime.OpenAsync(options, clock);
+        await using var node = await NodeRuntime.OpenAsync(options, FatalErrors, clock);
         var value = Envelope(1, Payload);
         Assert.True((await node.Acceptor.AcceptAsync("key", new(new(5, 0), value, new(6, 0)))).IsAccepted);
         var commit = new RegisterCommitDigest("key", new(new(5, 0), new(SHA256.HashData(value.ToArray()))), new(6, 0));

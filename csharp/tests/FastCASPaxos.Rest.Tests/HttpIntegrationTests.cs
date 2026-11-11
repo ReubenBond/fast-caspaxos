@@ -25,16 +25,16 @@ public sealed class HttpIntegrationTests
     {
         // Execute the real REST endpoint and register/SQLite stack in process, without a socket.
         using var directory = new TestDirectory();
-        await using var a = await SqliteAcceptorServer.OpenAsync(System.IO.Path.Combine(directory.Path, "a.db"));
-        await using var b = await SqliteAcceptorServer.OpenAsync(System.IO.Path.Combine(directory.Path, "b.db"));
-        await using var c = await SqliteAcceptorServer.OpenAsync(System.IO.Path.Combine(directory.Path, "c.db"));
+        await using var a = await SqliteAcceptorServer.OpenAsync(System.IO.Path.Combine(directory.Path, "a.db"), FatalErrors);
+        await using var b = await SqliteAcceptorServer.OpenAsync(System.IO.Path.Combine(directory.Path, "b.db"), FatalErrors);
+        await using var c = await SqliteAcceptorServer.OpenAsync(System.IO.Path.Combine(directory.Path, "c.db"), FatalErrors);
         var stores = new[] { a, b, c };
         var version = new ByteString([0, 0, 0, 9, 0, 0, 0, 1]);
         var envelope = new ByteString([.. "FCR1"u8, 1, .. version.ToArray(), .. Payload.ToArray()]);
         if (present)
             foreach (var store in stores)
                 Assert.True((await store.AcceptAsync("inspect", new(new(3, 9), envelope, new(8, 9)))).IsAccepted);
-        using var ballots = new SqliteProposerBallotSource(System.IO.Path.Combine(directory.Path, "ballots.db"), 1);
+        using var ballots = new SqliteProposerBallotSource(System.IO.Path.Combine(directory.Path, "ballots.db"), 1, FatalErrors);
         Assert.Equal(new FastCASPaxos.Model.Ballot(1, 1), ballots.Reserve(1));
         await using var registers = new ReplicatedRegisterService([new("a", a), new("b", b), new("c", c)], ballots);
         var observed = new ControlledService { Read = registers.ReadAsync };
@@ -324,7 +324,7 @@ public sealed class HttpIntegrationTests
 
         internal static async Task<RunningNode> Start(NodeOptions options, ControlledService? observed = null)
         {
-            var runtime = await NodeRuntime.OpenAsync(options).WaitAsync(Watchdog);
+            var runtime = await NodeRuntime.OpenAsync(options, FatalErrors).WaitAsync(Watchdog);
             WebApplication? app = null;
             try
             {

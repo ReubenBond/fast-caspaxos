@@ -4,6 +4,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $data = [IO.Path]::GetFullPath($DataDirectory)
+# Each node creates the data directory itself and makes its name durable; it requires the parent to exist.
+$null = New-Item -ItemType Directory -Force -Path ([IO.Path]::GetDirectoryName($data))
 $project = Join-Path $PSScriptRoot '..\src\FastCASPaxos.Host\FastCASPaxos.Host.csproj'
 $nodes = [Collections.Generic.List[Diagnostics.Process]]::new()
 $failed = $false

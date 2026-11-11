@@ -16,7 +16,7 @@ public sealed class AcceptorContractTests
     public async Task PrepareAndAcceptMatchCoreOracleAcrossRetriesAndConflicts()
     {
         using var directory = new TestDirectory();
-        await using var sqlite = await SqliteAcceptorServer.OpenAsync(directory.Database("acceptor"));
+        await using var sqlite = await SqliteAcceptorServer.OpenAsync(directory.Database("acceptor"), FatalErrors);
         var client = new GrpcKeyedAcceptor(new ContractCallInvoker(Service(sqlite)));
         var oracle = AcceptorState.CreateInitial<ByteString?>(null);
         var key = "key\0\U0001f600";
@@ -59,7 +59,7 @@ public sealed class AcceptorContractTests
         using var directory = new TestDirectory();
         var path = directory.Database("acceptor");
         var request = new AcceptRequest<ByteString>(new(3, 1), Payload, FastCASPaxos.Model.Ballot.Zero);
-        await using (var sqlite = await SqliteAcceptorServer.OpenAsync(path))
+        await using (var sqlite = await SqliteAcceptorServer.OpenAsync(path, FatalErrors))
         {
             var client = new GrpcKeyedAcceptor(new ContractCallInvoker(Service(sqlite)));
             var result = await client.AcceptAsync("", request).AsTask().WaitAsync(Watchdog);
@@ -68,7 +68,7 @@ public sealed class AcceptorContractTests
             var entry = Assert.Single((await client.ListKeysAsync()).Entries);
             Assert.Equal(new KeyedAcceptorState("", FastCASPaxos.Model.Ballot.InitialFast(), new(3, 1), Payload), entry);
         }
-        await using var reopened = await SqliteAcceptorServer.OpenAsync(path);
+        await using var reopened = await SqliteAcceptorServer.OpenAsync(path, FatalErrors);
         var remote = new GrpcKeyedAcceptor(new ContractCallInvoker(Service(reopened)));
         Assert.Equal(AcceptorAcceptResult.Accepted(FastCASPaxos.Model.Ballot.InitialFast()),
             await remote.AcceptAsync("", request));
@@ -82,7 +82,7 @@ public sealed class AcceptorContractTests
     public async Task PrepareNeverAcceptedAndAcceptedEmptyRemainDistinct()
     {
         using var directory = new TestDirectory();
-        await using var sqlite = await SqliteAcceptorServer.OpenAsync(directory.Database("acceptor"));
+        await using var sqlite = await SqliteAcceptorServer.OpenAsync(directory.Database("acceptor"), FatalErrors);
         var invoker = new ContractCallInvoker(Service(sqlite));
         var raw = new Wire.Acceptor.AcceptorClient(invoker);
         var missing = await raw.PrepareAsync(new() { Key = "", Ballot = Ballot(1) }).ResponseAsync;
@@ -131,7 +131,7 @@ public sealed class AcceptorContractTests
     public async Task BallotBoundariesPreserveMaximumRoundAndNonnegativeProposer()
     {
         using var directory = new TestDirectory();
-        await using var sqlite = await SqliteAcceptorServer.OpenAsync(directory.Database("acceptor"));
+        await using var sqlite = await SqliteAcceptorServer.OpenAsync(directory.Database("acceptor"), FatalErrors);
         var client = new GrpcKeyedAcceptor(new ContractCallInvoker(Service(sqlite)));
         var initial = await client.PrepareAsync("key", new(new(1, 0)));
         Assert.True(initial.IsPromised);

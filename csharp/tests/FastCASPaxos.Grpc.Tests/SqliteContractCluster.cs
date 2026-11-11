@@ -24,7 +24,7 @@ internal sealed class SqliteContractCluster(TestDirectory directory) : IAsyncDis
         {
             for (var index = 0; index < 3; index++)
             {
-                var sqlite = await SqliteAcceptorServer.OpenAsync(directory.Database($"acceptor-{index}"))
+                var sqlite = await SqliteAcceptorServer.OpenAsync(directory.Database($"acceptor-{index}"), FatalErrors)
                     .AsTask().WaitAsync(Watchdog);
                 cluster._sqlite.Add(sqlite);
                 var endpoint = new DelegateAcceptor
@@ -45,7 +45,7 @@ internal sealed class SqliteContractCluster(TestDirectory directory) : IAsyncDis
 
     public GrpcRegisterService CreateRegister(int proposer, string mode = "classic", int? offlinePeer = null)
     {
-        var ballots = new SqliteProposerBallotSource(directory.Database($"proposer-{proposer}"), proposer);
+        var ballots = new SqliteProposerBallotSource(directory.Database($"proposer-{proposer}"), proposer, FatalErrors);
         _ballots.Add(ballots);
         var offline = new GrpcKeyedAcceptor(StubCallInvoker.Fail(
             new RpcException(new Status(StatusCode.Unavailable, "Peer is offline."))));

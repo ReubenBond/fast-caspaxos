@@ -83,7 +83,7 @@ public sealed class RepairHostTests
         using var directory = new TestDirectory();
         var options = DiagnosticHost.Options(directory);
         var clock = new RepairClock();
-        var node = await NodeRuntime.OpenAsync(options, timeProvider: clock);
+        var node = await NodeRuntime.OpenAsync(options, FatalErrors, timeProvider: clock);
         using var service = new NodeRepairService(node, NullLogger<NodeRepairService>.Instance);
         using var cancellation = new CancellationTokenSource();
         var unavailable = new RegisterUnavailableException(new IOException("injected inventory unavailability"));
@@ -301,7 +301,7 @@ public sealed class RepairHostTests
         var options = DiagnosticHost.Options(directory);
         options.ShutdownMode = NodeShutdownMode.Restart;
         var clock = new RepairClock();
-        await using var node = await NodeRuntime.OpenAsync(options, timeProvider: clock);
+        await using var node = await NodeRuntime.OpenAsync(options, FatalErrors, timeProvider: clock);
         await using var endpoint = await RepairEndpoint.StartAsync(node.Acceptor, node.Digests, node, node);
         var applied = await node.Registers.CompareExchangeAsync("retain", null, Payload);
         Assert.Equal(CompareExchangeStatus.Applied, applied.Status);
@@ -320,7 +320,7 @@ public sealed class RepairHostTests
         Assert.Equal(0, clock.GetTimestamp());
         await node.DisposeAsync();
 
-        await using var reopened = await NodeRuntime.OpenAsync(options, timeProvider: clock);
+        await using var reopened = await NodeRuntime.OpenAsync(options, FatalErrors, timeProvider: clock);
         Assert.Equal(before, ReadState(await reopened.Acceptor.ReadAsync("retain")));
         var retained = await reopened.Registers.ReadAsync("retain");
         Assert.Equal(Payload, retained.Value);
@@ -429,7 +429,7 @@ public sealed class RepairHostTests
         var before = ReadState(await cluster.Node.Acceptor.ReadAsync("key"));
         await cluster.Node.DisposeAsync().AsTask().WaitAsync(Watchdog);
 
-        await using var reopened = await NodeRuntime.OpenAsync(cluster.Options, timeProvider: cluster.Clock);
+        await using var reopened = await NodeRuntime.OpenAsync(cluster.Options, FatalErrors, timeProvider: cluster.Clock);
         await reopened.StopAsync().WaitAsync(Watchdog);
         Assert.Equal(1, reopened.LastRepair!.Repaired);
 
@@ -453,7 +453,7 @@ public sealed class RepairHostTests
         Assert.All(cluster.RemoteAcceptors, peer => Assert.Equal(0, Volatile.Read(ref peer.Calls)));
         Assert.All(cluster.Schedulers, scheduler => Assert.Equal(0, Volatile.Read(ref scheduler.Calls)));
         foreach (var store in cluster.Stores) Assert.Empty((await store.ListDigestsAsync()).Entries);
-        await using var reopened = await SqliteAcceptorServer.OpenAsync(cluster.Options.AcceptorDatabase);
+        await using var reopened = await SqliteAcceptorServer.OpenAsync(cluster.Options.AcceptorDatabase, FatalErrors);
         Assert.Equal(Payload, ReadState(await reopened.ReadAsync("retain")).AcceptedValue);
     }
 

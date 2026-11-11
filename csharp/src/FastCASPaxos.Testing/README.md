@@ -127,3 +127,9 @@ proposing a write after healing; already sent accepts may still commit.
 Upstream behavioral evidence lives in
 `tests/FastCASPaxos.Simulation.Tests/RegisterSimulationClusterTests.cs`.
 Downstream tests establish their application's invariants using this fixture.
+
+## Fatal storage failures
+
+`RecordingFatalErrorHandler` implements `IFatalErrorHandler` for tests which open
+SQLite storage directly. It records each reported local storage failure where a
+host's handler stops the process; the reporting component fails its operation.

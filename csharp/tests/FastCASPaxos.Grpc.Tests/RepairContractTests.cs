@@ -18,7 +18,7 @@ public sealed class RepairContractTests
     public async Task DigestWireRoundTripsOrdinalPagesEmptyCursorAndAcceptedBallot()
     {
         using var directory = new TestDirectory();
-        await using var store = await SqliteAcceptorServer.OpenAsync(directory.Database("digests"));
+        await using var store = await SqliteAcceptorServer.OpenAsync(directory.Database("digests"), FatalErrors);
         foreach (var key in new[] { "é", "a", "A", "\0", "" })
             await store.AcceptAsync(key, new(new(3, 0), ByteString.Empty, new(9, 2)));
         await store.PrepareAsync("promise", new(new(10, 2)));
@@ -42,7 +42,7 @@ public sealed class RepairContractTests
     public async Task ReadWireDistinguishesMissingUnchangedAndFullStateIncludingEmptyBytes()
     {
         using var directory = new TestDirectory();
-        await using var store = await SqliteAcceptorServer.OpenAsync(directory.Database("fetch"));
+        await using var store = await SqliteAcceptorServer.OpenAsync(directory.Database("fetch"), FatalErrors);
         await store.PrepareAsync("promise", new(new(9, 2)));
         await store.AcceptAsync("", new(new(3, 0), ByteString.Empty, new(9, 2)));
         var client = new GrpcKeyedAcceptor(new RepairContractInvoker(store));

@@ -109,7 +109,9 @@ settings fail startup with diagnostics.
 | `EventHistoryCapacity`, `MaxEventStreams`, `HeartbeatInterval` | Retained event count `1024`, concurrent SSE stream limit `64`, quiet-stream heartbeat `00:00:15`. |
 
 Durations are positive and at most one day. File paths resolve relative to the
-ASP.NET content root; parent directories are created on startup. Acceptor and
+ASP.NET content root. The parent of each database's directory exists before
+startup, and the host creates the database's directory under it; see
+[durable data directories](#durable-data-directories). Acceptor and
 allocator files have distinct paths. All nodes must configure the same full
 membership. Every peer id denotes one distinct durable acceptor: aliases,
 proxies, DNS records, and multiple processes opening the same database retain
@@ -262,7 +264,7 @@ using Grpc.Net.Client;
 using var a = GrpcChannel.ForAddress("http://127.0.0.1:5001");
 using var b = GrpcChannel.ForAddress("http://127.0.0.1:5002");
 using var c = GrpcChannel.ForAddress("http://127.0.0.1:5003");
-using var ballots = new SqliteProposerBallotSource("application-proposer.db", proposerId: 4);
+using var ballots = new SqliteProposerBallotSource("application-proposer.db", proposerId: 4, fatalErrors);
 await using var registers = new ReplicatedRegisterService(
     [
         new("a", new GrpcKeyedAcceptor(a.CreateCallInvoker())),
@@ -273,7 +275,8 @@ await using var registers = new ReplicatedRegisterService(
 ```
 
 Reference `FastCASPaxos.Sqlite` for the second example. Reserve proposer `4`
-uniquely and retain its allocator. Raw protocol callers sharing register
+uniquely and retain its allocator. `fatalErrors` is the application's
+`IFatalErrorHandler`, which stops the process after a failed local flush. Raw protocol callers sharing register
 keys preserve the register layer's `FCR2` envelopes (and retained `FCR1` values) and conditional-update
 semantics. Keep application-owned opaque protocol values in separate namespaces.
 
@@ -408,8 +411,9 @@ and retain node storage after an interrupted drain. Cancellation emits a warning
 and a `repair` cancellation event with the incomplete-durability outcome.
 `GET /v1/admin/repair` exposes `draining`, `shutdownComplete`, the target, and
 the timestamped latest observation while the HTTP listener remains available.
-The executable exits with code 0 after the selected shutdown barrier completes
-and code 1 after an interrupted barrier. Restart drain observations set
+The executable exits with code 0 after the selected shutdown barrier completes,
+code 1 after an interrupted barrier, and code 74 after a failed directory flush
+([durable data directories](#durable-data-directories)). Restart drain observations set
 `departing=false`; departure replication observations set `departing=true`.
 
 After the barrier completes or is canceled, HTTP shuts down and the node
@@ -428,6 +432,36 @@ offline cluster recovery procedure which preserves every acknowledged promise
 and allocation; fresh proposer storage receives a new unique proposer identity.
 See the [SQLite durability guide](../FastCASPaxos.Sqlite/README.md#durability-and-lifecycle)
 and [register restart guide](../FastCASPaxos.Server/README.md#membership-ballots-and-restart).
+
+### Durable data directories
+
+An acceptor's reply asserts state its database holds, so the database's
+directory and file names are durable before the node answers. Before a node's
+first start, create the parent of each database's directory on durable storage,
+for example a mount point, or a directory followed by `sync` on Linux. On every
+start, the host:
+
+1. creates each database's directory under that parent when it is missing, and
+   flushes the parent so the directory's name is durable;
+2. opens the databases, each of which flushes its directory so the database and
+   WAL names are durable.
+
+Repeating the flushes on each start makes durable a directory which a crashed
+earlier start left unflushed. Linux and macOS flush a directory with `fsync`,
+and Windows with `FlushFileBuffers` on a directory handle, which takes the right
+to add subdirectories to each parent and the right to add files to each
+database's directory. NTFS alone implements the Windows directory flush, so on
+Windows data directories lie on local NTFS volumes.
+
+A failed flush stops the host: afterward it cannot know what the device holds.
+It writes the operation, the path, and the operating-system error to standard
+error and exits with code 74 (`EX_IOERR`); the process supervisor restarts it,
+and the restarted host recovers from the device's state. A missing parent, a
+path which names a file, a denied directory open, or an unsupported volume
+attempts no flush, so a later start's flush still makes the names durable; it
+fails startup with that error. Embedders pass an
+`IFatalErrorHandler` to `NodeRuntime.OpenAsync`, which reports a failed flush to
+it and then fails the open.
 
 ## Verification
 

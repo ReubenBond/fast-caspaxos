@@ -33,7 +33,8 @@ internal sealed record NodeAdminState(
     public const string InitialEpoch = "0";
 }
 
-// Shares the retained proposer database, so reset progress and identity reservations survive together.
+// Shares the retained proposer database, so reset progress and identity reservations survive together. It opens the
+// database and WAL which the ballot source created, flushed, and holds open, and creates no file.
 internal sealed class NodeAdminStateStore : IDisposable
 {
     private readonly object _gate = new();

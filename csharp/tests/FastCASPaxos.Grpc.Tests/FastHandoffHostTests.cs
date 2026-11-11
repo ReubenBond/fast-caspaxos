@@ -60,7 +60,7 @@ public sealed class FastHandoffHostTests
         using var directory = new TestDirectory();
         var options = DiagnosticHost.Options(directory);
         options.Mode = "fast";
-        await using var node = await NodeRuntime.OpenAsync(options).WaitAsync(Watchdog);
+        await using var node = await NodeRuntime.OpenAsync(options, FatalErrors).WaitAsync(Watchdog);
         var floor = new Ballot(20, 7);
         if (promiseOnly)
             Assert.True((await node.Acceptor.PrepareAsync("key", new(floor))).IsPromised);
@@ -90,7 +90,7 @@ public sealed class FastHandoffHostTests
         using var directory = new TestDirectory();
         var options = DiagnosticHost.Options(directory);
         options.Mode = "fast";
-        await using var node = await NodeRuntime.OpenAsync(options).WaitAsync(Watchdog);
+        await using var node = await NodeRuntime.OpenAsync(options, FatalErrors).WaitAsync(Watchdog);
         var promised = new Ballot(6, 0);
         Assert.True((await node.Acceptor.PrepareAsync("key", new(promised))).IsPromised);
         var before = await node.Inspection.InspectAsync("key");
@@ -431,7 +431,7 @@ public sealed class FastHandoffHostTests
                         Id = Ids[slot], Endpoint = endpoint.Address,
                         HttpEndpoint = $"http://127.0.0.1:{11 + slot}"
                     })];
-                    cluster.Nodes.Add(await NodeRuntime.OpenAsync(options).WaitAsync(Watchdog));
+                    cluster.Nodes.Add(await NodeRuntime.OpenAsync(options, FatalErrors).WaitAsync(Watchdog));
                 }
                 return cluster;
             }

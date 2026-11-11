@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using FastCASPaxos.Model;
 using FastCASPaxos.Server;
@@ -9,6 +10,8 @@ namespace FastCASPaxos.Sqlite;
 /// Durably allocates classic ballot rounds and register-service incarnations. Configure a distinct
 /// positive proposer id per allocator database and retain that database for the identity's lifetime.
 /// Concurrent instances sharing this file serialize reservations with immediate transactions.
+/// Construction flushes the database's directory so the database and WAL names are durable; a failed
+/// flush is reported to the fatal-error handler and fails construction.
 /// </summary>
 public sealed class SqliteProposerBallotSource : IProposerBallotSource, IDisposable
 {
@@ -17,14 +20,16 @@ public sealed class SqliteProposerBallotSource : IProposerBallotSource, IDisposa
     private bool _disposed;
     public int ProposerId { get; }
 
-    public SqliteProposerBallotSource(string databasePath, int proposerId)
+    public SqliteProposerBallotSource(string databasePath, int proposerId, IFatalErrorHandler fatalErrors)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(proposerId);
+        ArgumentNullException.ThrowIfNull(fatalErrors);
         ProposerId = proposerId;
+        var fullPath = Path.GetFullPath(databasePath);
         _connection = new SqliteConnection(new SqliteConnectionStringBuilder
         {
-            DataSource = Path.GetFullPath(databasePath),
+            DataSource = fullPath,
             Mode = SqliteOpenMode.ReadWriteCreate,
             Pooling = false
         }.ToString());
@@ -51,6 +56,10 @@ public sealed class SqliteProposerBallotSource : IProposerBallotSource, IDisposa
             {
                 throw new InvalidOperationException("This allocator database belongs to a different proposer identity.");
             }
+
+            // This connection holds the WAL until disposal, so no file is created after the flush.
+            Debug.Assert(File.Exists(fullPath + "-wal"), "Initialization opens the WAL.");
+            DurableDirectory.FlushFiles(Path.GetDirectoryName(fullPath)!, fatalErrors);
         }
         catch
         {

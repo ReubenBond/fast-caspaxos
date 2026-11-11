@@ -31,7 +31,7 @@ public sealed class ClusterEpochTests
     public async Task EpochInterceptorRejectsDelayedPriorGenerationCalls(InternalMethod method)
     {
         using var directory = new TestDirectory();
-        await using var node = await NodeRuntime.OpenAsync(Options(directory));
+        await using var node = await NodeRuntime.OpenAsync(Options(directory), FatalErrors);
         var interceptor = new EpochServerInterceptor(node);
         var calls = 0;
         Task<string> Dispatch(string epoch) => interceptor.UnaryServerHandler("request", Context(method, epoch), (_, _) =>
@@ -66,7 +66,7 @@ public sealed class ClusterEpochTests
     public async Task EpochInterceptorRejectsInvalidEpochMetadata(InvalidMetadata scenario)
     {
         using var directory = new TestDirectory();
-        await using var node = await NodeRuntime.OpenAsync(Options(directory));
+        await using var node = await NodeRuntime.OpenAsync(Options(directory), FatalErrors);
         var headers = new Metadata();
         if (scenario != InvalidMetadata.Missing)
             headers.Add(EpochClientInterceptor.Header, scenario switch
@@ -101,7 +101,7 @@ public sealed class ClusterEpochTests
     public async Task EpochLeaseDrainsEntireAdmittedHandlerBeforeReset(HandlerOutcome outcome)
     {
         using var directory = new TestDirectory();
-        await using var node = await NodeRuntime.OpenAsync(Options(directory));
+        await using var node = await NodeRuntime.OpenAsync(Options(directory), FatalErrors);
         var interceptor = new EpochServerInterceptor(node);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -138,7 +138,7 @@ public sealed class ClusterEpochTests
     public async Task PublicRegisterRpcBypassesEpochHeaderButRetainsFacadeAdmission()
     {
         using var directory = new TestDirectory();
-        await using var node = await NodeRuntime.OpenAsync(Options(directory));
+        await using var node = await NodeRuntime.OpenAsync(Options(directory), FatalErrors);
         var interceptor = new EpochServerInterceptor(node);
         var service = Service(node.Registers);
         var context = new TestServerCallContext(new(), "/fastcaspaxos.v1.Register/Read");
@@ -157,7 +157,7 @@ public sealed class ClusterEpochTests
     {
         using var directory = new TestDirectory();
         var options = Options(directory);
-        var node = await NodeRuntime.OpenAsync(options);
+        var node = await NodeRuntime.OpenAsync(options, FatalErrors);
         try
         {
             var accepted = Envelope(1, Payload);
@@ -175,7 +175,7 @@ public sealed class ClusterEpochTests
             if (reopen)
             {
                 await node.DisposeAsync();
-                node = await NodeRuntime.OpenAsync(options);
+                node = await NodeRuntime.OpenAsync(options, FatalErrors);
             }
             var interceptor = new EpochServerInterceptor(node);
             var learner = new RegisterLearnerGrpcService(node.Learner, NullLogger<RegisterLearnerGrpcService>.Instance);
@@ -204,7 +204,7 @@ public sealed class ClusterEpochTests
     public async Task EpochClientInterceptorKeepsCapturedEpochAndDiagnosticHeaders(InternalMethod method)
     {
         using var directory = new TestDirectory();
-        await using var node = await NodeRuntime.OpenAsync(Options(directory));
+        await using var node = await NodeRuntime.OpenAsync(Options(directory), FatalErrors);
         var server = new EpochServerInterceptor(node);
         var transport = new EpochTestInvoker(server);
         var oldClient = transport.Intercept(new EpochClientInterceptor(node.Administration.Epoch));
