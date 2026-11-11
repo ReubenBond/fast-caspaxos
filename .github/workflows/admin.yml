@@ -18,16 +18,14 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: admin/package-lock.json
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: |
-            10.0.x
-            11.0.100-rc.2.26504.105
+          global-json-file: global.json
       - run: npm ci --no-audit --no-fund
         working-directory: admin
       - run: npm test
         working-directory: admin
-      - run: dotnet publish csharp/src/FastCASPaxos.Host/FastCASPaxos.Host.csproj -c Release -f net11.0 --verbosity minimal
+      - run: dotnet publish csharp/src/FastCASPaxos.Host/FastCASPaxos.Host.csproj -c Release --verbosity minimal
       - run: npx playwright install --with-deps chromium
         working-directory: admin
       - run: npm run test:browser
