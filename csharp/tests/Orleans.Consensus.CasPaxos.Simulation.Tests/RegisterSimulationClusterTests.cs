@@ -379,26 +379,32 @@ public sealed class RegisterSimulationClusterTests
         });
     }
 
-    [Fact]
-    public async Task DisposalLeavesAbandonedOperationsAndDelaysIncomplete()
+    [Theory]
+    [InlineData(30)]
+    [InlineData(11 * 60)]
+    public async Task DisposalLeavesAbandonedOperationsAndDelaysIncomplete(int linkDelaySeconds)
     {
         var cluster = new RegisterSimulationCluster(752);
         Task<CompareExchangeResult>? abandoned = null;
         Task? abandonedDelay = null;
+        var endOfRun = DateTimeOffset.MinValue;
         cluster.Run(async simulation =>
         {
             for (var node = 3; node <= simulation.NodeCount; node++) simulation.CrashNode(node);
-            // Member 2 receives member 1's requests 30 s later, so disposal runs work past the operation's deadline.
-            simulation.SetLinkDelay(1, 2, TimeSpan.FromSeconds(30));
+            // Member 2 receives member 1's requests long after the operation's deadline, beyond Clockwork's
+            // 10-minute single-advance bound in the second case.
+            simulation.SetLinkDelay(1, 2, TimeSpan.FromSeconds(linkDelaySeconds));
             abandoned = simulation.CreateClient().CompareExchangeAsync("key", null, new([1])).AsTask();
             abandonedDelay = simulation.DelayAsync(TimeSpan.FromSeconds(1));
             await simulation.DelayAsync(TimeSpan.FromMilliseconds(50));
+            endOfRun = simulation.TimeProvider.GetUtcNow();
         });
 
         await cluster.DisposeAsync();
 
         Assert.False(abandoned!.IsCompleted);
         Assert.False(abandonedDelay!.IsCompleted);
+        Assert.Equal(endOfRun, cluster.TimeProvider.GetUtcNow());
     }
 
     [Theory]

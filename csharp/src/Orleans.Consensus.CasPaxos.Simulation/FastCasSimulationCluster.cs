@@ -438,9 +438,10 @@ public sealed class FastCasSimulationCluster<TValue> : IAsyncDisposable
     public string GetReproductionHint(string scenarioName) => $"{scenarioName} (seed: {Seed})";
 
     /// <summary>
-    /// Stops every host and client, then disposes the Clockwork cluster, which runs the work still pending on each
-    /// node before it detaches the node. Stopped hosts and clients ignore that work, so disposal neither runs the
-    /// protocol forward nor reports to observers.
+    /// Stops every host, discards the work still pending on each node, and disposes the Clockwork cluster, then
+    /// removes the clients. Messages in flight to a node and its scheduled callbacks never run, and disposal does not
+    /// advance virtual time to their due times. Client messages already due when disposal begins are ignored, so
+    /// disposal reports nothing to observers.
     /// </summary>
     public async ValueTask DisposeAsync()
     {
@@ -453,6 +454,7 @@ public sealed class FastCasSimulationCluster<TValue> : IAsyncDisposable
         foreach (var node in Nodes)
         {
             node.Crash();
+            node.Context.DiscardPendingWork();
         }
 
         await Simulation.DisposeAsync();

@@ -64,9 +64,10 @@ cluster.Run(async simulation =>
 - `IsSimulationThread` reports whether the calling thread is the simulation's
   logical thread: an operation of this cluster's scheduler, or the thread inside `Run`.
 - Dispose outside `Run` using `await using`, after awaiting every scenario task.
-  Disposal stops every member before Clockwork runs the work still pending, so
-  nothing after the scenario reaches the protocol or the trace, and an operation
-  or delay the scenario abandoned stays incomplete.
+  Disposal stops every member and discards its pending work, including messages
+  still in flight to it, without advancing virtual time. Nothing after the
+  scenario reaches the protocol or the trace, and an operation or delay the
+  scenario abandoned stays incomplete.
 
 ### Production adapters and `ConfigureAwait(false)`
 

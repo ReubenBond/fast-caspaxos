@@ -206,8 +206,9 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
     }
 
     /// <summary>
-    /// Disposes the cluster outside <see cref="Run"/>. Disposal runs the simulated work still pending, so from its
-    /// start no fixture operation or delay completes: one a scenario abandoned stays incomplete.
+    /// Disposes the cluster outside <see cref="Run"/>. Disposal stops every member and discards its pending work
+    /// without advancing virtual time, and from its start no fixture operation or delay completes: one a scenario
+    /// abandoned stays incomplete.
     /// </summary>
     public ValueTask DisposeAsync()
     {

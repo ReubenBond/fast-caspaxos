@@ -523,6 +523,7 @@ public sealed class FastCasSimulationClusterTests
                 && !cluster.ProposerHasPendingClientRequests(FastCasAddress.Proposer(1)),
             maxIterations: 1000));
         Assert.False(cluster.TryGetResponse(pending, out _));
+        var endOfRun = cluster.TimeProvider.GetUtcNow();
 
         await cluster.DisposeAsync();
 
@@ -530,6 +531,7 @@ public sealed class FastCasSimulationClusterTests
         Assert.False(cluster.TryGetResponse(stalled, out _));
         Assert.Equal(0, history.CompletedProposals);
         Assert.All(cluster.ProposerNodes.Concat(cluster.AcceptorNodes), node => Assert.False(node.IsRunning));
+        Assert.Equal(endOfRun, cluster.TimeProvider.GetUtcNow());
     }
 
     private static Operation<TestValue, TestValue> AppendOperation(int expectedVersion, string suffix) =>
