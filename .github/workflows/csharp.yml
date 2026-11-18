@@ -49,6 +49,15 @@ jobs:
           node-version: '24'
       - name: Test
         run: dotnet test csharp/Orleans.Consensus.CasPaxos.slnx --configuration Release --verbosity minimal
+      - name: One build of each simulation assembly
+        shell: pwsh
+        run: |
+          $outputs = Get-ChildItem csharp -Recurse -File -Include 'Orleans.Testing.Simulation*.dll', 'Clockwork*.dll' | Where-Object FullName -match '[\\/]bin[\\/]'
+          $clockwork = @($outputs | Where-Object Name -like 'Clockwork*')
+          if ($clockwork) { throw "Build output contains embedded Clockwork assemblies: $($clockwork.FullName -join ', ')" }
+          $divergent = @($outputs | Group-Object Name | Where-Object { @($_.Group | Get-FileHash | Select-Object -ExpandProperty Hash -Unique).Count -gt 1 })
+          if ($divergent) { throw "Build output contains more than one build of $($divergent.Name -join ', ')." }
+          $outputs | Group-Object Name | ForEach-Object { "$($_.Name): $($_.Count) identical copies" }
       - name: Build runnable host and smoke client
         run: |
           dotnet build csharp/src/Orleans.Consensus.CasPaxos.Host/Orleans.Consensus.CasPaxos.Host.csproj --configuration Release --no-restore --verbosity minimal

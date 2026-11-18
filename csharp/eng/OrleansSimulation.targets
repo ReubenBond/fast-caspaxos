@@ -4,8 +4,9 @@
     publishes them, so this build redirects every reference to a package in Clockwork's source-build map to the package's
     source project in the checkout which OrleansSimulationSourceRoot names (Directory.Build.props), and restores none.
     Every simulation package in a build, and so its one simulation kernel, comes from that checkout. Library packages
-    become project references and the analyzers an analyzer reference. The instrumentation build and tool packages, which
-    supply build assets and a command, have no source-build equivalent here.
+    become project references and the analyzers an analyzer reference. The instrumentation build, Microsoft Testing
+    Platform integration, and tool packages, which supply build assets, a test-application hook, and a command, have no
+    source-build equivalent here; this repository's test projects are VSTest projects which need none of them.
   -->
   <PropertyGroup>
     <OrleansSimulationSourceBuildMap>$(OrleansSimulationSourceRoot)eng\Microsoft.Orleans.Testing.Simulation.SourceBuild.props</OrleansSimulationSourceBuildMap>

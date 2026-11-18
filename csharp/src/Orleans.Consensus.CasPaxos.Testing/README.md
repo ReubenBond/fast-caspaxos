@@ -140,7 +140,9 @@ Downstream tests establish their application's invariants using this fixture.
 ## Clockwork source build
 
 The simulation projects reference Clockwork's `Microsoft.Orleans.Testing.Simulation`
-package by its package ID. No feed publishes it yet, so `csharp/eng/OrleansSimulation.targets`
+packages by package ID: the kernel, and in the scenario library the framework-neutral
+`Microsoft.Orleans.Testing.Simulation.Testing` for in-memory log capture. No feed
+publishes them yet, so `csharp/eng/OrleansSimulation.targets`
 builds every package in Clockwork's source-build map
 (`eng/Microsoft.Orleans.Testing.Simulation.SourceBuild.props`) from the Clockwork checkout
 which `OrleansSimulationSourceRoot` names, and restores none. By default that is this

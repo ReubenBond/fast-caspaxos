@@ -9,6 +9,7 @@
   <ItemGroup>
     <!-- Built from Clockwork's source (eng/OrleansSimulation.targets). -->
     <PackageReference Include="Microsoft.Orleans.Testing.Simulation" />
+    <PackageReference Include="Microsoft.Orleans.Testing.Simulation.Testing" />
     <ProjectReference Include="..\Orleans.Consensus.CasPaxos.Simulation\Orleans.Consensus.CasPaxos.Simulation.csproj" />
   </ItemGroup>
 

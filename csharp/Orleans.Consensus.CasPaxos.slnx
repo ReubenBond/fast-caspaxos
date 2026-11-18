@@ -22,6 +22,7 @@
   <Folder Name="/vendor/">
     <Project Path="../vendor/Clockwork/src/Orleans.Testing.Simulation/Orleans.Testing.Simulation.csproj" />
     <Project Path="../vendor/Clockwork/src/Orleans.Testing.Simulation.Analyzers/Orleans.Testing.Simulation.Analyzers.csproj" />
+    <Project Path="../vendor/Clockwork/src/Orleans.Testing.Simulation.Testing/Orleans.Testing.Simulation.Testing.csproj" />
   </Folder>
   <Folder Name="/samples/">
     <Project Path="samples/Orleans.Consensus.CasPaxos.Grpc.Smoke/Orleans.Consensus.CasPaxos.Grpc.Smoke.csproj" />
