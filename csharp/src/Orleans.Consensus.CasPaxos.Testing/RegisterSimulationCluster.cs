@@ -121,7 +121,10 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
         RequireContext();
         ArgumentOutOfRangeException.ThrowIfLessThan(delay, TimeSpan.Zero);
         var completion = new TaskCompletionSource();
-        _runtime.Simulation.SchedulerLane.EnqueueAfter(() => completion.SetResult(), delay);
+        _runtime.Simulation.SchedulerLane.EnqueueAfter(() =>
+        {
+            if (!_disposed) completion.SetResult();
+        }, delay);
         return completion.Task;
     }
 
@@ -202,6 +205,10 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
         Record($"reply-delay node={node} ticks={delay.Ticks}");
     }
 
+    /// <summary>
+    /// Disposes the cluster outside <see cref="Run"/>. Disposal runs the simulated work still pending, so from its
+    /// start no fixture operation or delay completes: one a scenario abandoned stays incomplete.
+    /// </summary>
     public ValueTask DisposeAsync()
     {
         if (_disposed) return ValueTask.CompletedTask;
@@ -221,9 +228,14 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
         // No RunContinuationsAsynchronously: completions and captured continuations belong
         // to Clockwork, never the thread pool. The timer is disposed after every operation.
         using var deadline = TimeProvider.CreateTimer(
-            _ => completion.TrySetException(new RegisterUnavailableException()), null,
-            OperationTimeout, Timeout.InfiniteTimeSpan);
-        using var cancellation = cancellationToken.Register(() => completion.TrySetCanceled(cancellationToken));
+            _ =>
+            {
+                if (!_disposed) completion.TrySetException(new RegisterUnavailableException());
+            }, null, OperationTimeout, Timeout.InfiniteTimeSpan);
+        using var cancellation = cancellationToken.Register(() =>
+        {
+            if (!_disposed) completion.TrySetCanceled(cancellationToken);
+        });
         try
         {
             Record($"request id={request} node={client.Node} operation={operation}");

@@ -379,6 +379,28 @@ public sealed class RegisterSimulationClusterTests
         });
     }
 
+    [Fact]
+    public async Task DisposalLeavesAbandonedOperationsAndDelaysIncomplete()
+    {
+        var cluster = new RegisterSimulationCluster(752);
+        Task<CompareExchangeResult>? abandoned = null;
+        Task? abandonedDelay = null;
+        cluster.Run(async simulation =>
+        {
+            for (var node = 3; node <= simulation.NodeCount; node++) simulation.CrashNode(node);
+            // Member 2 receives member 1's requests 30 s later, so disposal runs work past the operation's deadline.
+            simulation.SetLinkDelay(1, 2, TimeSpan.FromSeconds(30));
+            abandoned = simulation.CreateClient().CompareExchangeAsync("key", null, new([1])).AsTask();
+            abandonedDelay = simulation.DelayAsync(TimeSpan.FromSeconds(1));
+            await simulation.DelayAsync(TimeSpan.FromMilliseconds(50));
+        });
+
+        await cluster.DisposeAsync();
+
+        Assert.False(abandoned!.IsCompleted);
+        Assert.False(abandonedDelay!.IsCompleted);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
