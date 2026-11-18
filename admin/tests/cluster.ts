@@ -14,7 +14,7 @@ export class Cluster {
   private ports: number[] = [];
   private data = '';
   private proxies: AdministrationProxy[] = [];
-  private readonly dll = resolve('..', 'csharp', 'src', 'FastCASPaxos.Host', 'bin', 'Release', 'net11.0', 'publish', 'FastCASPaxos.Host.dll');
+  private readonly dll = resolve('..', 'csharp', 'src', 'Orleans.Consensus.CasPaxos.Host', 'bin', 'Release', 'net11.0', 'publish', 'Orleans.Consensus.CasPaxos.Host.dll');
   constructor(private readonly options: { administrationProxies?: boolean } = {}) {}
   private hostOrigin(index: number): string { return `http://127.0.0.1:${this.ports[index + 3]}`; }
   origin(index: number): string { return this.proxies[index]?.origin ?? this.hostOrigin(index); }

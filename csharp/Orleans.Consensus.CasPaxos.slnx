@@ -1,0 +1,26 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Orleans.Consensus.CasPaxos/Orleans.Consensus.CasPaxos.csproj" />
+    <Project Path="src/Orleans.Consensus.CasPaxos.Server/Orleans.Consensus.CasPaxos.Server.csproj" />
+    <Project Path="src/Orleans.Consensus.CasPaxos.Sqlite/Orleans.Consensus.CasPaxos.Sqlite.csproj" />
+    <Project Path="src/Orleans.Consensus.CasPaxos.Grpc/Orleans.Consensus.CasPaxos.Grpc.csproj" />
+    <Project Path="src/Orleans.Consensus.CasPaxos.Rest/Orleans.Consensus.CasPaxos.Rest.csproj" />
+    <Project Path="src/Orleans.Consensus.CasPaxos.Host/Orleans.Consensus.CasPaxos.Host.csproj" />
+    <Project Path="src/Clockwork/Clockwork.csproj" />
+    <Project Path="src/Orleans.Consensus.CasPaxos.Simulation/Orleans.Consensus.CasPaxos.Simulation.csproj" />
+    <Project Path="src/Orleans.Consensus.CasPaxos.Testing/Orleans.Consensus.CasPaxos.Testing.csproj" />
+    <Project Path="src/Orleans.Consensus.CasPaxos.Simulation.Scenarios/Orleans.Consensus.CasPaxos.Simulation.Scenarios.csproj" />
+    <Project Path="src/Orleans.Consensus.CasPaxos.Simulation.Runner/Orleans.Consensus.CasPaxos.Simulation.Runner.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Orleans.Consensus.CasPaxos.Tests/Orleans.Consensus.CasPaxos.Tests.csproj" />
+    <Project Path="tests/Orleans.Consensus.CasPaxos.Server.Tests/Orleans.Consensus.CasPaxos.Server.Tests.csproj" />
+    <Project Path="tests/Orleans.Consensus.CasPaxos.Sqlite.Tests/Orleans.Consensus.CasPaxos.Sqlite.Tests.csproj" />
+    <Project Path="tests/Orleans.Consensus.CasPaxos.Grpc.Tests/Orleans.Consensus.CasPaxos.Grpc.Tests.csproj" />
+    <Project Path="tests/Orleans.Consensus.CasPaxos.Rest.Tests/Orleans.Consensus.CasPaxos.Rest.Tests.csproj" />
+    <Project Path="tests/Orleans.Consensus.CasPaxos.Simulation.Tests/Orleans.Consensus.CasPaxos.Simulation.Tests.csproj" />
+  </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/Orleans.Consensus.CasPaxos.Grpc.Smoke/Orleans.Consensus.CasPaxos.Grpc.Smoke.csproj" />
+  </Folder>
+</Solution>

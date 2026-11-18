@@ -1,0 +1,67 @@
+using System.Collections.Immutable;
+using Orleans.Consensus.CasPaxos.Simulation;
+using Orleans.Consensus.CasPaxos.Simulation.Hosts;
+using Orleans.Consensus.CasPaxos.Simulation.Scenarios;
+using Xunit;
+
+namespace Orleans.Consensus.CasPaxos.Simulation.Tests;
+
+public sealed class DeterminismScenarioTests
+{
+    [Fact]
+    public async Task SameSeedReplaysIdenticalTrace()
+    {
+        var left = await CaptureTrace(seed: 9901);
+        var right = await CaptureTrace(seed: 9901);
+
+        Assert.Equal<string>(left, right);
+    }
+
+    [Fact]
+    public async Task DifferentSeedsChangeTimedTrace()
+    {
+        var left = await CaptureTrace(seed: 9901);
+        var right = await CaptureTrace(seed: 9902);
+
+        Assert.NotEqual<string>(left, right);
+    }
+
+    private static async Task<ImmutableArray<string>> CaptureTrace(int seed)
+    {
+        await using var cluster = new FastCasSimulationCluster<StringValue>(
+            seed,
+            initialValue: default,
+            options: new FastCasSimulationOptions
+            {
+                ProposerModePolicy = ProposerModePolicy.StaticClassic,
+            },
+            startDateTime: DateTimeOffset.UnixEpoch);
+
+        cluster.CreateConfiguration(proposerCount: 3, acceptorCount: 5);
+        cluster.ConfigureMessageDelays(TimeSpan.FromMilliseconds(3), TimeSpan.FromMilliseconds(11));
+
+        var proposers = cluster.ProposerNodes.Select(node => node.Host.Address).ToArray();
+        var proposerRandom = new Random(4401);
+        var (operations, expectedValue) = TestCorpus.BuildRandomStringOperations(seed: 4402);
+        List<string> trace = [];
+
+        foreach (var operation in operations)
+        {
+            var proposer = proposers[proposerRandom.Next(proposers.Length)];
+            var response = cluster.RunProposal(proposer, operation);
+            trace.Add($"{cluster.TimeProvider.GetUtcNow():O}|proposal|{proposer}|{response.CommittedValue}");
+        }
+
+        foreach (var proposer in cluster.ProposerNodes)
+        {
+            _ = cluster.RunProposal(proposer.Host.Address, StringScenarioOperations.Read());
+            var cached = Assert.IsType<FastCasProposerHost<StringValue>>(proposer.Host).CachedValue;
+            Assert.Equal(expectedValue, cached.Value);
+            trace.Add($"{cluster.TimeProvider.GetUtcNow():O}|read|{proposer.Host.Address}|{cached}");
+        }
+
+        cluster.AssertSafetyInvariants();
+        return [.. trace];
+    }
+}
+

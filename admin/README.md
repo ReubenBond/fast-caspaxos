@@ -13,21 +13,21 @@ Prerequisites: .NET 11 SDK (pinned in `global.json`) and Node.js 24+ with npm.
 From the repository root in PowerShell:
 
 ```powershell
-dotnet build csharp\src\FastCASPaxos.Host -c Release
-dotnet run --project csharp\src\FastCASPaxos.Host -c Release --no-build
+dotnet build csharp\src\Orleans.Consensus.CasPaxos.Host -c Release
+dotnet run --project csharp\src\Orleans.Consensus.CasPaxos.Host -c Release --no-build
 ```
 
 Open `http://127.0.0.1:5000/admin/`. For a cluster, use the existing
-[host deployment guide](../csharp/src/FastCASPaxos.Grpc/README.md).
+[host deployment guide](../csharp/src/Orleans.Consensus.CasPaxos.Grpc/README.md).
 
 The host's normal build restores the lockfile with `npm ci` when needed, runs
 TypeScript checking and the Vite production build, and copies assets into
 `wwwroot/admin` beside the executable. Publish includes the same assets:
 
 ```powershell
-dotnet publish csharp\src\FastCASPaxos.Host -c Release
-Set-Location csharp\src\FastCASPaxos.Host\bin\Release\net11.0\publish
-dotnet .\FastCASPaxos.Host.dll
+dotnet publish csharp\src\Orleans.Consensus.CasPaxos.Host -c Release
+Set-Location csharp\src\Orleans.Consensus.CasPaxos.Host\bin\Release\net11.0\publish
+dotnet .\Orleans.Consensus.CasPaxos.Host.dll
 ```
 
 Run the published executable with its publish directory as the working directory,
@@ -61,7 +61,7 @@ Protect the console, diagnostic APIs, register APIs, and gRPC listener together
 using the deployment's trusted network and TLS/access-control boundary. Keys and
 payload previews are operational data. This console uses the existing CORS
 policy and native EventSource default credential behavior; deploy authentication
-consistent with that boundary. The [admin contract](../csharp/src/FastCASPaxos.Host/README.md)
+consistent with that boundary. The [admin contract](../csharp/src/Orleans.Consensus.CasPaxos.Host/README.md)
 documents integration choices for authenticated applications.
 
 ## Operating the workbench
@@ -89,7 +89,7 @@ New register versions include the generation, so pre-reset ETags remain stale.
 Cluster commands always use the fixed coordinator, independently of the
 request-host selector. Each advertised HTTP origin must be reachable from the
 coordinator as well as the browser. The
-[host administration contract](../csharp/src/FastCASPaxos.Host/README.md#cluster-administration)
+[host administration contract](../csharp/src/Orleans.Consensus.CasPaxos.Host/README.md#cluster-administration)
 documents recovery, persisted state, and trusted participant routes.
 
 **Registers:** prefix search and exclusive cursor pagination show up to 50 logical
@@ -183,7 +183,7 @@ streams and cancels requests and timers.
 
 ```powershell
 npm --prefix admin test
-dotnet publish csharp\src\FastCASPaxos.Host -c Release
+dotnet publish csharp\src\Orleans.Consensus.CasPaxos.Host -c Release
 Set-Location admin
 npx playwright install chromium
 npm run test:browser

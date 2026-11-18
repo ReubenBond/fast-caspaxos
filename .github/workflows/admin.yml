@@ -25,7 +25,7 @@ jobs:
         working-directory: admin
       - run: npm test
         working-directory: admin
-      - run: dotnet publish csharp/src/FastCASPaxos.Host/FastCASPaxos.Host.csproj -c Release --verbosity minimal
+      - run: dotnet publish csharp/src/Orleans.Consensus.CasPaxos.Host/Orleans.Consensus.CasPaxos.Host.csproj -c Release --verbosity minimal
       - run: npx playwright install --with-deps chromium
         working-directory: admin
       - run: npm run test:browser

@@ -81,29 +81,29 @@ rust-check: rust-fmt rust-lint rust-test-all rust-bench-check
 # Build the host/UI once and run three durable nodes until Ctrl+C
 [group('csharp')]
 [script('pwsh', '-NoProfile', '-File')]
-cluster $data_directory="csharp/src/FastCASPaxos.Host/data/cluster" $base_port="5001":
+cluster $data_directory="csharp/src/Orleans.Consensus.CasPaxos.Host/data/cluster" $base_port="5001":
     $ErrorActionPreference = 'Stop'
     & './csharp/samples/Run-Cluster.ps1' -DataDirectory $env:data_directory -BasePort $env:base_port
 
 # Check C# formatting without modifying files
 [group('csharp')]
 csharp-fmt:
-    cd csharp && dotnet format FastCASPaxos.slnx --verify-no-changes
+    cd csharp && dotnet format Orleans.Consensus.CasPaxos.slnx --verify-no-changes
 
 # Apply C# formatting fixes
 [group('csharp')]
 csharp-fmt-fix:
-    cd csharp && dotnet format FastCASPaxos.slnx
+    cd csharp && dotnet format Orleans.Consensus.CasPaxos.slnx
 
 # Build C# solution
 [group('csharp')]
 csharp-build:
-    cd csharp && dotnet build FastCASPaxos.slnx
+    cd csharp && dotnet build Orleans.Consensus.CasPaxos.slnx
 
 # Run C# tests
 [group('csharp')]
 csharp-test:
-    cd csharp && dotnet test FastCASPaxos.slnx
+    cd csharp && dotnet test Orleans.Consensus.CasPaxos.slnx
 
 # Full C# check: format, build, test
 [group('csharp')]

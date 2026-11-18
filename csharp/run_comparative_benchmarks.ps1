@@ -15,7 +15,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$projectPath = "src\FastCASPaxos.Simulation.Runner\FastCASPaxos.Simulation.Runner.csproj"
+$projectPath = "src\Orleans.Consensus.CasPaxos.Simulation.Runner\Orleans.Consensus.CasPaxos.Simulation.Runner.csproj"
 $configuration = if ($WaitForDebugger) { "Debug" } else { "Release" }
 
 function Get-ModeParams {

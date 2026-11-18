@@ -17,7 +17,7 @@ foreach ($name in $Scenario)
 $arguments = @(
     "run",
     "--project",
-    "src\FastCASPaxos.Simulation.Runner\FastCASPaxos.Simulation.Runner.csproj",
+    "src\Orleans.Consensus.CasPaxos.Simulation.Runner\Orleans.Consensus.CasPaxos.Simulation.Runner.csproj",
     "--"
 ) + $scenarioArgs + @(
     "--seed",

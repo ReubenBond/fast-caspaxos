@@ -18,7 +18,7 @@ $jobs = 1..$Jobs | ForEach-Object {
     Start-Job -ScriptBlock {
         param($root, $seed, $rounds, $outDir)
         Set-Location $root
-        dotnet run --project src\FastCASPaxos.Simulation.Runner\FastCASPaxos.Simulation.Runner.csproj `
+        dotnet run --project src\Orleans.Consensus.CasPaxos.Simulation.Runner\Orleans.Consensus.CasPaxos.Simulation.Runner.csproj `
             -- --scenario forking-string-corpus `
                --seed $seed `
                --rounds $rounds `

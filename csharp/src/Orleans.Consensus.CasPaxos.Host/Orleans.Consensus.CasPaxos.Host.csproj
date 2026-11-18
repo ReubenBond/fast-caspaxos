@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- A separately published executable. -->
+    <IsPackable>false</IsPackable>
+    <BuildAdminConsole Condition="'$(BuildAdminConsole)' == ''">true</BuildAdminConsole>
+    <AdminRoot>$(MSBuildProjectDirectory)\..\..\..\admin</AdminRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Orleans.Consensus.CasPaxos.Grpc\Orleans.Consensus.CasPaxos.Grpc.csproj" />
+    <ProjectReference Include="..\Orleans.Consensus.CasPaxos.Rest\Orleans.Consensus.CasPaxos.Rest.csproj" />
+    <ProjectReference Include="..\Orleans.Consensus.CasPaxos.Sqlite\Orleans.Consensus.CasPaxos.Sqlite.csproj" />
+    <InternalsVisibleTo Include="Orleans.Consensus.CasPaxos.Grpc.Tests" />
+  </ItemGroup>
+  <Target Name="BuildAdminAssets" BeforeTargets="PrepareForBuild" Condition="'$(BuildAdminConsole)' == 'true'">
+    <!-- A solution build with -f sets a global TargetFramework, which ProjectReferences to this single-target
+         project remove. Removing it here gives build.proj one request, so npm ci and Vite run once. -->
+    <MSBuild Projects="$(AdminRoot)\build.proj" Targets="Build" RemoveProperties="TargetFramework" />
+  </Target>
+  <Target Name="CopyAdminAssets" AfterTargets="Build" Condition="'$(BuildAdminConsole)' == 'true'">
+    <ItemGroup>
+      <AdminAsset Include="$(AdminRoot)\dist\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(AdminAsset)" DestinationFiles="@(AdminAsset->'$(OutDir)wwwroot\admin\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="PublishAdminAssets" AfterTargets="ComputeFilesToPublish" Condition="'$(BuildAdminConsole)' == 'true'">
+    <ItemGroup>
+      <AdminPublishAsset Include="$(AdminRoot)\dist\**\*" />
+      <ResolvedFileToPublish Include="@(AdminPublishAsset)">
+        <RelativePath>wwwroot\admin\%(AdminPublishAsset.RecursiveDir)%(AdminPublishAsset.Filename)%(AdminPublishAsset.Extension)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+</Project>

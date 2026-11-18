@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Microsoft.Orleans.Consensus.CasPaxos.Grpc</PackageId>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Grpc.AspNetCore" Version="2.84.0" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.84.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.84.0" PrivateAssets="all" />
+    <PackageReference Include="Google.Protobuf" Version="3.36.2" />
+    <ProjectReference Include="..\Orleans.Consensus.CasPaxos.Server\Orleans.Consensus.CasPaxos.Server.csproj" />
+    <Protobuf Include="Protos\register.proto" GrpcServices="Both" />
+  </ItemGroup>
+</Project>

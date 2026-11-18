@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <PackageId>Microsoft.Orleans.Consensus.CasPaxos.Sqlite</PackageId>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Orleans.Consensus.CasPaxos.Server\Orleans.Consensus.CasPaxos.Server.csproj" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="11.0.0" />
+    <InternalsVisibleTo Include="Orleans.Consensus.CasPaxos.Sqlite.Tests" />
+    <InternalsVisibleTo Include="Orleans.Consensus.CasPaxos.Grpc.Tests" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,60 @@
+using Orleans.Consensus.CasPaxos.Model;
+using Xunit;
+
+namespace Orleans.Consensus.CasPaxos.Server.Tests;
+
+public sealed class AcceptedDigestTests
+{
+    [Theory]
+    [InlineData("empty")]
+    [InlineData("abc")]
+    public void HashKnownVectorReturnsSha256(string caseId)
+    {
+        var value = caseId switch
+        {
+            "empty" => ByteString.Empty,
+            "abc" => new ByteString("abc"u8),
+            _ => throw new ArgumentOutOfRangeException(nameof(caseId))
+        };
+        var expected = caseId == "abc"
+            ? "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD"
+            : "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855";
+
+        Assert.Equal(Convert.FromHexString(expected), AcceptedDigest.Hash(value).ToArray());
+    }
+
+    [Fact]
+    public void HashDefaultValueThrows() =>
+        Assert.Throws<ArgumentException>(() => AcceptedDigest.Hash(default));
+
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(-1, 1)]
+    [InlineData(1, -1)]
+    public void ValidateInvalidAcceptedBallotThrows(int round, int proposer) =>
+        Assert.Throws<ArgumentException>(() => new AcceptedDigest(new(round, proposer), new(new byte[32])).Validate());
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(31)]
+    [InlineData(33)]
+    public void ValidateInvalidHashLengthThrows(int length) =>
+        Assert.Throws<ArgumentException>(() => new AcceptedDigest(new(1, 1), new(new byte[length])).Validate());
+
+    [Fact]
+    public void ValidateDefaultHashThrows() =>
+        Assert.Throws<ArgumentException>(() => new AcceptedDigest(new(1, 1), default).Validate());
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void ValidateFastOrClassicDigestAcceptsAndComparesBothFields(int proposer)
+    {
+        var digest = new AcceptedDigest(new(1, proposer), new(new byte[32]));
+        digest.Validate();
+
+        Assert.Equal(digest, new AcceptedDigest(new(1, proposer), new(new byte[32])));
+        Assert.NotEqual(digest, digest with { AcceptedBallot = new Ballot(2, proposer) });
+        Assert.NotEqual(digest, digest with { ValueHash = new ByteString(Enumerable.Repeat((byte)1, 32).ToArray()) });
+    }
+}

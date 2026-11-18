@@ -76,7 +76,7 @@ foreach ($mode in $Mode) {
                 $topoParams = Get-TopologyParams $topo
 
                 $arguments = @(
-                    "run", "--project", "src\FastCASPaxos.Simulation.Runner\FastCASPaxos.Simulation.Runner.csproj",
+                    "run", "--project", "src\Orleans.Consensus.CasPaxos.Simulation.Runner\Orleans.Consensus.CasPaxos.Simulation.Runner.csproj",
                     "--",
                     "--scenario", "benchmark-workload",
                     "--seed", $Seed,

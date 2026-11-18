@@ -15,8 +15,8 @@ try {
     foreach ($file in @('.editorconfig', 'Directory.Build.props', 'Directory.Build.targets', 'Directory.Packages.props')) {
         Copy-Item (Join-Path $upstream $file) (Join-Path $source $file)
     }
-    foreach ($project in @('FastCASPaxos.Core', 'FastCASPaxos.Server', 'FastCASPaxos.Grpc',
-        'Clockwork', 'FastCASPaxos.Simulation', 'FastCASPaxos.Testing')) {
+    foreach ($project in @('Orleans.Consensus.CasPaxos', 'Orleans.Consensus.CasPaxos.Server', 'Orleans.Consensus.CasPaxos.Grpc',
+        'Clockwork', 'Orleans.Consensus.CasPaxos.Simulation', 'Orleans.Consensus.CasPaxos.Testing')) {
         $projectSource = Join-Path $upstream "src/$project"
         foreach ($file in Get-ChildItem $projectSource -Recurse -File) {
             $relative = [IO.Path]::GetRelativePath($projectSource, $file.FullName)
@@ -76,8 +76,8 @@ dotnet_diagnostic.CA2213.severity = error
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../dependency/csharp/src/FastCASPaxos.Grpc/FastCASPaxos.Grpc.csproj" />
-    <ProjectReference Include="../dependency/csharp/src/FastCASPaxos.Testing/FastCASPaxos.Testing.csproj" />
+    <ProjectReference Include="../dependency/csharp/src/Orleans.Consensus.CasPaxos.Grpc/Orleans.Consensus.CasPaxos.Grpc.csproj" />
+    <ProjectReference Include="../dependency/csharp/src/Orleans.Consensus.CasPaxos.Testing/Orleans.Consensus.CasPaxos.Testing.csproj" />
   </ItemGroup>
 </Project>
 '@ | Set-Content (Join-Path $consumer 'Consumer.csproj')
@@ -85,9 +85,9 @@ dotnet_diagnostic.CA2213.severity = error
 #if !EMBEDDING_REPOSITORY
 #error The consuming project must retain its own build policy.
 #endif
-using FastCASPaxos.Grpc;
-using FastCASPaxos.Server;
-using FastCASPaxos.Testing;
+using Orleans.Consensus.CasPaxos.Grpc;
+using Orleans.Consensus.CasPaxos.Server;
+using Orleans.Consensus.CasPaxos.Testing;
 
 using var client = new GrpcRegisterClient([new Uri("https://register.example")]);
 await using var simulation = new RegisterSimulationCluster(seed: 42);
@@ -126,7 +126,7 @@ Console.WriteLine("Embedded production and framework-neutral testing closures ex
     <TrimmerSingleWarn>false</TrimmerSingleWarn>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../dependency/csharp/src/FastCASPaxos.Grpc/FastCASPaxos.Grpc.csproj" />
+    <ProjectReference Include="../dependency/csharp/src/Orleans.Consensus.CasPaxos.Grpc/Orleans.Consensus.CasPaxos.Grpc.csproj" />
   </ItemGroup>
 </Project>
 '@ | Set-Content (Join-Path $clientSmoke 'ClientSmoke.csproj')
@@ -134,8 +134,8 @@ Console.WriteLine("Embedded production and framework-neutral testing closures ex
 #if !EMBEDDING_REPOSITORY
 #error The consuming project must retain its own build policy.
 #endif
-using FastCASPaxos.Grpc;
-using FastCASPaxos.Server;
+using Orleans.Consensus.CasPaxos.Grpc;
+using Orleans.Consensus.CasPaxos.Server;
 using Grpc.Core;
 
 using var client = new GrpcRegisterClient([new Uri("http://127.0.0.1:1")],

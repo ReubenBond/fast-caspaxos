@@ -215,6 +215,11 @@ This repository includes TLA+ and [Quint models](quint/README.md), plus a determ
 
 ## C# durable keyed acceptors
 
+The C# implementation is the `Orleans.Consensus.CasPaxos` family: the protocol
+core and the `.Server`, `.Grpc`, and `.Sqlite` libraries, packaged as
+`Microsoft.Orleans.Consensus.CasPaxos*`, plus the separately published
+`Orleans.Consensus.CasPaxos.Host` executable, which serves the `.Rest` endpoints.
+
 Register reads first observe durable acceptor state in one round trip. Matching
 accepted ballots and versioned values establish a read at a classic majority
 or a fast quorum, according to the accepted ballot. A majority of unaccepted
@@ -227,7 +232,7 @@ Hosts periodically compare persisted SHA-256/accepted-ballot digests and repair
 divergent replicas through consensus. Graceful shutdown waits for each local
 key to reach its target replication factor on the remaining hosts, bounded by
 the shutdown cancellation token. See the
-[durability lifecycle guide](csharp/src/FastCASPaxos.Grpc/README.md#lifecycle-and-durable-operations)
+[durability lifecycle guide](csharp/src/Orleans.Consensus.CasPaxos.Grpc/README.md#lifecycle-and-durable-operations)
 for repair staging, configuration, and storage migration.
 
 ### Run a local three-node cluster
@@ -263,7 +268,7 @@ Relative data paths resolve from the repository root. For local development the
 launcher creates the data directory's parent; each node creates the data
 directory and makes its name durable. By default, all six
 SQLite databases and their WAL files live in the git-ignored
-`csharp/src/FastCASPaxos.Host/data/cluster` directory. Restart with the same
+`csharp/src/Orleans.Consensus.CasPaxos.Host/data/cluster` directory. Restart with the same
 directory to retain values, acceptor identities, and proposer allocators.
 Use a separate directory and six separate ports for each concurrent cluster.
 
@@ -276,33 +281,33 @@ the invocation's remaining hosts a shared 10-second window to exit before
 force-stopping them. These emergency stops use SQLite crash recovery on
 restart; an interrupted write may require application reconciliation.
 Stop/restart retains the durable files.
-The [single-node commands](csharp/src/FastCASPaxos.Grpc/README.md#three-process-example)
+The [single-node commands](csharp/src/Orleans.Consensus.CasPaxos.Grpc/README.md#three-process-example)
 support running each member in its own terminal.
 
 ### APIs and storage
 
-`FastCASPaxos.Host` serves the protocol and replicated register APIs over
+`Orleans.Consensus.CasPaxos.Host` serves the protocol and replicated register APIs over
 gRPC, plus raw-byte conditional register APIs over HTTP/REST, backed by SQLite
 and a configured fixed peer set. The gRPC package includes remote adapters for
-both interfaces. [Per-node diagnostics](csharp/src/FastCASPaxos.Host/README.md)
+both interfaces. [Per-node diagnostics](csharp/src/Orleans.Consensus.CasPaxos.Host/README.md)
 provide peer discovery, read-only local snapshots, and SSE streams for protocol
 messages, durable state changes, and quorum operation outcomes.
-The [REST guide](csharp/src/FastCASPaxos.Rest/README.md) covers
+The [REST guide](csharp/src/Orleans.Consensus.CasPaxos.Rest/README.md) covers
 ETags, conditional PUT, pagination, and curl/PowerShell usage.
-See the [gRPC server guide](csharp/src/FastCASPaxos.Grpc/README.md)
+See the [gRPC server guide](csharp/src/Orleans.Consensus.CasPaxos.Grpc/README.md)
 for executable setup, a three-process example, client usage, and operational
 configuration.
 
 `ReplicatedRegisterService` provides quorum-backed `Read`, `CompareExchange`,
 and paginated logical key listing over those acceptors. It uses stable opaque
 versions, durable proposer ballot allocation, and explicit uncertain write
-outcomes. See the [replicated register guide](csharp/src/FastCASPaxos.Server/README.md)
+outcomes. See the [replicated register guide](csharp/src/Orleans.Consensus.CasPaxos.Server/README.md)
 for API usage and deployment guarantees.
 
 The C# implementation includes a transport-independent keyed protocol API and a
 SQLite-backed server for `Prepare`, `Accept`, and paginated local key inventory.
 The server persists promises and accepted values in WAL transactions and releases
-responses after durable commit. See the [SQLite acceptor guide](csharp/src/FastCASPaxos.Sqlite/README.md)
+responses after durable commit. See the [SQLite acceptor guide](csharp/src/Orleans.Consensus.CasPaxos.Sqlite/README.md)
 for the public contracts, lifecycle, and an example.
 
 ## Testing, etc

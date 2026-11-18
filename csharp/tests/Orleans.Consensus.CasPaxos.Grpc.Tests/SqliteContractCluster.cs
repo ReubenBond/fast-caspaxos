@@ -1,0 +1,71 @@
+using System.Collections.Immutable;
+using Orleans.Consensus.CasPaxos.Protocol;
+using Orleans.Consensus.CasPaxos.Server;
+using Orleans.Consensus.CasPaxos.Sqlite;
+using Grpc.Core;
+using Microsoft.Extensions.Logging.Abstractions;
+using static Orleans.Consensus.CasPaxos.Grpc.Tests.ContractTestSupport;
+
+namespace Orleans.Consensus.CasPaxos.Grpc.Tests;
+
+// File-backed end-to-end domain/protobuf composition, deliberately no HTTP transport.
+internal sealed class SqliteContractCluster(TestDirectory directory) : IAsyncDisposable
+{
+    private readonly List<SqliteAcceptorServer> _sqlite = [];
+    private readonly List<ReplicatedRegisterService> _registers = [];
+    private readonly List<SqliteProposerBallotSource> _ballots = [];
+    public List<DelegateAcceptor> Endpoints { get; } = [];
+    public List<GrpcKeyedAcceptor> Clients { get; } = [];
+
+    public static async Task<SqliteContractCluster> OpenAsync(TestDirectory directory)
+    {
+        var cluster = new SqliteContractCluster(directory);
+        try
+        {
+            for (var index = 0; index < 3; index++)
+            {
+                var sqlite = await SqliteAcceptorServer.OpenAsync(directory.Database($"acceptor-{index}"), FatalErrors)
+                    .AsTask().WaitAsync(Watchdog);
+                cluster._sqlite.Add(sqlite);
+                var endpoint = new DelegateAcceptor
+                {
+                    Read = sqlite.ReadAsync,
+                    Prepare = sqlite.PrepareAsync,
+                    Accept = sqlite.AcceptAsync,
+                    List = sqlite.ListKeysAsync,
+                };
+                cluster.Endpoints.Add(endpoint);
+                cluster.Clients.Add(new(new ContractCallInvoker(Service(endpoint), digests:
+                    new AcceptorDigestGrpcService(sqlite, endpoint, NullLogger<AcceptorDigestGrpcService>.Instance))));
+            }
+            return cluster;
+        }
+        catch { await cluster.DisposeAsync(); throw; }
+    }
+
+    public GrpcRegisterService CreateRegister(int proposer, string mode = "classic", int? offlinePeer = null)
+    {
+        var ballots = new SqliteProposerBallotSource(directory.Database($"proposer-{proposer}"), proposer, FatalErrors);
+        _ballots.Add(ballots);
+        var offline = new GrpcKeyedAcceptor(StubCallInvoker.Fail(
+            new RpcException(new Status(StatusCode.Unavailable, "Peer is offline."))));
+        ImmutableArray<AcceptorPeer> routes = [.. Clients.Select((client, index) =>
+            new AcceptorPeer($"peer-{index}", index == offlinePeer ? offline : client))];
+        var service = new ReplicatedRegisterService(routes, ballots, new()
+        {
+            Mode = ProposerModePolicy.Parse(mode),
+            OperationTimeout = TimeSpan.FromSeconds(30),
+            AttemptTimeout = TimeSpan.FromSeconds(10),
+            RetryBackoff = TimeSpan.FromMilliseconds(1),
+        });
+        _registers.Add(service);
+        return new(new ContractCallInvoker(register: Service(service)));
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var service in _registers) await service.DisposeAsync().AsTask().WaitAsync(Watchdog);
+        foreach (var ballots in _ballots) ballots.Dispose();
+        foreach (var sqlite in _sqlite) await sqlite.DisposeAsync().AsTask().WaitAsync(Watchdog);
+    }
+}

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Orleans.Consensus.CasPaxos.Simulation\Orleans.Consensus.CasPaxos.Simulation.csproj" />
+    <ProjectReference Include="..\Orleans.Consensus.CasPaxos.Server\Orleans.Consensus.CasPaxos.Server.csproj" />
+  </ItemGroup>
+</Project>

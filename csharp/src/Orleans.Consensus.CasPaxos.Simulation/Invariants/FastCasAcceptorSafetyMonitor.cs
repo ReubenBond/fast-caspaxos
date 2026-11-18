@@ -1,0 +1,382 @@
+using System.Collections.Immutable;
+using Orleans.Consensus.CasPaxos.Messages;
+using Orleans.Consensus.CasPaxos.Model;
+using Orleans.Consensus.CasPaxos.Simulation.Contracts;
+using System.Globalization;
+
+namespace Orleans.Consensus.CasPaxos.Simulation.Invariants;
+
+public readonly record struct FastCasAcceptorStateSnapshot<TValue>(
+    FastCasAddress Acceptor,
+    bool IsRunning,
+    bool IsSuspended,
+    Ballot PromisedBallot,
+    Ballot AcceptedBallot,
+    TValue AcceptedValue)
+    where TValue : IVersionedValue<TValue>;
+
+public sealed record AcceptorSafetyMonitorArtifact(
+    string SchemaVersion,
+    int UpdateCount,
+    string? LastObservedAt,
+    string? LastUpdatedAcceptor,
+    ImmutableArray<AcceptorSafetyMonitorCommitArtifact> Commits,
+    ImmutableArray<AcceptorSafetyMonitorSnapshotArtifact> FinalSnapshot);
+
+public sealed record AcceptorSafetyMonitorCommitArtifact(
+    int Sequence,
+    string ObservedAt,
+    string TriggeredByAcceptor,
+    string Ballot,
+    int Version,
+    string? Value,
+    ImmutableArray<string> Witnesses);
+
+public sealed record AcceptorSafetyMonitorSnapshotArtifact(
+    string Acceptor,
+    bool IsRunning,
+    bool IsSuspended,
+    string PromisedBallot,
+    string AcceptedBallot,
+    int AcceptedVersion,
+    string? AcceptedValue);
+
+public sealed class FastCasAcceptorSafetyMonitor<TValue>
+    where TValue : IVersionedValue<TValue>
+{
+    private const string SchemaVersion = "fast-caspaxos-acceptor-safety-monitor-v1";
+
+    private readonly Dictionary<FastCasAddress, string> _formattedAddressCache = [];
+    private readonly List<ObservedCommit> _commitHistory = [];
+    private readonly SnapshotComparer _snapshotComparer;
+    private FastCasAcceptorStateSnapshot<TValue>[] _lastSnapshot =
+        Array.Empty<FastCasAcceptorStateSnapshot<TValue>>();
+    private DateTimeOffset? _lastObservedAt;
+    private FastCasAddress? _lastUpdatedAcceptor;
+    private AcceptorSafetyMonitorArtifact? _cachedArtifact;
+    private bool _artifactDirty = true;
+
+    public FastCasAcceptorSafetyMonitor() => _snapshotComparer = new SnapshotComparer(this);
+
+    public int UpdateCount { get; private set; }
+
+    /// <summary>
+    /// Clears all accumulated state so that subsequent observations start from a clean baseline.
+    /// Used when the simulation reinitializes all nodes to model a fresh register.
+    /// </summary>
+    public void Reset()
+    {
+        _commitHistory.Clear();
+        _lastSnapshot = [];
+        _lastObservedAt = null;
+        _lastUpdatedAcceptor = null;
+        _cachedArtifact = null;
+        _artifactDirty = true;
+        UpdateCount = 0;
+    }
+
+    public void Observe(
+        DateTimeOffset timestamp,
+        FastCasAddress updatedAcceptor,
+        ReadOnlySpan<FastCasAcceptorStateSnapshot<TValue>> snapshots)
+    {
+        var orderedSnapshots = snapshots.ToArray();
+
+        if (orderedSnapshots.Length > 1)
+        {
+            Array.Sort(orderedSnapshots, _snapshotComparer);
+        }
+
+        UpdateCount++;
+        _lastObservedAt = timestamp;
+        _lastUpdatedAcceptor = updatedAcceptor;
+        _lastSnapshot = orderedSnapshots;
+        _artifactDirty = true;
+
+        ValidateAcceptedBallotConsistency(timestamp, updatedAcceptor, _lastSnapshot);
+
+        if (!TryResolveCommittedValue(timestamp, updatedAcceptor, _lastSnapshot, out var committed))
+        {
+            return;
+        }
+
+        if (_commitHistory.Count > 0)
+        {
+            var previous = _commitHistory[^1];
+            if (EqualityComparer<TValue>.Default.Equals(previous.Value, committed.Value))
+            {
+                return;
+            }
+
+            if (committed.Value.Version <= previous.Value.Version)
+            {
+                throw new InvalidOperationException(
+                    $"{CreateContextPrefix(timestamp, updatedAcceptor)} Inferred committed value {committed.Value} at {committed.Ballot} regressed from {previous.Value} at {previous.Ballot}.");
+            }
+
+            if (!committed.Value.IsValidSuccessorTo(previous.Value))
+            {
+                throw new InvalidOperationException(
+                    $"{CreateContextPrefix(timestamp, updatedAcceptor)} Inferred committed value {committed.Value} at {committed.Ballot} is not a valid successor to {previous.Value} at {previous.Ballot}.");
+            }
+        }
+
+        _commitHistory.Add(
+            new ObservedCommit(
+                timestamp,
+                updatedAcceptor,
+                committed.Ballot,
+                committed.Value,
+                committed.Witnesses));
+    }
+
+    public AcceptorSafetyMonitorArtifact CreateArtifact()
+    {
+        if (!_artifactDirty && _cachedArtifact is not null)
+        {
+            return _cachedArtifact;
+        }
+
+        var artifact = new AcceptorSafetyMonitorArtifact(
+            SchemaVersion,
+            UpdateCount,
+            _lastObservedAt?.ToString("O", CultureInfo.InvariantCulture),
+            _lastUpdatedAcceptor is { } lastUpdatedAcceptor ? GetFormattedAddress(lastUpdatedAcceptor) : null,
+            CreateCommitArtifacts(),
+            CreateSnapshotArtifacts());
+        _cachedArtifact = artifact;
+        _artifactDirty = false;
+        return artifact;
+    }
+
+    private static void ValidateAcceptedBallotConsistency(
+        DateTimeOffset timestamp,
+        FastCasAddress updatedAcceptor,
+        FastCasAcceptorStateSnapshot<TValue>[] snapshots)
+    {
+        foreach (var ballotGroup in snapshots
+            .Where(snapshot => !snapshot.AcceptedBallot.IsZero)
+            .GroupBy(snapshot => snapshot.AcceptedBallot)
+            .OrderBy(group => group.Key))
+        {
+            if (ballotGroup.Key.IsFastRoundBallot)
+            {
+                continue;
+            }
+
+            var distinctValues = ballotGroup
+                .Select(snapshot => snapshot.AcceptedValue)
+                .Distinct()
+                .ToArray();
+            if (distinctValues.Length <= 1)
+            {
+                continue;
+            }
+
+            var detail = string.Join(
+                ", ",
+                ballotGroup
+                    .Select(snapshot => $"{snapshot.Acceptor}={snapshot.AcceptedValue}"));
+            throw new InvalidOperationException(
+                $"{CreateContextPrefix(timestamp, updatedAcceptor)} Accepted ballot {ballotGroup.Key} has conflicting values across acceptors: [{detail}].");
+        }
+    }
+
+    private static bool TryResolveCommittedValue(
+        DateTimeOffset timestamp,
+        FastCasAddress updatedAcceptor,
+        FastCasAcceptorStateSnapshot<TValue>[] snapshots,
+        out ResolvedCommit committed)
+    {
+        var acceptorCount = snapshots.Length;
+        var candidates = snapshots
+            .Where(snapshot => !snapshot.AcceptedBallot.IsZero)
+            .GroupBy(snapshot => snapshot.AcceptedBallot)
+            .SelectMany(group => ResolveCommittedCandidates(timestamp, updatedAcceptor, group, acceptorCount))
+            .OrderBy(candidate => candidate.Ballot)
+            .ToArray();
+
+        if (candidates.Length == 0)
+        {
+            committed = default;
+            return false;
+        }
+
+        if (candidates.Length > 1)
+        {
+            var detail = string.Join(
+                ", ",
+                candidates.Select(candidate => $"{candidate.Ballot}=>{candidate.Value}"));
+            throw new InvalidOperationException(
+                $"{CreateContextPrefix(timestamp, updatedAcceptor)} Multiple committed ballots were inferred from the acceptor snapshot: [{detail}].");
+        }
+
+        committed = candidates[0];
+        return true;
+    }
+
+    private static ResolvedCommit[] ResolveCommittedCandidates(
+        DateTimeOffset timestamp,
+        FastCasAddress updatedAcceptor,
+        IGrouping<Ballot, FastCasAcceptorStateSnapshot<TValue>> ballotGroup,
+        int acceptorCount)
+    {
+        var ballotWitnesses = ballotGroup.ToArray();
+        if (ballotGroup.Key.IsClassicRoundBallot)
+        {
+            if (!HasQuorum(ballotGroup.Key, ballotWitnesses.Length, acceptorCount))
+            {
+                return Array.Empty<ResolvedCommit>();
+            }
+
+            var witnesses = ImmutableArray.CreateBuilder<FastCasAddress>(ballotWitnesses.Length);
+            foreach (var witness in ballotWitnesses)
+            {
+                witnesses.Add(witness.Acceptor);
+            }
+
+            return
+            [
+                new ResolvedCommit(
+                    ballotGroup.Key,
+                    ballotWitnesses[0].AcceptedValue,
+                    witnesses.MoveToImmutable()),
+            ];
+        }
+
+        var committedValueGroups = ballotWitnesses
+            .GroupBy(snapshot => snapshot.AcceptedValue)
+            .Select(group => group.ToArray())
+            .Where(group => HasQuorum(ballotGroup.Key, group.Length, acceptorCount))
+            .ToArray();
+        if (committedValueGroups.Length > 1)
+        {
+            var detail = string.Join(
+                ", ",
+                committedValueGroups.Select(group => $"{group[0].AcceptedValue}=>[{string.Join(", ", group.Select(snapshot => snapshot.Acceptor))}]"));
+            throw new InvalidOperationException(
+                $"{CreateContextPrefix(timestamp, updatedAcceptor)} Fast ballot {ballotGroup.Key} has multiple values with fast quorum: [{detail}].");
+        }
+
+        if (committedValueGroups.Length == 0)
+        {
+            return Array.Empty<ResolvedCommit>();
+        }
+
+        var committedWitnesses = committedValueGroups[0];
+        return
+        [
+            new ResolvedCommit(
+                ballotGroup.Key,
+                committedWitnesses[0].AcceptedValue,
+                [.. committedWitnesses.Select(witness => witness.Acceptor)]),
+        ];
+    }
+
+    private static bool HasQuorum(Ballot ballot, int responses, int acceptorCount)
+    {
+        if (ballot.IsFastRoundBallot)
+        {
+            return 4 * responses >= 3 * acceptorCount;
+        }
+
+        return 2 * responses > acceptorCount;
+    }
+
+    private static string? FormatValue(TValue value) =>
+        EqualityComparer<TValue>.Default.Equals(value, default)
+            ? null
+            : value.ToString();
+
+    private string GetFormattedAddress(FastCasAddress address)
+    {
+        if (!_formattedAddressCache.TryGetValue(address, out var formatted))
+        {
+            formatted = address.ToString();
+            _formattedAddressCache.Add(address, formatted);
+        }
+
+        return formatted;
+    }
+
+    private ImmutableArray<AcceptorSafetyMonitorCommitArtifact> CreateCommitArtifacts()
+    {
+        var commits = ImmutableArray.CreateBuilder<AcceptorSafetyMonitorCommitArtifact>(_commitHistory.Count);
+        foreach (var commit in _commitHistory)
+        {
+            commits.Add(CreateCommitArtifact(commits.Count + 1, commit));
+        }
+
+        return commits.MoveToImmutable();
+    }
+
+    private ImmutableArray<AcceptorSafetyMonitorSnapshotArtifact> CreateSnapshotArtifacts()
+    {
+        var snapshots = ImmutableArray.CreateBuilder<AcceptorSafetyMonitorSnapshotArtifact>(_lastSnapshot.Length);
+        foreach (var snapshot in _lastSnapshot)
+        {
+            snapshots.Add(CreateSnapshotArtifact(snapshot));
+        }
+
+        return snapshots.MoveToImmutable();
+    }
+
+    private AcceptorSafetyMonitorCommitArtifact CreateCommitArtifact(int sequence, ObservedCommit commit)
+    {
+        var witnesses = ImmutableArray.CreateBuilder<string>(commit.Witnesses.Length);
+        foreach (var witness in commit.Witnesses)
+        {
+            witnesses.Add(GetFormattedAddress(witness));
+        }
+
+        return new AcceptorSafetyMonitorCommitArtifact(
+            Sequence: sequence,
+            ObservedAt: commit.Timestamp.ToString("O", CultureInfo.InvariantCulture),
+            TriggeredByAcceptor: GetFormattedAddress(commit.UpdatedAcceptor),
+            Ballot: commit.Ballot.ToString(),
+            Version: commit.Value.Version,
+            Value: FormatValue(commit.Value),
+            Witnesses: witnesses.MoveToImmutable());
+    }
+
+    private AcceptorSafetyMonitorSnapshotArtifact CreateSnapshotArtifact(
+        FastCasAcceptorStateSnapshot<TValue> snapshot) =>
+        new(
+            Acceptor: GetFormattedAddress(snapshot.Acceptor),
+            IsRunning: snapshot.IsRunning,
+            IsSuspended: snapshot.IsSuspended,
+            PromisedBallot: snapshot.PromisedBallot.ToString(),
+            AcceptedBallot: snapshot.AcceptedBallot.ToString(),
+            AcceptedVersion: snapshot.AcceptedValue.GetVersionOrDefault(),
+            AcceptedValue: FormatValue(snapshot.AcceptedValue));
+
+    private static string CreateContextPrefix(DateTimeOffset timestamp, FastCasAddress updatedAcceptor) =>
+        string.Create(
+            CultureInfo.InvariantCulture,
+            $"Acceptor safety monitor detected an inconsistency after {updatedAcceptor} updated at {timestamp:O}.");
+
+    private sealed class SnapshotComparer(FastCasAcceptorSafetyMonitor<TValue> owner)
+        : IComparer<FastCasAcceptorStateSnapshot<TValue>>
+    {
+        private readonly FastCasAcceptorSafetyMonitor<TValue> _owner = owner;
+
+        public int Compare(
+            FastCasAcceptorStateSnapshot<TValue> left,
+            FastCasAcceptorStateSnapshot<TValue> right) =>
+            StringComparer.Ordinal.Compare(
+                _owner.GetFormattedAddress(left.Acceptor),
+                _owner.GetFormattedAddress(right.Acceptor));
+    }
+
+    private readonly record struct ResolvedCommit(
+        Ballot Ballot,
+        TValue Value,
+        ImmutableArray<FastCasAddress> Witnesses);
+
+    private readonly record struct ObservedCommit(
+        DateTimeOffset Timestamp,
+        FastCasAddress UpdatedAcceptor,
+        Ballot Ballot,
+        TValue Value,
+        ImmutableArray<FastCasAddress> Witnesses);
+}
