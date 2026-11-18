@@ -1,10 +1,10 @@
-using Clockwork;
 using Orleans.Consensus.CasPaxos.Messages;
 using Orleans.Consensus.CasPaxos.Model;
 using Orleans.Consensus.CasPaxos.Protocol;
 using Orleans.Consensus.CasPaxos.Simulation.Contracts;
 using Orleans.Consensus.CasPaxos.Simulation;
 using Orleans.Consensus.CasPaxos.Simulation.Hosts;
+using Orleans.Testing.Simulation;
 using Xunit;
 
 namespace Orleans.Consensus.CasPaxos.Simulation.Tests;
@@ -465,6 +465,73 @@ public sealed class FastCasSimulationClusterTests
         Assert.Contains("suspend acceptor-1", diagnostics);
     }
 
+    [Fact]
+    public async Task LinkLatencyOverrideEnablesDefaultDelaysOnOtherLinks()
+    {
+        await using var cluster = new FastCasSimulationCluster<TestValue>(
+            seed: 988,
+            initialValue: default,
+            startDateTime: DateTimeOffset.UnixEpoch);
+        cluster.CreateConfiguration(proposerCount: 1, acceptorCount: 3);
+        var probe = FastCasAddress.Client(9);
+        var received = new List<DateTimeOffset>();
+        cluster.Transport.RegisterEndpoint(new(probe, cluster.Simulation.SchedulerLane, _ => received.Add(cluster.TimeProvider.GetUtcNow())));
+        var message = new FastCasPrepareRequestMessage<TestValue>(FastCasAddress.Proposer(1), probe, new PrepareRequest(Ballot.InitialClassic(1)));
+
+        // Delivery is immediate until delays are enabled.
+        Assert.Equal(DeliveryStatus.Success, cluster.Transport.Send(message));
+        Assert.True(cluster.RunUntil(() => received.Count == 1, maxIterations: 100));
+        Assert.Equal(DateTimeOffset.UnixEpoch, received[0]);
+
+        // A latency override enables delays, and links without one take the default 1 ms plus up to 5 ms of jitter.
+        cluster.ConfigureLinkLatency(FastCasAddress.Proposer(1), FastCasAddress.Acceptor(2), TimeSpan.FromMilliseconds(40), TimeSpan.Zero);
+        var sentAt = cluster.TimeProvider.GetUtcNow();
+        Assert.Equal(DeliveryStatus.Success, cluster.Transport.Send(message));
+        Assert.True(cluster.RunUntil(() => received.Count == 2, maxIterations: 100));
+        Assert.InRange(received[1] - sentAt, TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(6));
+    }
+
+    [Fact]
+    public async Task DisposeStopsHostsSoPendingWorkNeitherRunsTheProtocolNorReachesObservers()
+    {
+        var history = new RecordingHistoryObserver();
+        var cluster = new FastCasSimulationCluster<TestValue>(
+            seed: 989,
+            initialValue: default,
+            options: new FastCasSimulationOptions
+            {
+                ProposerModePolicy = ProposerModePolicy.StaticClassic,
+                HistoryObserver = history,
+            },
+            startDateTime: DateTimeOffset.UnixEpoch);
+        cluster.CreateConfiguration(proposerCount: 2, acceptorCount: 3);
+        cluster.ConfigureMessageDelays(TimeSpan.FromMilliseconds(1), TimeSpan.Zero);
+
+        // Proposer 2 cannot reach any acceptor, so its retries never end on their own.
+        foreach (var acceptor in cluster.AcceptorNodes)
+        {
+            cluster.CreateBidirectionalPartition(FastCasAddress.Proposer(2), acceptor.Host.Address);
+        }
+
+        var stalled = cluster.SendProposal(FastCasAddress.Proposer(2), AppendOperation(1, "B"));
+        var pending = cluster.SendProposal(FastCasAddress.Proposer(1), AppendOperation(1, "A"));
+        var acceptors = cluster.AcceptorNodes.Select(node => Assert.IsType<FastCasAcceptorHost<TestValue>>(node.Host)).ToArray();
+
+        // Proposer 1 has committed and replied; the reply and the last acknowledgement are still in flight.
+        Assert.True(cluster.RunUntil(
+            () => acceptors.All(acceptor => acceptor.State.AcceptedValue == new TestValue(1, "A"))
+                && !cluster.ProposerHasPendingClientRequests(FastCasAddress.Proposer(1)),
+            maxIterations: 1000));
+        Assert.False(cluster.TryGetResponse(pending, out _));
+
+        await cluster.DisposeAsync();
+
+        Assert.False(cluster.TryGetResponse(pending, out _));
+        Assert.False(cluster.TryGetResponse(stalled, out _));
+        Assert.Equal(0, history.CompletedProposals);
+        Assert.All(cluster.ProposerNodes.Concat(cluster.AcceptorNodes), node => Assert.False(node.IsRunning));
+    }
+
     private static Operation<TestValue, TestValue> AppendOperation(int expectedVersion, string suffix) =>
         new Operation<TestValue, TestValue>
         {
@@ -506,6 +573,8 @@ public sealed class FastCasSimulationClusterTests
     {
         public List<LearnEvent> LearnEvents { get; } = [];
 
+        public int CompletedProposals { get; private set; }
+
         public void OnProposalSent<TValue>(
             DateTimeOffset timestamp,
             FastCasAddress proposer,
@@ -520,9 +589,8 @@ public sealed class FastCasSimulationClusterTests
             FastCasAddress proposer,
             int requestId,
             ProposeResponse<TValue> response)
-            where TValue : IVersionedValue<TValue>
-        {
-        }
+            where TValue : IVersionedValue<TValue> =>
+            CompletedProposals++;
 
         public void OnLearnCommittedValue<TValue>(
             DateTimeOffset timestamp,

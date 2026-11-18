@@ -7,4 +7,20 @@
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
+
+  <!--
+    OrleansSimulationSourceRoot names the Clockwork checkout which supplies the Microsoft.Orleans.Testing.Simulation
+    packages (eng/OrleansSimulation.targets): by default this repository's vendor/Clockwork submodule. A repository which
+    builds this one from source beside its own Clockwork checkout names that checkout in
+    Orleans.Consensus.CasPaxos.Embedding.props, in the directory which contains this repository, so one Clockwork serves
+    the whole build. That file is the only one this build imports from outside its boundary.
+  -->
+  <PropertyGroup>
+    <_OrleansConsensusCasPaxosEmbeddingProps>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '..', '..', 'Orleans.Consensus.CasPaxos.Embedding.props'))</_OrleansConsensusCasPaxosEmbeddingProps>
+  </PropertyGroup>
+  <Import Project="$(_OrleansConsensusCasPaxosEmbeddingProps)" Condition="Exists('$(_OrleansConsensusCasPaxosEmbeddingProps)')" />
+  <PropertyGroup>
+    <OrleansSimulationSourceRoot Condition="'$(OrleansSimulationSourceRoot)' == ''">$(MSBuildThisFileDirectory)..\vendor\Clockwork\</OrleansSimulationSourceRoot>
+    <OrleansSimulationSourceRoot>$([MSBuild]::NormalizeDirectory('$(OrleansSimulationSourceRoot)'))</OrleansSimulationSourceRoot>
+  </PropertyGroup>
 </Project>

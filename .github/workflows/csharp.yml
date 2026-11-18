@@ -4,11 +4,15 @@ on:
   push:
     paths:
       - 'csharp/**'
+      - 'vendor/**'
+      - '.gitmodules'
       - 'global.json'
       - '.github/workflows/csharp.yml'
   pull_request:
     paths:
       - 'csharp/**'
+      - 'vendor/**'
+      - '.gitmodules'
       - 'global.json'
       - '.github/workflows/csharp.yml'
   workflow_dispatch:
@@ -20,6 +24,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
@@ -33,6 +39,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json

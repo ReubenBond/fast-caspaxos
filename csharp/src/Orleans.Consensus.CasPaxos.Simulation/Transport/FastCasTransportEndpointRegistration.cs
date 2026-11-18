@@ -1,5 +1,5 @@
-using Clockwork;
 using Orleans.Consensus.CasPaxos.Simulation.Contracts;
+using Orleans.Testing.Simulation;
 
 namespace Orleans.Consensus.CasPaxos.Simulation.Transport;
 
@@ -9,20 +9,20 @@ public sealed class FastCasTransportEndpointRegistration<TValue>
 
     public FastCasTransportEndpointRegistration(
         FastCasAddress address,
-        SimulationTaskQueue deliveryQueue,
+        SimulationSchedulerLane deliveryLane,
         Action<IFastCasTransportMessage<TValue>> deliver)
     {
-        ArgumentNullException.ThrowIfNull(deliveryQueue);
+        ArgumentNullException.ThrowIfNull(deliveryLane);
         ArgumentNullException.ThrowIfNull(deliver);
 
         Address = address;
-        DeliveryQueue = deliveryQueue;
+        DeliveryLane = deliveryLane;
         _deliver = deliver;
     }
 
     public FastCasAddress Address { get; }
 
-    public SimulationTaskQueue DeliveryQueue { get; }
+    public SimulationSchedulerLane DeliveryLane { get; }
 
     public void Deliver(IFastCasTransportMessage<TValue> message)
     {

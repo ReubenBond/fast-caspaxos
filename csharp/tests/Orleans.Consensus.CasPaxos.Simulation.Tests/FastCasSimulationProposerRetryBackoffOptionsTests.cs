@@ -1,5 +1,5 @@
-using Clockwork;
 using Orleans.Consensus.CasPaxos.Simulation;
+using Orleans.Testing.Simulation;
 using Xunit;
 
 namespace Orleans.Consensus.CasPaxos.Simulation.Tests;

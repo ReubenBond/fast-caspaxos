@@ -1,13 +1,13 @@
 using System.Buffers.Binary;
 using System.Collections.Immutable;
 using System.Globalization;
-using Clockwork;
 using Orleans.Consensus.CasPaxos.Messages;
 using Orleans.Consensus.CasPaxos.Model;
 using Orleans.Consensus.CasPaxos.Protocol;
 using Orleans.Consensus.CasPaxos.Server;
 using Orleans.Consensus.CasPaxos.Simulation;
 using Orleans.Consensus.CasPaxos.Simulation.Contracts;
+using Orleans.Testing.Simulation;
 
 namespace Orleans.Consensus.CasPaxos.Testing;
 
@@ -44,7 +44,7 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
             HistoryObserver = observer
         }, DateTimeOffset.UnixEpoch);
         _runtime.CreateConsensusRegisterConfiguration(nodeCount);
-        _runtime.Network.EnableDelays = true;
+        _runtime.Transport.EnableDelays = true;
         _runtime.Network.BaseMessageDelay = TimeSpan.FromMilliseconds(1);
         _runtime.Network.MaxJitter = TimeSpan.FromMilliseconds(2);
         Record($"cluster seed={seed} members={nodeCount} mode=fast");
@@ -55,6 +55,12 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
     public TimeProvider TimeProvider => _runtime.TimeProvider;
     public ImmutableArray<string> Trace => [.. _trace];
     public TimeSpan OperationTimeout { get; init; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Gets whether the calling thread is the simulation's logical thread: one running this cluster's simulated work,
+    /// or the thread inside <see cref="Run"/>. Fixture operations and their consumer continuations run there.
+    /// </summary>
+    public bool IsSimulationThread => _runtime.Simulation.Scheduler.IsSimulationThread;
 
     /// <summary>
     /// Runs and completes a scenario synchronously in virtual time. Await only fixture
@@ -69,8 +75,11 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
         if (_running) throw new InvalidOperationException("Nested simulation Run is not supported.");
         ArgumentOutOfRangeException.ThrowIfLessThan(maxIterations, 1);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(OperationTimeout, TimeSpan.Zero);
-        using var guard = _runtime.Guard.Enter();
-        using var context = _runtime.SynchronizationContext.Install();
+        // The calling thread drives the simulation and runs the scenario's first steps, so it joins the simulation's
+        // logical thread for the whole scenario.
+        using var control = _runtime.Simulation.Scheduler.EnterControlScope();
+        using var guard = _runtime.Simulation.Guard.Enter();
+        using var context = _runtime.Simulation.SynchronizationContext.Install();
         _running = true;
         try
         {
@@ -112,7 +121,7 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
         RequireContext();
         ArgumentOutOfRangeException.ThrowIfLessThan(delay, TimeSpan.Zero);
         var completion = new TaskCompletionSource();
-        _runtime.TaskQueue.EnqueueAfter(() => completion.SetResult(), delay);
+        _runtime.Simulation.SchedulerLane.EnqueueAfter(() => completion.SetResult(), delay);
         return completion.Task;
     }
 
@@ -236,10 +245,10 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
 
     private void RequireContext()
     {
-        using var guard = _runtime.Guard.Enter();
+        using var guard = _runtime.Simulation.Guard.Enter();
         ObjectDisposedException.ThrowIf(_disposed, this);
         var context = SynchronizationContext.Current;
-        if (!_running || !(context is not null && _runtime.SynchronizationContext.IsSameScheduler(context)
+        if (!_running || !(context is not null && _runtime.Simulation.SynchronizationContext.IsSameScheduler(context)
             || context is null && _contextFreeConsumerDepth > 0))
             throw new InvalidOperationException("Use fixture operations inside Run on its deterministic synchronization context.");
     }
@@ -249,7 +258,7 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
         RequireContext();
         // Internal fixture awaits always capture Clockwork, including operations
         // started by a context-free production wrapper after an earlier read.
-        using var context = _runtime.SynchronizationContext.Install();
+        using var context = _runtime.Simulation.SynchronizationContext.Install();
         var task = operation();
         return task.IsCompleted ? task : new SimulationValueTaskSource<T>(task, RunContextFreeConsumer).Task;
     }
@@ -289,7 +298,7 @@ public sealed class RegisterSimulationCluster : IAsyncDisposable
         [FastCasAddress.Proposer(node), FastCasAddress.Acceptor(node)];
 
     private void Record(string entry) =>
-        _trace.Add(string.Create(CultureInfo.InvariantCulture, $"{_runtime.Clock.CurrentTime.Ticks} {entry}"));
+        _trace.Add(string.Create(CultureInfo.InvariantCulture, $"{_runtime.Simulation.Scheduler.VirtualTime.Ticks} {entry}"));
 
     private sealed class Client(RegisterSimulationCluster owner, int node, FastCasAddress address) : IRegisterService
     {

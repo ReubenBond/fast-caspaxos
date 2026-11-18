@@ -16,7 +16,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Orleans.Consensus.CasPaxos.Grpc\Orleans.Consensus.CasPaxos.Grpc.csproj" />
-    <ProjectReference Include="..\..\src\Clockwork\Clockwork.csproj" />
     <ProjectReference Include="..\..\src\Orleans.Consensus.CasPaxos.Sqlite\Orleans.Consensus.CasPaxos.Sqlite.csproj" />
     <ProjectReference Include="..\..\src\Orleans.Consensus.CasPaxos.Host\Orleans.Consensus.CasPaxos.Host.csproj" />
     <ProjectReference Include="..\..\src\Orleans.Consensus.CasPaxos.Testing\Orleans.Consensus.CasPaxos.Testing.csproj" />

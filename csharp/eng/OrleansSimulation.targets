@@ -1,0 +1,49 @@
+<Project>
+  <!--
+    The simulation projects reference Clockwork's Microsoft.Orleans.Testing.Simulation packages by package ID. No feed
+    publishes them, so this build redirects every reference to a package in Clockwork's source-build map to the package's
+    source project in the checkout which OrleansSimulationSourceRoot names (Directory.Build.props), and restores none.
+    Every simulation package in a build, and so its one simulation kernel, comes from that checkout. Library packages
+    become project references and the analyzers an analyzer reference. The instrumentation build and tool packages, which
+    supply build assets and a command, have no source-build equivalent here.
+  -->
+  <PropertyGroup>
+    <OrleansSimulationSourceBuildMap>$(OrleansSimulationSourceRoot)eng\Microsoft.Orleans.Testing.Simulation.SourceBuild.props</OrleansSimulationSourceBuildMap>
+  </PropertyGroup>
+
+  <Import Project="$(OrleansSimulationSourceBuildMap)" Condition="Exists('$(OrleansSimulationSourceBuildMap)')" />
+
+  <ItemGroup>
+    <_OrleansSimulationUnreferencedPackage Include="@(OrleansSimulationSourceBuildPackage)" Exclude="@(PackageReference)" />
+    <_OrleansSimulationPackage Include="@(OrleansSimulationSourceBuildPackage)" Exclude="@(_OrleansSimulationUnreferencedPackage)" />
+    <_OrleansSimulationLibraryPackage Include="@(_OrleansSimulationPackage->WithMetadataValue('Role', 'SimulationKernel'))" />
+    <_OrleansSimulationLibraryPackage Include="@(_OrleansSimulationPackage->WithMetadataValue('Role', 'InstrumentationRuntime'))" />
+    <_OrleansSimulationLibraryPackage Include="@(_OrleansSimulationPackage->WithMetadataValue('Role', 'TestingSupport'))" />
+    <_OrleansSimulationAnalyzerPackage Include="@(_OrleansSimulationPackage->WithMetadataValue('Role', 'Analyzer'))" />
+    <_OrleansSimulationUnsupportedPackage Include="@(_OrleansSimulationPackage)"
+                                          Exclude="@(_OrleansSimulationLibraryPackage);@(_OrleansSimulationAnalyzerPackage)" />
+
+    <PackageReference Remove="@(_OrleansSimulationPackage)" />
+    <ProjectReference Include="@(_OrleansSimulationLibraryPackage->'$(OrleansSimulationSourceRoot)%(SourceProject)'->ClearMetadata())" />
+    <ProjectReference Include="@(_OrleansSimulationAnalyzerPackage->'$(OrleansSimulationSourceRoot)%(SourceProject)'->ClearMetadata())"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!-- Before restore walks the references, and before a build, a simulation package this build cannot supply fails. -->
+  <Target Name="RequireOrleansSimulationSource"
+          BeforeTargets="_GenerateRestoreProjectPathWalk;_GenerateRestoreGraphProjectEntry;PrepareForBuild"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <ItemGroup>
+      <_OrleansSimulationUnmappedPackage Include="@(PackageReference)"
+                                         Condition="$([System.String]::Copy('%(Identity)').StartsWith('Microsoft.Orleans.Testing.Simulation', System.StringComparison.OrdinalIgnoreCase))" />
+    </ItemGroup>
+
+    <Error Condition="'@(_OrleansSimulationUnmappedPackage)' != ''"
+           Code="OCCP0001"
+           Text="$(MSBuildProjectName) references @(_OrleansSimulationUnmappedPackage, ', '), which this build supplies from the Clockwork checkout at '$(OrleansSimulationSourceRoot)', but that checkout's source-build map ($(OrleansSimulationSourceBuildMap)) does not list them. Initialize the checkout with 'git submodule update --init vendor/Clockwork'." />
+    <Error Condition="'@(_OrleansSimulationUnsupportedPackage)' != ''"
+           Code="OCCP0002"
+           Text="$(MSBuildProjectName) references @(_OrleansSimulationUnsupportedPackage, ', '), whose build assets or command this repository's Clockwork source build does not supply." />
+  </Target>
+</Project>

@@ -1,0 +1,6 @@
+<Project>
+  <!--
+    Clockwork builds within its own boundary: these files end the upward search for Directory.Build.targets and
+    .editorconfig at vendor/, so nothing above this repository reaches the submodule, which has neither file.
+  -->
+</Project>

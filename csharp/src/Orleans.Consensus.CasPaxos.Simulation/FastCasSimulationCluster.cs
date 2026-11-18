@@ -1,6 +1,8 @@
 using System.Collections.Immutable;
 using System.Globalization;
-using Clockwork;
+using System.Runtime.ExceptionServices;
+using System.Text;
+using Microsoft.Extensions.Logging;
 using Orleans.Consensus.CasPaxos.Messages;
 using Orleans.Consensus.CasPaxos.Model;
 using Orleans.Consensus.CasPaxos.Protocol;
@@ -9,17 +11,16 @@ using Orleans.Consensus.CasPaxos.Simulation.Hosts;
 using Orleans.Consensus.CasPaxos.Simulation.Invariants;
 using Orleans.Consensus.CasPaxos.Simulation.Nodes;
 using Orleans.Consensus.CasPaxos.Simulation.Transport;
-using Microsoft.Extensions.Logging;
-using System.Runtime.ExceptionServices;
-using System.Text;
+using Orleans.Testing.Simulation;
 
 namespace Orleans.Consensus.CasPaxos.Simulation;
 
 /// <summary>
-/// Fast CASPaxos-specific simulation harness built on top of <see cref="SimulationCluster{TNode}"/>.
-/// It wires proposer and acceptor hosts into Clockwork's deterministic scheduler, network, and diagnostics.
+/// Fast CASPaxos-specific simulation harness composed over Clockwork's <see cref="SimulationCluster"/>.
+/// It attaches proposer and acceptor hosts as custom nodes and wires them into Clockwork's deterministic
+/// scheduler, network, and diagnostics.
 /// </summary>
-public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCasSimulationNode<TValue>>
+public sealed class FastCasSimulationCluster<TValue> : IAsyncDisposable
     where TValue : Contracts.IVersionedValue<TValue>
 {
     /// <summary>
@@ -29,12 +30,21 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
     /// </summary>
     private static readonly TimeSpan CollocatedLinkDelay = TimeSpan.FromMicroseconds(1);
 
+    /// <summary>
+    /// The global network delay which applies once delays are enabled, until <see cref="ConfigureMessageDelays"/>
+    /// sets another: links without a latency override then take 1 ms plus up to 5 ms of seeded jitter.
+    /// </summary>
+    private static readonly TimeSpan DefaultBaseMessageDelay = TimeSpan.FromMilliseconds(1);
+
+    private static readonly TimeSpan DefaultMaxJitter = TimeSpan.FromMilliseconds(5);
+
     private readonly Dictionary<int, RoutedProposeResponse<TValue, FastCasAddress>> _clientResponses = [];
     private readonly HashSet<FastCasAddress> _clientAddresses = [];
     private readonly Dictionary<FastCasAddress, FastCasAddress> _collocatedProposerClients = [];
     private readonly Dictionary<int, FastCasConsensusRegister<TValue>> _consensusRegisters = [];
     private readonly List<string> _faultHistory = [];
     private int _nextClientRequestId;
+    private bool _disposed;
 
     public FastCasSimulationCluster(
         int seed,
@@ -42,16 +52,16 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         FastCasSimulationOptions? options = null,
         DateTimeOffset? startDateTime = null,
         CancellationToken cancellationToken = default)
-        : base(seed, startDateTime, cancellationToken)
     {
+        Simulation = new SimulationCluster(seed, startDateTime, cancellationToken: cancellationToken);
         InitialValue = initialValue;
         Options = options ?? new FastCasSimulationOptions();
-        Transport = new FastCasSimulationTransport<TValue>(
-            new SimulationNetwork(() => ImmutableArray<SimulationNode>.CastUp(Nodes), CreateDerivedRandom()),
-            Options.TransportObserver);
+        Simulation.Network.BaseMessageDelay = DefaultBaseMessageDelay;
+        Simulation.Network.MaxJitter = DefaultMaxJitter;
+        Transport = new FastCasSimulationTransport<TValue>(Simulation.Network, Options.TransportObserver);
         if (Options.LoggerFactory is { } loggerFactory)
         {
-            Transport.Network.SetLogger(loggerFactory.CreateLogger(typeof(SimulationNetwork).FullName!));
+            Network.SetLogger(loggerFactory.CreateLogger(typeof(SimulationNetwork).FullName!));
         }
 
         ClientAddress = FastCasAddress.Client();
@@ -60,13 +70,27 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         RefreshExpectedLatency();
     }
 
+    /// <summary>
+    /// Gets the Clockwork cluster which owns this simulation's scheduler, virtual time, network, and nodes.
+    /// </summary>
+    public SimulationCluster Simulation { get; }
+
+    public int Seed => Simulation.Seed;
+
+    public TimeProvider TimeProvider => Simulation.TimeProvider;
+
+    /// <summary>
+    /// Gets every attached proposer and acceptor node, ordered by network address.
+    /// </summary>
+    public ImmutableArray<FastCasSimulationNode<TValue>> Nodes => [.. Simulation.Nodes.Cast<FastCasSimulationNode<TValue>>()];
+
     public FastCasSimulationOptions Options { get; }
 
     public TValue InitialValue { get; }
 
     public FastCasSimulationTransport<TValue> Transport { get; }
 
-    public SimulationNetwork Network => Transport.Network;
+    public SimulationNetwork Network => Simulation.Network;
 
     public FastCasAcceptorSafetyMonitor<TValue> AcceptorSafetyMonitor { get; }
 
@@ -112,16 +136,8 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
     {
         var nodeId = new FastCasNodeId(FastCasParticipantRole.Acceptor, ordinal);
         var host = new FastCasAcceptorHost<TValue>(nodeId, Transport, InitialValue, stateStore, OnAcceptorStateUpdated, Options);
-        var node = new FastCasSimulationNode<TValue>(
-            host,
-            Clock,
-            Guard,
-            CreateDerivedRandom(),
-            TaskQueue,
-            Transport,
-            CreateNodeLogger(nodeId));
+        var node = AttachNode(host);
 
-        RegisterNode(node);
         AcceptorNodes = AcceptorNodes.Add(node);
         ApplyCollocatedLinkLatencyFor(node.Host.Address);
         return node;
@@ -140,16 +156,8 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
 
         var nodeId = new FastCasNodeId(FastCasParticipantRole.Proposer, ordinal);
         var host = new FastCasProposerHost<TValue>(nodeId, resolvedAcceptors, Transport, InitialValue, Options);
-        var node = new FastCasSimulationNode<TValue>(
-            host,
-            Clock,
-            Guard,
-            CreateDerivedRandom(),
-            TaskQueue,
-            Transport,
-            CreateNodeLogger(nodeId));
+        var node = AttachNode(host);
 
-        RegisterNode(node);
         ProposerNodes = ProposerNodes.Add(node);
         ApplyCollocatedLinkLatencyFor(node.Host.Address);
         RegisterCollocatedClient(node.Host.Address);
@@ -191,26 +199,9 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
             OnAcceptorStateUpdated,
             Options);
 
-        var acceptorNode = new FastCasSimulationNode<TValue>(
-            register.AcceptorEndpoint,
-            Clock,
-            Guard,
-            CreateDerivedRandom(),
-            TaskQueue,
-            Transport,
-            CreateNodeLogger(register.AcceptorHost.NodeId));
-        var proposerNode = new FastCasSimulationNode<TValue>(
-            register.ProposerEndpoint,
-            Clock,
-            Guard,
-            CreateDerivedRandom(),
-            TaskQueue,
-            Transport,
-            CreateNodeLogger(register.ProposerHost.NodeId));
-
-        RegisterNode(acceptorNode);
+        var acceptorNode = AttachNode(register.AcceptorEndpoint);
         AcceptorNodes = AcceptorNodes.Add(acceptorNode);
-        RegisterNode(proposerNode);
+        var proposerNode = AttachNode(register.ProposerEndpoint);
         ProposerNodes = ProposerNodes.Add(proposerNode);
         _consensusRegisters.Add(ordinal, register);
 
@@ -413,6 +404,20 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
     }
 
     /// <summary>
+    /// Drives the simulation until <paramref name="condition"/> holds, returning <see langword="false"/> when it stops
+    /// first: idle, stuck, or out of iterations.
+    /// </summary>
+    public bool RunUntil(Func<bool> condition, int maxIterations = 100_000) =>
+        Simulation.RunUntil(condition, CancellationToken.None, maxIterations).Reason == SimulationExecutionReason.ConditionMet;
+
+    /// <summary>
+    /// Drives the simulation through the next <paramref name="duration"/> of simulated time, running the work due up
+    /// to and at its end.
+    /// </summary>
+    public SimulationExecutionResult RunFor(TimeSpan duration, int maxIterations = 100_000) =>
+        Simulation.RunFor(duration, CancellationToken.None, maxIterations);
+
+    /// <summary>
     /// Sends a proposal and drives the simulation until the client response arrives or progress stalls.
     /// </summary>
     public ProposeResponse<TValue> RunProposal(
@@ -432,23 +437,43 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
 
     public string GetReproductionHint(string scenarioName) => $"{scenarioName} (seed: {Seed})";
 
-    protected override ValueTask DisposeAsyncCore()
+    /// <summary>
+    /// Stops every host and client, then disposes the Clockwork cluster, which runs the work still pending on each
+    /// node before it detaches the node. Stopped hosts and clients ignore that work, so disposal neither runs the
+    /// protocol forward nor reports to observers.
+    /// </summary>
+    public async ValueTask DisposeAsync()
     {
-        foreach (var node in Nodes)
+        if (_disposed)
         {
-            node.Unregister();
+            return;
         }
 
+        _disposed = true;
+        foreach (var node in Nodes)
+        {
+            node.Crash();
+        }
+
+        await Simulation.DisposeAsync();
         foreach (var clientAddress in _clientAddresses)
         {
             _ = Transport.UnregisterEndpoint(clientAddress);
         }
-
-        return ValueTask.CompletedTask;
     }
+
+    private FastCasSimulationNode<TValue> AttachNode(IFastCasNodeHost<TValue> host) =>
+        Simulation.AddCustomNode(
+            host.Address.NetworkAddress,
+            context => new FastCasSimulationNode<TValue>(host, context, Transport));
 
     private void OnClientMessage(IFastCasTransportMessage<TValue> message)
     {
+        if (_disposed)
+        {
+            return;
+        }
+
         switch (message)
         {
             case FastCasProposeResponseMessage<TValue> proposeResponse:
@@ -485,7 +510,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
 
         Transport.RegisterEndpoint(new FastCasTransportEndpointRegistration<TValue>(
             address,
-            TaskQueue,
+            Simulation.SchedulerLane,
             OnClientMessage));
     }
 
@@ -557,14 +582,14 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         var builder = new StringBuilder();
         builder.AppendLine(CultureInfo.InvariantCulture, $"time: {TimeProvider.GetUtcNow():O}");
         builder.AppendLine(CultureInfo.InvariantCulture, $"responses: {_clientResponses.Count}");
-        builder.AppendLine(CultureInfo.InvariantCulture, $"network: dropRate={Network.MessageDropRate:P0}, delays={Network.EnableDelays}, baseDelay={Network.BaseMessageDelay}, maxJitter={Network.MaxJitter}");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"network: dropRate={Network.MessageDropRate:P0}, delays={Transport.EnableDelays}, baseDelay={Network.BaseMessageDelay}, maxJitter={Network.MaxJitter}");
         var linkLatencies = Network.GetAllLinkLatencies();
         if (linkLatencies.Count > 0)
         {
             builder.AppendLine(CultureInfo.InvariantCulture, $"link-latencies: {linkLatencies.Count} override(s)");
-            foreach (var ((source, target), latency) in linkLatencies.OrderBy(entry => entry.Key.Source, StringComparer.Ordinal).ThenBy(entry => entry.Key.Target, StringComparer.Ordinal))
+            foreach (var link in linkLatencies)
             {
-                builder.AppendLine(CultureInfo.InvariantCulture, $"  {source} -> {target}: base={latency.BaseDelay}, jitter={latency.MaxJitter}");
+                builder.AppendLine(CultureInfo.InvariantCulture, $"  {link.SourceAddress} -> {link.TargetAddress}: base={link.Latency.BaseDelay}, jitter={link.Latency.MaxJitter}");
             }
         }
         builder.AppendLine(CultureInfo.InvariantCulture, $"classicQuorumAvailable: {CanFormClassicQuorum()}");
@@ -572,12 +597,12 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         {
             builder.AppendLine(CultureInfo.InvariantCulture, $"reachableQuorum[{proposer.Host.Address}]={CanReachClassicQuorum(proposer.Host.Address)}");
         }
-        builder.AppendLine(CultureInfo.InvariantCulture, $"clusterQueue: scheduled={TaskQueue.ScheduledItems.Count}");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"clusterQueue: scheduled={Simulation.SchedulerLane.CaptureScheduledItems().Count}");
         builder.AppendLine("nodes:");
 
         foreach (var node in Nodes.OrderBy(node => node.NetworkAddress))
         {
-            builder.Append(CultureInfo.InvariantCulture, $"  - {node.NetworkAddress}: running={node.IsRunning}, suspended={node.IsSuspended}, queued={node.Context.TaskQueue.ScheduledItems.Count}");
+            builder.Append(CultureInfo.InvariantCulture, $"  - {node.NetworkAddress}: running={node.IsRunning}, suspended={node.IsSuspended}, queued={node.Context.SchedulerLane.CaptureScheduledItems().Count}");
             switch (node.Host)
             {
                 case IFastCasProposerNodeHost<TValue> proposer:
@@ -729,7 +754,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         ArgumentOutOfRangeException.ThrowIfLessThan(baseDelay, TimeSpan.Zero);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxJitter, TimeSpan.Zero);
 
-        Network.EnableDelays = baseDelay > TimeSpan.Zero || maxJitter > TimeSpan.Zero;
+        Transport.EnableDelays = baseDelay > TimeSpan.Zero || maxJitter > TimeSpan.Zero;
         Network.BaseMessageDelay = baseDelay;
         Network.MaxJitter = maxJitter;
         RefreshExpectedLatency();
@@ -739,7 +764,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
     public void ConfigureLinkLatency(FastCasAddress source, FastCasAddress target, TimeSpan baseDelay, TimeSpan maxJitter)
     {
         var latency = NormalizeLinkLatency(source, target, baseDelay, maxJitter);
-        Network.EnableDelays = Network.EnableDelays
+        Transport.EnableDelays = Transport.EnableDelays
             || latency.BaseDelay > TimeSpan.Zero
             || latency.MaxJitter > TimeSpan.Zero;
         Network.SetLinkLatency(source.NetworkAddress, target.NetworkAddress, latency.BaseDelay, latency.MaxJitter);
@@ -750,7 +775,7 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
     public void ConfigureBidirectionalLinkLatency(FastCasAddress node1, FastCasAddress node2, TimeSpan baseDelay, TimeSpan maxJitter)
     {
         var latency = NormalizeLinkLatency(node1, node2, baseDelay, maxJitter);
-        Network.EnableDelays = Network.EnableDelays
+        Transport.EnableDelays = Transport.EnableDelays
             || latency.BaseDelay > TimeSpan.Zero
             || latency.MaxJitter > TimeSpan.Zero;
         Network.SetBidirectionalLinkLatency(node1.NetworkAddress, node2.NetworkAddress, latency.BaseDelay, latency.MaxJitter);
@@ -785,13 +810,13 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
 
     private void RefreshExpectedLatency()
     {
-        var expectedOneWayLatency = Network.EnableDelays
+        var expectedOneWayLatency = Transport.EnableDelays
             ? Network.BaseMessageDelay + Network.MaxJitter
             : TimeSpan.Zero;
 
-        foreach (var latency in Network.GetAllLinkLatencies().Values)
+        foreach (var link in Network.GetAllLinkLatencies())
         {
-            var candidate = latency.BaseDelay + latency.MaxJitter;
+            var candidate = link.Latency.BaseDelay + link.Latency.MaxJitter;
             if (candidate > expectedOneWayLatency)
             {
                 expectedOneWayLatency = candidate;
@@ -895,23 +920,10 @@ public sealed class FastCasSimulationCluster<TValue> : SimulationCluster<FastCas
         AcceptorSafetyMonitor.Reset();
     }
 
-    private FastCasSimulationNode<TValue> GetNode(FastCasAddress address)
-    {
-        var node = Nodes.FirstOrDefault(candidate => candidate.Host.Address == address);
-        return node ?? throw new InvalidOperationException($"Unknown FastCASPaxos node '{address}'.");
-    }
+    private FastCasSimulationNode<TValue> GetNode(FastCasAddress address) =>
+        Simulation.FindNode<FastCasSimulationNode<TValue>>(address.NetworkAddress)
+        ?? throw new InvalidOperationException($"Unknown FastCASPaxos node '{address}'.");
 
     private void RecordFault(string description) =>
         _faultHistory.Add($"{TimeProvider.GetUtcNow():O} {description}");
-
-    private ILogger? CreateNodeLogger(FastCasNodeId nodeId)
-    {
-        if (Options.LoggerFactory is not { } loggerFactory)
-        {
-            return null;
-        }
-
-        var prefixedFactory = new NodePrefixedLoggerFactory(loggerFactory, nodeId.Address.ToString());
-        return prefixedFactory.CreateLogger(typeof(FastCasSimulationNode<TValue>).FullName!);
-    }
 }

@@ -1,36 +1,34 @@
-using Clockwork;
 using Orleans.Consensus.CasPaxos.Simulation.Contracts;
 using Orleans.Consensus.CasPaxos.Simulation.Transport;
-using Microsoft.Extensions.Logging;
+using Orleans.Testing.Simulation;
 
 namespace Orleans.Consensus.CasPaxos.Simulation.Nodes;
 
-public sealed class FastCasSimulationNode<TValue> : SimulationNode
+/// <summary>
+/// A Fast CASPaxos host attached to a <see cref="SimulationCluster"/> through
+/// <see cref="SimulationCluster.AddCustomNode{TNode}(string, Func{SimulationNodeContext, TNode})"/>.
+/// The host's messages are delivered on the node's scheduler lane, and disposal removes its transport endpoint.
+/// </summary>
+public sealed class FastCasSimulationNode<TValue> : SimulationNode, IDisposable
 {
     private readonly FastCasSimulationTransport<TValue> _transport;
 
     public FastCasSimulationNode(
         IFastCasNodeHost<TValue> host,
-        SimulationClock clock,
-        SingleThreadedGuard guard,
-        SimulationRandom random,
-        SimulationTaskQueue externalTaskQueue,
-        FastCasSimulationTransport<TValue> transport,
-        ILogger? logger = null)
+        SimulationNodeContext context,
+        FastCasSimulationTransport<TValue> transport)
     {
         ArgumentNullException.ThrowIfNull(host);
-        ArgumentNullException.ThrowIfNull(clock);
-        ArgumentNullException.ThrowIfNull(guard);
-        ArgumentNullException.ThrowIfNull(random);
-        ArgumentNullException.ThrowIfNull(externalTaskQueue);
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(transport);
 
         Host = host;
-        _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-        Context = new SimulationNodeContext(clock, guard, random, externalTaskQueue, logger);
+        Context = context;
+        _transport = transport;
 
         Registration = new FastCasTransportEndpointRegistration<TValue>(
             Host.Address,
-            Context.TaskQueue,
+            Context.SchedulerLane,
             Host.Deliver);
 
         if (Host is IFastCasProposerNodeHost<TValue> proposerHost)
@@ -57,5 +55,5 @@ public sealed class FastCasSimulationNode<TValue> : SimulationNode
 
     public void Restart() => Host.Restart();
 
-    public void Unregister() => _transport.UnregisterEndpoint(Host.Address);
+    public void Dispose() => _transport.UnregisterEndpoint(Host.Address);
 }

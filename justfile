@@ -85,15 +85,15 @@ cluster $data_directory="csharp/src/Orleans.Consensus.CasPaxos.Host/data/cluster
     $ErrorActionPreference = 'Stop'
     & './csharp/samples/Run-Cluster.ps1' -DataDirectory $env:data_directory -BasePort $env:base_port
 
-# Check C# formatting without modifying files
+# Check C# formatting without modifying files (the vendored Clockwork submodule keeps its upstream format)
 [group('csharp')]
 csharp-fmt:
-    cd csharp && dotnet format Orleans.Consensus.CasPaxos.slnx --verify-no-changes
+    cd csharp && dotnet format Orleans.Consensus.CasPaxos.slnx --verify-no-changes --exclude ../vendor/
 
 # Apply C# formatting fixes
 [group('csharp')]
 csharp-fmt-fix:
-    cd csharp && dotnet format Orleans.Consensus.CasPaxos.slnx
+    cd csharp && dotnet format Orleans.Consensus.CasPaxos.slnx --exclude ../vendor/
 
 # Build C# solution
 [group('csharp')]

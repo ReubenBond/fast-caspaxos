@@ -500,10 +500,9 @@ public sealed class RegisterSimulationClusterTests
             cluster.Run(async simulation =>
             {
                 var scenarioContext = SynchronizationContext.Current;
-                var simulationThread = Environment.CurrentManagedThreadId;
                 void Observe(string stage)
                 {
-                    Assert.Equal(simulationThread, Environment.CurrentManagedThreadId);
+                    Assert.True(simulation.IsSimulationThread);
                     Assert.Null(SynchronizationContext.Current);
                     Assert.Same(TaskScheduler.Default, TaskScheduler.Current);
                     consumerTrace.Add($"{simulation.TimeProvider.GetTimestamp()} {stage}");
@@ -519,7 +518,7 @@ public sealed class RegisterSimulationClusterTests
                 simulation.CrashNode(5);
                 var results = await Task.WhenAll(writes);
                 Assert.Same(scenarioContext, SynchronizationContext.Current);
-                Assert.Equal(simulationThread, Environment.CurrentManagedThreadId);
+                Assert.True(simulation.IsSimulationThread);
                 var winner = Assert.Single(results, result => result.Status == CompareExchangeStatus.Applied);
                 Assert.Equal(7, results.Count(result => result.Status == CompareExchangeStatus.Mismatch));
                 Assert.Equal(new ByteString([(byte)Array.IndexOf(results, winner)]), winner.Current!.Value);
@@ -541,7 +540,7 @@ public sealed class RegisterSimulationClusterTests
                 simulation.Heal();
                 Assert.Equal(winner.Current, await adapter.ReadAsync("race"));
                 Assert.Same(scenarioContext, SynchronizationContext.Current);
-                Assert.Equal(simulationThread, Environment.CurrentManagedThreadId);
+                Assert.True(simulation.IsSimulationThread);
             });
             Assert.Equal(36, consumerTrace.Count);
             return (cluster.Trace.ToArray(), consumerTrace.ToArray());
@@ -564,11 +563,10 @@ public sealed class RegisterSimulationClusterTests
         cluster.Run(async simulation =>
         {
             var scenarioContext = SynchronizationContext.Current;
-            var simulationThread = Environment.CurrentManagedThreadId;
             var observed = new List<string>();
             Action<string> Probe(string expectedContext) => stage =>
             {
-                Assert.Equal(simulationThread, Environment.CurrentManagedThreadId);
+                Assert.True(simulation.IsSimulationThread);
                 Assert.Null(SynchronizationContext.Current);
                 Assert.Equal(expectedContext, logicalContext.Value);
                 observed.Add($"{expectedContext}:{stage}");
@@ -596,7 +594,7 @@ public sealed class RegisterSimulationClusterTests
             Assert.Equal(["canceled-reader:adapter-read", "inventory-reader:adapter-list"], observed);
             Assert.Equal("scenario", logicalContext.Value);
             Assert.Same(scenarioContext, SynchronizationContext.Current);
-            Assert.Equal(simulationThread, Environment.CurrentManagedThreadId);
+            Assert.True(simulation.IsSimulationThread);
         });
     }
 

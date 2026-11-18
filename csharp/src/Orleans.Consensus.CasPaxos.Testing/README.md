@@ -3,7 +3,9 @@
 `Orleans.Consensus.CasPaxos.Testing` is a framework-neutral `net11.0` library for both upstream
 tests and downstream `IRegisterService` consumers (including Clog adapters).
 Its library closure contains **Simulation** and **Server**, transitively
-**Clockwork** and **Core**. Consumers supply their own assertion framework.
+**Core** and Clockwork's simulation kernel, `Microsoft.Orleans.Testing.Simulation`
+(see [Clockwork source build](#clockwork-source-build)). Consumers supply their own
+assertion framework.
 
 ```csharp
 using Orleans.Consensus.CasPaxos.Server;
@@ -27,9 +29,10 @@ cluster.Run(async simulation =>
   epoch in **Fast** mode. Five members require four fast acknowledgements, but
   classic recovery still progresses with three members.
 - `Run(Func<RegisterSimulationCluster, Task>, int maxIterations = 100000)` installs
-  the existing Clockwork synchronization context and drives its queue to scenario
-  completion. Async requests overlap through queued protocol operations.
-  Assertion/operation exceptions propagate to the caller.
+  the cluster's Clockwork synchronization context and drives its scheduler to scenario
+  completion. The calling thread joins the simulation's logical thread for the run;
+  simulated work runs one operation at a time on it. Async requests overlap through
+  queued protocol operations. Assertion/operation exceptions propagate to the caller.
   Stalled/escaped work fails boundedly with seed and runtime diagnostics.
 - `CreateClient(int? node = null)` returns `IRegisterService`, pinned to the
   **1-based** member (`null` means member 1). A shared sticky client uses the
@@ -38,7 +41,7 @@ cluster.Run(async simulation =>
   Explicit clients on different members exercise real speculative contention.
   Recovery of the winner at the proposed revision proves the other calls
   mismatched; a higher revision or a lost result can preserve uncertainty.
-- `DelayAsync(TimeSpan)` and `TimeProvider` use the **same** Clockwork clock and
+- `DelayAsync(TimeSpan)` and `TimeProvider` use the **same** Clockwork virtual clock and
   scheduler as the protocol. `OperationTimeout { get; init; }` defaults to two
   virtual seconds. Configure it before `Run`.
 - `CrashNode(int)` and `RestartNode(int)` affect both proposer and acceptor
@@ -58,7 +61,11 @@ cluster.Run(async simulation =>
 - `Seed` and read-only `Trace` expose the reproducible seed, virtual timestamps,
   request IDs, transport message kinds/statuses, committed ballot modes, and
   fault controls. Retain the scenario together with its seed for replay.
+- `IsSimulationThread` reports whether the calling thread is the simulation's
+  logical thread: an operation of this cluster's scheduler, or the thread inside `Run`.
 - Dispose outside `Run` using `await using`, after awaiting every scenario task.
+  Disposal stops every member before Clockwork runs the work still pending, so
+  nothing after the scenario reaches the protocol or the trace.
 
 ### Production adapters and `ConfigureAwait(false)`
 
@@ -79,7 +86,7 @@ cluster.Run(async simulation =>
 
 The shared fixture returns a private `IValueTaskSource` bridge. Internal protocol
 awaits always capture Clockwork. A context-free consumer continuation runs inline
-on the same simulation thread with `SynchronizationContext.Current` temporarily
+on the simulation's logical thread with `SynchronizationContext.Current` temporarily
 null. This also allows subsequent Task-backed wrapper completions to inline their
 context-free continuations instead of dispatching to the thread pool. Register
 calls made by those continuations re-enter Clockwork internally; ordinary scenario
@@ -97,7 +104,8 @@ TimeProvider. Use deterministic substitutes for those separate dependencies.
 exercises direct and layered false-await wrappers, eight overlapping read/CAS
 pairs, delayed replies, two crashed/restarted members, lost replies, timeout and
 healing. Six runs assert identical protocol and consumer-continuation traces,
-same-thread execution, null consumer contexts, and restored scenario context.
+execution on the simulation's logical thread, null consumer contexts, and restored
+scenario context.
 `ContextFreeConsumerWrappersPreserveCancellationAndExecutionContext` additionally
 checks cancellation tokens, independent AsyncLocal values and inventory reads.
 
@@ -105,7 +113,7 @@ checks cancellation tokens, independent AsyncLocal values and inventory reads.
 
 There is exactly one existing `FastCasSimulationCluster` with actual
 `FastCasConsensusRegister`, proposer/acceptor hosts, protocol engines, durable
-in-memory stores, transport, Clockwork clock/network/scheduler, and runtime
+in-memory stores, transport, Clockwork scheduler/virtual time/network, and runtime
 safety monitors. The adapter's `RegisterState` is an immutable ordinal-key application map;
 conditional operations run through the protocol and identity reads establish
 their result through an accept quorum.
@@ -127,6 +135,36 @@ proposing a write after healing; already sent accepts may still commit.
 Upstream behavioral evidence lives in
 `tests/Orleans.Consensus.CasPaxos.Simulation.Tests/RegisterSimulationClusterTests.cs`.
 Downstream tests establish their application's invariants using this fixture.
+
+## Clockwork source build
+
+The simulation projects reference Clockwork's `Microsoft.Orleans.Testing.Simulation`
+package by its package ID. No feed publishes it yet, so `csharp/eng/OrleansSimulation.targets`
+builds every package in Clockwork's source-build map
+(`eng/Microsoft.Orleans.Testing.Simulation.SourceBuild.props`) from the Clockwork checkout
+which `OrleansSimulationSourceRoot` names, and restores none. By default that is this
+repository's `vendor/Clockwork` submodule; initialize it with
+`git submodule update --init vendor/Clockwork`. Clockwork runs this fixture in
+cooperative mode: the simulation routes time, scheduling, randomness, and the network
+through Clockwork's APIs, and nothing is rewritten.
+
+A repository which builds this one from source and has its own Clockwork checkout,
+such as Clog, names that checkout so the build has one simulation kernel: it places
+`Orleans.Consensus.CasPaxos.Embedding.props` in the directory which contains this
+repository's checkout, setting `OrleansSimulationSourceRoot` to an absolute path:
+
+```xml
+<Project>
+  <PropertyGroup>
+    <OrleansSimulationSourceRoot>$(MSBuildThisFileDirectory)Clockwork/</OrleansSimulationSourceRoot>
+  </PropertyGroup>
+</Project>
+```
+
+That file is the only one this repository's build imports from outside its own
+boundary. `csharp/scripts/Test-SourceBoundary.ps1` builds this fixture inside a
+hostile embedding repository with its own Clockwork, and checks that the fixture's
+closure resolves exactly that one simulation kernel.
 
 ## Fatal storage failures
 

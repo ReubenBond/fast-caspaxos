@@ -1,5 +1,4 @@
-using System.Collections.Immutable;
-using Clockwork;
+using Orleans.Testing.Simulation;
 using Xunit;
 
 namespace Orleans.Consensus.CasPaxos.Simulation.Tests;
@@ -19,31 +18,31 @@ public sealed class ClockworkSmokeTests
     }
 
     [Fact]
-    public void SimulationTaskQueueExecutesDelayedWorkAfterClockAdvance()
+    public async Task SchedulerLaneExecutesDelayedWorkAfterVirtualTimeAdvances()
     {
-        var clock = new SimulationClock(DateTimeOffset.UnixEpoch);
-        var queue = new SimulationTaskQueue(clock, new SingleThreadedGuard());
+        await using var cluster = new SimulationCluster(seed: 1, startDateTime: DateTimeOffset.UnixEpoch);
+        var lane = cluster.SchedulerLane;
         var executed = new List<int>();
 
-        queue.Enqueue(new ScheduledActionItem(() => executed.Add(1)));
-        queue.EnqueueAfter(() => executed.Add(2), TimeSpan.FromSeconds(5));
+        lane.Enqueue(() => executed.Add(1));
+        lane.EnqueueAfter(() => executed.Add(2), TimeSpan.FromSeconds(5));
 
-        Assert.Equal(1, queue.RunUntilIdle());
+        Assert.Equal(1, lane.RunUntilIdle(CancellationToken.None));
         Assert.Equal([1], executed);
 
-        clock.Advance(TimeSpan.FromSeconds(5));
+        cluster.RunFor(TimeSpan.FromSeconds(5), CancellationToken.None);
 
-        Assert.True(queue.RunOnce());
         Assert.Equal([1, 2], executed);
+        Assert.Equal(DateTimeOffset.UnixEpoch + TimeSpan.FromSeconds(5), cluster.TimeProvider.GetUtcNow());
     }
 
     [Fact]
     public async Task SimulationNetworkBlocksAndHealsBidirectionalPartitions()
     {
-        await using var cluster = new TestSimulationCluster(seed: 777);
+        await using var cluster = new SimulationCluster(seed: 777, startDateTime: DateTimeOffset.UnixEpoch);
         _ = cluster.AddNode("node-1");
         _ = cluster.AddNode("node-2");
-        var network = new SimulationNetwork(() => ImmutableArray<SimulationNode>.CastUp(cluster.Nodes), cluster.Random.Fork());
+        var network = cluster.Network;
 
         Assert.True(network.CanDeliver("node-1", "node-2"));
         Assert.True(network.CanDeliver("node-2", "node-1"));
@@ -62,55 +61,32 @@ public sealed class ClockworkSmokeTests
     [Fact]
     public async Task SimulationClusterRunUntilCompletesScheduledTask()
     {
-        await using var cluster = new TestSimulationCluster(seed: 9001);
+        await using var cluster = new SimulationCluster(seed: 9001, startDateTime: DateTimeOffset.UnixEpoch);
         var executed = false;
         var task = new Task(() => executed = true);
 
         task.Start(cluster.TaskScheduler);
 
-        var completed = cluster.RunUntil(() => executed, maxIterations: 10);
+        var result = cluster.RunUntil(() => executed, CancellationToken.None, maxIterations: 10);
 
-        Assert.True(completed);
+        Assert.Equal(SimulationExecutionReason.ConditionMet, result.Reason);
         Assert.True(executed);
     }
 
     [Fact]
     public async Task SimulationClusterRunUntilIdleAdvancesTimeForNodeWork()
     {
-        await using var cluster = new TestSimulationCluster(seed: 42);
+        await using var cluster = new SimulationCluster(seed: 42, startDateTime: DateTimeOffset.UnixEpoch);
         var node = cluster.AddNode("node-1");
         var executed = false;
         var startTime = cluster.TimeProvider.GetUtcNow();
 
-        node.Context.TaskQueue.EnqueueAfter(() => executed = true, TimeSpan.FromSeconds(3));
+        node.Context.SchedulerLane.EnqueueAfter(() => executed = true, TimeSpan.FromSeconds(3));
 
-        var iterations = cluster.RunUntilIdle(maxIterations: 1000);
+        var result = cluster.RunUntilIdle(CancellationToken.None, maxIterations: 1000);
 
-        Assert.True(iterations < 1000);
+        Assert.Equal(SimulationExecutionReason.Idle, result.Reason);
         Assert.True(executed);
         Assert.True(cluster.TimeProvider.GetUtcNow() >= startTime + TimeSpan.FromSeconds(3));
     }
-
-    private sealed class TestSimulationCluster(int seed) : SimulationCluster<TestSimulationNode>(seed, startDateTime: DateTimeOffset.UnixEpoch)
-    {
-        public TestSimulationNode AddNode(string address)
-        {
-            var node = new TestSimulationNode(this, address);
-            RegisterNode(node);
-            return node;
-        }
-
-        protected override ValueTask DisposeAsyncCore() => ValueTask.CompletedTask;
-    }
-
-    private sealed class TestSimulationNode(TestSimulationCluster cluster, string address) : SimulationNode
-    {
-        public override SimulationNodeContext Context { get; } =
-            new(cluster.Clock, cluster.Guard, cluster.CreateDerivedRandom(), cluster.TaskQueue);
-
-        public override string NetworkAddress { get; } = address;
-
-        public override bool IsInitialized => true;
-    }
 }
-

@@ -1,4 +1,4 @@
-using Clockwork;
+using Orleans.Testing.Simulation;
 using Xunit;
 
 namespace Orleans.Consensus.CasPaxos.Simulation.Tests;
@@ -9,7 +9,6 @@ public sealed class SimulationNetworkLinkLatencyTests
     public void GetMessageDelayWithPerLinkOverrideUsesOverride()
     {
         var network = CreateNetwork();
-        network.EnableDelays = true;
         network.BaseMessageDelay = TimeSpan.FromMilliseconds(1);
         network.MaxJitter = TimeSpan.Zero;
 
@@ -23,7 +22,6 @@ public sealed class SimulationNetworkLinkLatencyTests
     public void GetMessageDelayWithoutPerLinkOverrideUsesGlobalDefault()
     {
         var network = CreateNetwork();
-        network.EnableDelays = true;
         network.BaseMessageDelay = TimeSpan.FromMilliseconds(10);
         network.MaxJitter = TimeSpan.Zero;
 
@@ -38,7 +36,6 @@ public sealed class SimulationNetworkLinkLatencyTests
     public void GetMessageDelayDirectionalOverrideOnlyAppliesToConfiguredDirection()
     {
         var network = CreateNetwork();
-        network.EnableDelays = true;
         network.BaseMessageDelay = TimeSpan.FromMilliseconds(1);
         network.MaxJitter = TimeSpan.Zero;
 
@@ -55,7 +52,6 @@ public sealed class SimulationNetworkLinkLatencyTests
     public void SetBidirectionalLinkLatencySetsBothDirections()
     {
         var network = CreateNetwork();
-        network.EnableDelays = true;
         network.BaseMessageDelay = TimeSpan.FromMilliseconds(1);
         network.MaxJitter = TimeSpan.Zero;
 
@@ -69,7 +65,6 @@ public sealed class SimulationNetworkLinkLatencyTests
     public void ClearLinkLatencyRestoresGlobalDefault()
     {
         var network = CreateNetwork();
-        network.EnableDelays = true;
         network.BaseMessageDelay = TimeSpan.FromMilliseconds(5);
         network.MaxJitter = TimeSpan.Zero;
 
@@ -92,7 +87,6 @@ public sealed class SimulationNetworkLinkLatencyTests
     public void ClearAllLinkLatenciesRemovesAllOverrides()
     {
         var network = CreateNetwork();
-        network.EnableDelays = true;
         network.BaseMessageDelay = TimeSpan.FromMilliseconds(2);
         network.MaxJitter = TimeSpan.Zero;
 
@@ -110,7 +104,6 @@ public sealed class SimulationNetworkLinkLatencyTests
     public void GetMessageDelayLoopbackAlwaysZeroEvenWithPerLinkOverride()
     {
         var network = CreateNetwork();
-        network.EnableDelays = true;
         network.BaseMessageDelay = TimeSpan.FromMilliseconds(10);
 
         network.SetLinkLatency("A", "A", TimeSpan.FromMilliseconds(999), TimeSpan.Zero);
@@ -118,21 +111,11 @@ public sealed class SimulationNetworkLinkLatencyTests
         Assert.Equal(TimeSpan.Zero, network.GetMessageDelay("A", "A"));
     }
 
-    [Fact]
-    public void GetMessageDelayDelaysDisabledReturnsZeroEvenWithOverride()
-    {
-        var network = CreateNetwork();
-        network.EnableDelays = false;
-        network.SetLinkLatency("A", "B", TimeSpan.FromMilliseconds(50), TimeSpan.Zero);
-
-        Assert.Equal(TimeSpan.Zero, network.GetMessageDelay("A", "B"));
-    }
 
     [Fact]
     public void GetMessageDelayPerLinkJitterIsBounded()
     {
         var network = CreateNetwork();
-        network.EnableDelays = true;
 
         var baseDelay = TimeSpan.FromMilliseconds(10);
         var maxJitter = TimeSpan.FromMilliseconds(5);
@@ -172,11 +155,13 @@ public sealed class SimulationNetworkLinkLatencyTests
         network.SetLinkLatency("A", "B", TimeSpan.FromMilliseconds(10), TimeSpan.Zero);
         network.SetBidirectionalLinkLatency("C", "D", TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(5));
 
-        var all = network.GetAllLinkLatencies();
-        Assert.Equal(3, all.Count);
-        Assert.True(all.ContainsKey(("A", "B")));
-        Assert.True(all.ContainsKey(("C", "D")));
-        Assert.True(all.ContainsKey(("D", "C")));
+        Assert.Equal(
+            [
+                new LinkLatencyOverride("A", "B", new(TimeSpan.FromMilliseconds(10), TimeSpan.Zero)),
+                new LinkLatencyOverride("C", "D", new(TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(5))),
+                new LinkLatencyOverride("D", "C", new(TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(5))),
+            ],
+            network.GetAllLinkLatencies());
     }
 
     [Fact]

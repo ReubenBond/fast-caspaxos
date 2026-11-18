@@ -1,11 +1,11 @@
 using System.Collections.Immutable;
-using Clockwork;
 using Orleans.Consensus.CasPaxos.Messages;
 using Orleans.Consensus.CasPaxos.Model;
 using Orleans.Consensus.CasPaxos.Protocol;
 using Orleans.Consensus.CasPaxos.Diagnostics;
 using Orleans.Consensus.CasPaxos.Simulation.Contracts;
 using Orleans.Consensus.CasPaxos.Simulation.Transport;
+using Orleans.Testing.Simulation;
 
 namespace Orleans.Consensus.CasPaxos.Simulation.Hosts;
 
@@ -448,7 +448,7 @@ public sealed class FastCasProposerHost<TValue> : IFastCasProposerNodeHost<TValu
     {
         var retryDelay = GetRetryDelay();
         var proposalGeneration = _proposalGeneration;
-        SimulationContext.TaskQueue.EnqueueAfter(
+        SimulationContext.SchedulerLane.EnqueueAfter(
             () =>
             {
                 if (!IsRunning
@@ -483,7 +483,7 @@ public sealed class FastCasProposerHost<TValue> : IFastCasProposerNodeHost<TValu
         }
 
         var proposalGeneration = _proposalGeneration;
-        SimulationContext.TaskQueue.EnqueueAfter(
+        SimulationContext.SchedulerLane.EnqueueAfter(
             () =>
             {
                 if (!IsRunning
@@ -534,7 +534,7 @@ public sealed class FastCasProposerHost<TValue> : IFastCasProposerNodeHost<TValu
         var proposalGeneration = _proposalGeneration;
         var engine = _engine;
         var round = engine.Ballot.Round;
-        _simulationContext.TaskQueue.EnqueueAfter(
+        _simulationContext.SchedulerLane.EnqueueAfter(
             () =>
             {
                 if (!IsRunning

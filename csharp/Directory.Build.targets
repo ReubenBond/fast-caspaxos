@@ -1,3 +1,4 @@
 <Project>
   <!-- Terminate Directory.Build.targets discovery at the upstream source boundary. -->
+  <Import Project="$(MSBuildThisFileDirectory)eng\OrleansSimulation.targets" />
 </Project>

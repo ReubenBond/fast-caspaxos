@@ -15,11 +15,12 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+    <!-- Built from Clockwork's source (eng/OrleansSimulation.targets). -->
+    <PackageReference Include="Microsoft.Orleans.Testing.Simulation" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Orleans.Consensus.CasPaxos.Testing\Orleans.Consensus.CasPaxos.Testing.csproj" />
-    <ProjectReference Include="..\..\src\Clockwork\Clockwork.csproj" />
     <ProjectReference Include="..\..\src\Orleans.Consensus.CasPaxos.Simulation.Runner\Orleans.Consensus.CasPaxos.Simulation.Runner.csproj" />
     <ProjectReference Include="..\..\src\Orleans.Consensus.CasPaxos.Simulation\Orleans.Consensus.CasPaxos.Simulation.csproj" />
     <ProjectReference Include="..\..\src\Orleans.Consensus.CasPaxos.Simulation.Scenarios\Orleans.Consensus.CasPaxos.Simulation.Scenarios.csproj" />

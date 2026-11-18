@@ -1,10 +1,10 @@
-using Clockwork;
 using Orleans.Consensus.CasPaxos.Messages;
 using Orleans.Consensus.CasPaxos.Model;
 using Orleans.Consensus.CasPaxos.Simulation.Contracts;
 using Orleans.Consensus.CasPaxos.Simulation.Hosts;
 using Orleans.Consensus.CasPaxos.Simulation.Nodes;
 using Orleans.Consensus.CasPaxos.Simulation.Transport;
+using Orleans.Testing.Simulation;
 using Xunit;
 
 namespace Orleans.Consensus.CasPaxos.Simulation.Tests;
@@ -12,38 +12,25 @@ namespace Orleans.Consensus.CasPaxos.Simulation.Tests;
 public sealed class FastCasSimulationNodeHostTests
 {
     [Fact]
-    public void ProposerAndAcceptorsReachConsensusThroughSimulationTransport()
+    public async Task ProposerAndAcceptorsReachConsensusThroughSimulationTransport()
     {
-        var clock = new SimulationClock(DateTimeOffset.UnixEpoch);
-        var guard = new SingleThreadedGuard();
-        var clusterQueue = new SimulationTaskQueue(clock, guard);
-        List<SimulationNode> nodes = [];
-        var network = new SimulationNetwork(() => [.. nodes], new SimulationRandom(321));
-        var transport = new FastCasSimulationTransport<TestValue>(network);
+        await using var cluster = CreateCluster(seed: 321);
+        var transport = new FastCasSimulationTransport<TestValue>(cluster.Network);
         var options = new FastCasSimulationOptions
         {
             ProposerModePolicy = ProposerModePolicy.StaticClassic,
         };
 
-        var acceptorNodes = new List<FastCasSimulationNode<TestValue>>();
         var acceptorHosts = new List<FastCasAcceptorHost<TestValue>>();
         var acceptorAddresses = new List<FastCasAddress>();
         for (var i = 1; i <= 5; i++)
         {
             var nodeId = new FastCasNodeId(FastCasParticipantRole.Acceptor, i);
             var host = new FastCasAcceptorHost<TestValue>(nodeId, transport, default, options: options);
-            var node = new FastCasSimulationNode<TestValue>(
-                host,
-                clock,
-                guard,
-                new SimulationRandom(100 + i),
-                clusterQueue,
-                transport);
+            Attach(cluster, host, transport);
 
             acceptorHosts.Add(host);
-            acceptorNodes.Add(node);
             acceptorAddresses.Add(nodeId.Address);
-            nodes.Add(node);
         }
 
         var proposerHost = new FastCasProposerHost<TestValue>(
@@ -52,21 +39,14 @@ public sealed class FastCasSimulationNodeHostTests
             transport,
             default,
             options);
-        var proposerNode = new FastCasSimulationNode<TestValue>(
-            proposerHost,
-            clock,
-            guard,
-            new SimulationRandom(500),
-            clusterQueue,
-            transport);
-        nodes.Add(proposerNode);
+        Attach(cluster, proposerHost, transport);
 
-        var clientQueue = new SimulationTaskQueue(clock, guard);
+        var clientLane = cluster.SchedulerLane;
         List<IFastCasTransportMessage<TestValue>> clientMessages = [];
         var clientAddress = FastCasAddress.Client();
         transport.RegisterEndpoint(new FastCasTransportEndpointRegistration<TestValue>(
             clientAddress,
-            clientQueue,
+            clientLane,
             message => clientMessages.Add(message)));
 
         var proposal = new FastCasProposeRequestMessage<TestValue>(
@@ -76,7 +56,7 @@ public sealed class FastCasSimulationNodeHostTests
             AppendOperation(1, "A"));
 
         Assert.Equal(DeliveryStatus.Success, transport.Send(proposal));
-        RunUntilIdle(clusterQueue, clientQueue, [.. nodes.Select(node => node.Context.TaskQueue)]);
+        RunUntilIdle(cluster);
 
         var completion = Assert.IsType<FastCasProposeResponseMessage<TestValue>>(Assert.Single(clientMessages));
         Assert.Equal(new TestValue(1, "A"), completion.Payload.CommittedValue);
@@ -85,14 +65,10 @@ public sealed class FastCasSimulationNodeHostTests
     }
 
     [Fact]
-    public void ProposerLearnerAdoptsCommittedValueAndSupportsNextProposal()
+    public async Task ProposerLearnerAdoptsCommittedValueAndSupportsNextProposal()
     {
-        var clock = new SimulationClock(DateTimeOffset.UnixEpoch);
-        var guard = new SingleThreadedGuard();
-        var clusterQueue = new SimulationTaskQueue(clock, guard);
-        List<SimulationNode> nodes = [];
-        var network = new SimulationNetwork(() => [.. nodes], new SimulationRandom(654));
-        var transport = new FastCasSimulationTransport<TestValue>(network);
+        await using var cluster = CreateCluster(seed: 654);
+        var transport = new FastCasSimulationTransport<TestValue>(cluster.Network);
         var options = new FastCasSimulationOptions
         {
             ProposerModePolicy = ProposerModePolicy.StaticClassic,
@@ -104,17 +80,10 @@ public sealed class FastCasSimulationNodeHostTests
         {
             var nodeId = new FastCasNodeId(FastCasParticipantRole.Acceptor, i);
             var host = new FastCasAcceptorHost<TestValue>(nodeId, transport, default, options: options);
-            var node = new FastCasSimulationNode<TestValue>(
-                host,
-                clock,
-                guard,
-                new SimulationRandom(200 + i),
-                clusterQueue,
-                transport);
+            Attach(cluster, host, transport);
 
             acceptorHosts.Add(host);
             acceptorAddresses.Add(nodeId.Address);
-            nodes.Add(node);
         }
 
         var proposerOneHost = new FastCasProposerHost<TestValue>(
@@ -123,15 +92,8 @@ public sealed class FastCasSimulationNodeHostTests
             transport,
             default,
             options);
-        var proposerOneNode = new FastCasSimulationNode<TestValue>(
-            proposerOneHost,
-            clock,
-            guard,
-            new SimulationRandom(700),
-            clusterQueue,
-            transport);
+        var proposerOneNode = Attach(cluster, proposerOneHost, transport);
         proposerOneHost.BindSimulationContext(proposerOneNode.Context);
-        nodes.Add(proposerOneNode);
 
         var proposerTwoHost = new FastCasProposerHost<TestValue>(
             new FastCasNodeId(FastCasParticipantRole.Proposer, 2),
@@ -139,22 +101,15 @@ public sealed class FastCasSimulationNodeHostTests
             transport,
             default,
             options);
-        var proposerTwoNode = new FastCasSimulationNode<TestValue>(
-            proposerTwoHost,
-            clock,
-            guard,
-            new SimulationRandom(701),
-            clusterQueue,
-            transport);
+        var proposerTwoNode = Attach(cluster, proposerTwoHost, transport);
         proposerTwoHost.BindSimulationContext(proposerTwoNode.Context);
-        nodes.Add(proposerTwoNode);
 
-        var clientQueue = new SimulationTaskQueue(clock, guard);
+        var clientLane = cluster.SchedulerLane;
         List<IFastCasTransportMessage<TestValue>> clientMessages = [];
         var clientAddress = FastCasAddress.Client();
         transport.RegisterEndpoint(new FastCasTransportEndpointRegistration<TestValue>(
             clientAddress,
-            clientQueue,
+            clientLane,
             message => clientMessages.Add(message)));
 
         var firstProposal = new FastCasProposeRequestMessage<TestValue>(
@@ -163,7 +118,7 @@ public sealed class FastCasSimulationNodeHostTests
             1,
             AppendOperation(1, "A"));
         Assert.Equal(DeliveryStatus.Success, transport.Send(firstProposal));
-        RunUntilIdle(clusterQueue, clientQueue, [.. nodes.Select(node => node.Context.TaskQueue)]);
+        RunUntilIdle(cluster);
 
         var firstCompletion = Assert.IsType<FastCasProposeResponseMessage<TestValue>>(Assert.Single(clientMessages));
         Assert.Equal(new TestValue(1, "A"), firstCompletion.Payload.CommittedValue);
@@ -175,7 +130,7 @@ public sealed class FastCasSimulationNodeHostTests
                 proposerTwoHost.Address,
                 proposerOneHost.Ballot,
                 proposerOneHost.CachedValue)));
-        RunUntilIdle(clusterQueue, clientQueue, [.. nodes.Select(node => node.Context.TaskQueue)]);
+        RunUntilIdle(cluster);
 
         Assert.Equal(proposerOneHost.Ballot, proposerTwoHost.Ballot);
         Assert.Equal(new TestValue(1, "A"), proposerTwoHost.CachedValue);
@@ -188,7 +143,7 @@ public sealed class FastCasSimulationNodeHostTests
             2,
             AppendOperation(2, "B"));
         Assert.Equal(DeliveryStatus.Success, transport.Send(secondProposal));
-        RunUntilIdle(clusterQueue, clientQueue, [.. nodes.Select(node => node.Context.TaskQueue)]);
+        RunUntilIdle(cluster);
 
         var secondCompletion = Assert.IsType<FastCasProposeResponseMessage<TestValue>>(Assert.Single(clientMessages));
         Assert.Equal(new TestValue(2, "AB"), secondCompletion.Payload.CommittedValue);
@@ -197,14 +152,10 @@ public sealed class FastCasSimulationNodeHostTests
     }
 
     [Fact]
-    public void ProposerLearnerFastModeLearnedCommitArrivesAfterNetworkDelayAndCarriesPreparedBallot()
+    public async Task ProposerLearnerFastModeLearnedCommitArrivesAfterNetworkDelayAndCarriesPreparedBallot()
     {
-        var clock = new SimulationClock(DateTimeOffset.UnixEpoch);
-        var guard = new SingleThreadedGuard();
-        var clusterQueue = new SimulationTaskQueue(clock, guard);
-        List<SimulationNode> nodes = [];
-        var network = new SimulationNetwork(() => [.. nodes], new SimulationRandom(777));
-        var transport = new FastCasSimulationTransport<TestValue>(network);
+        await using var cluster = CreateCluster(seed: 777);
+        var transport = new FastCasSimulationTransport<TestValue>(cluster.Network);
         var options = new FastCasSimulationOptions
         {
             ProposerModePolicy = ProposerModePolicy.StaticFast,
@@ -216,17 +167,10 @@ public sealed class FastCasSimulationNodeHostTests
         {
             var nodeId = new FastCasNodeId(FastCasParticipantRole.Acceptor, i);
             var host = new FastCasAcceptorHost<TestValue>(nodeId, transport, default, options: options);
-            var node = new FastCasSimulationNode<TestValue>(
-                host,
-                clock,
-                guard,
-                new SimulationRandom(300 + i),
-                clusterQueue,
-                transport);
+            Attach(cluster, host, transport);
 
             acceptorHosts.Add(host);
             acceptorAddresses.Add(nodeId.Address);
-            nodes.Add(node);
         }
 
         var proposerOneHost = new FastCasProposerHost<TestValue>(
@@ -235,15 +179,8 @@ public sealed class FastCasSimulationNodeHostTests
             transport,
             default,
             options);
-        var proposerOneNode = new FastCasSimulationNode<TestValue>(
-            proposerOneHost,
-            clock,
-            guard,
-            new SimulationRandom(800),
-            clusterQueue,
-            transport);
+        var proposerOneNode = Attach(cluster, proposerOneHost, transport);
         proposerOneHost.BindSimulationContext(proposerOneNode.Context);
-        nodes.Add(proposerOneNode);
 
         var proposerTwoHost = new FastCasProposerHost<TestValue>(
             new FastCasNodeId(FastCasParticipantRole.Proposer, 2),
@@ -251,22 +188,15 @@ public sealed class FastCasSimulationNodeHostTests
             transport,
             default,
             options);
-        var proposerTwoNode = new FastCasSimulationNode<TestValue>(
-            proposerTwoHost,
-            clock,
-            guard,
-            new SimulationRandom(801),
-            clusterQueue,
-            transport);
+        var proposerTwoNode = Attach(cluster, proposerTwoHost, transport);
         proposerTwoHost.BindSimulationContext(proposerTwoNode.Context);
-        nodes.Add(proposerTwoNode);
 
-        var clientQueue = new SimulationTaskQueue(clock, guard);
+        var clientLane = cluster.SchedulerLane;
         List<IFastCasTransportMessage<TestValue>> clientMessages = [];
         var clientAddress = FastCasAddress.Client();
         transport.RegisterEndpoint(new FastCasTransportEndpointRegistration<TestValue>(
             clientAddress,
-            clientQueue,
+            clientLane,
             message => clientMessages.Add(message)));
 
         var firstProposal = new FastCasProposeRequestMessage<TestValue>(
@@ -275,17 +205,17 @@ public sealed class FastCasSimulationNodeHostTests
             1,
             AppendOperation(1, "A"));
         Assert.Equal(DeliveryStatus.Success, transport.Send(firstProposal));
-        RunUntilIdle(clusterQueue, clientQueue, [.. nodes.Select(node => node.Context.TaskQueue)]);
+        RunUntilIdle(cluster);
 
         var firstCompletion = Assert.IsType<FastCasProposeResponseMessage<TestValue>>(Assert.Single(clientMessages));
         Assert.Equal(new TestValue(1, "A"), firstCompletion.Payload.CommittedValue);
 
         var learnedPreparedBallot = Assert.IsType<Ballot>(proposerOneHost.PreparedBallot);
-        network.EnableDelays = true;
-        network.BaseMessageDelay = TimeSpan.Zero;
-        network.MaxJitter = TimeSpan.Zero;
+        transport.EnableDelays = true;
+        transport.Network.BaseMessageDelay = TimeSpan.Zero;
+        transport.Network.MaxJitter = TimeSpan.Zero;
         var learnDelay = TimeSpan.FromMilliseconds(50);
-        network.SetLinkLatency(
+        transport.Network.SetLinkLatency(
             proposerOneHost.Address.NetworkAddress,
             proposerTwoHost.Address.NetworkAddress,
             learnDelay,
@@ -300,13 +230,12 @@ public sealed class FastCasSimulationNodeHostTests
                 proposerOneHost.CachedValue,
                 learnedPreparedBallot)));
 
-        RunUntilIdle(clusterQueue, clientQueue, [.. nodes.Select(node => node.Context.TaskQueue)]);
+        RunUntilIdle(cluster);
         Assert.Equal(default, proposerTwoHost.CachedValue);
         Assert.Equal(Ballot.Zero, proposerTwoHost.Ballot);
         Assert.Null(proposerTwoHost.PreparedBallot);
 
-        clock.Advance(learnDelay);
-        RunUntilIdle(clusterQueue, clientQueue, [.. nodes.Select(node => node.Context.TaskQueue)]);
+        cluster.RunFor(learnDelay, CancellationToken.None);
 
         Assert.Equal(proposerOneHost.Ballot, proposerTwoHost.Ballot);
         Assert.Equal(new TestValue(1, "A"), proposerTwoHost.CachedValue);
@@ -319,7 +248,7 @@ public sealed class FastCasSimulationNodeHostTests
             2,
             AppendOperation(2, "B"));
         Assert.Equal(DeliveryStatus.Success, transport.Send(secondProposal));
-        RunUntilIdle(clusterQueue, clientQueue, [.. nodes.Select(node => node.Context.TaskQueue)]);
+        RunUntilIdle(cluster);
 
         var secondCompletion = Assert.IsType<FastCasProposeResponseMessage<TestValue>>(Assert.Single(clientMessages));
         Assert.Equal(new TestValue(2, "AB"), secondCompletion.Payload.CommittedValue);
@@ -329,7 +258,7 @@ public sealed class FastCasSimulationNodeHostTests
         Assert.All(acceptorHosts, host => Assert.Equal(new TestValue(2, "AB"), host.State.AcceptedValue));
 
         var replayDelay = TimeSpan.FromMilliseconds(25);
-        network.SetLinkLatency(
+        transport.Network.SetLinkLatency(
             proposerOneHost.Address.NetworkAddress,
             proposerTwoHost.Address.NetworkAddress,
             replayDelay,
@@ -343,13 +272,12 @@ public sealed class FastCasSimulationNodeHostTests
                 proposerOneHost.CachedValue,
                 learnedPreparedBallot)));
 
-        RunUntilIdle(clusterQueue, clientQueue, [.. nodes.Select(node => node.Context.TaskQueue)]);
+        RunUntilIdle(cluster);
         Assert.Equal(replaySafeBallot, proposerTwoHost.Ballot);
         Assert.Equal(new TestValue(2, "AB"), proposerTwoHost.CachedValue);
         Assert.Equal(replaySafePreparedBallot, proposerTwoHost.PreparedBallot);
 
-        clock.Advance(replayDelay);
-        RunUntilIdle(clusterQueue, clientQueue, [.. nodes.Select(node => node.Context.TaskQueue)]);
+        cluster.RunFor(replayDelay, CancellationToken.None);
 
         Assert.Equal(replaySafeBallot, proposerTwoHost.Ballot);
         Assert.Equal(new TestValue(2, "AB"), proposerTwoHost.CachedValue);
@@ -359,26 +287,24 @@ public sealed class FastCasSimulationNodeHostTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void QueuedReadCompletesThroughItsOwnAcceptQuorum(bool forwarded)
+    public async Task QueuedReadCompletesThroughItsOwnAcceptQuorum(bool forwarded)
     {
-        var clock = new SimulationClock(DateTimeOffset.UnixEpoch);
-        var guard = new SingleThreadedGuard();
-        var acceptorQueue = new SimulationTaskQueue(clock, guard);
-        var clientQueue = new SimulationTaskQueue(clock, guard);
-        var network = new SimulationNetwork(() => [], new SimulationRandom(918));
-        var transport = new FastCasSimulationTransport<TestValue>(network);
+        await using var cluster = CreateCluster(seed: 918);
+        var acceptorLane = cluster.AddNode("acceptors").Context.SchedulerLane;
+        var clientLane = cluster.AddNode("clients").Context.SchedulerLane;
+        var transport = new FastCasSimulationTransport<TestValue>(cluster.Network);
         FastCasAddress[] acceptors = [FastCasAddress.Acceptor(1), FastCasAddress.Acceptor(2), FastCasAddress.Acceptor(3)];
         List<IFastCasTransportMessage<TestValue>> requests = [];
         List<IFastCasTransportMessage<TestValue>> responses = [];
         foreach (var acceptor in acceptors)
         {
-            transport.RegisterEndpoint(new(acceptor, acceptorQueue, requests.Add));
+            transport.RegisterEndpoint(new(acceptor, acceptorLane, requests.Add));
         }
 
         var caller = FastCasAddress.Client();
         var forwardingProposer = FastCasAddress.Proposer(2);
-        transport.RegisterEndpoint(new(caller, clientQueue, responses.Add));
-        transport.RegisterEndpoint(new(forwardingProposer, clientQueue, responses.Add));
+        transport.RegisterEndpoint(new(caller, clientLane, responses.Add));
+        transport.RegisterEndpoint(new(forwardingProposer, clientLane, responses.Add));
         var host = new FastCasProposerHost<TestValue>(
             new FastCasNodeId(FastCasParticipantRole.Proposer, 1),
             [.. acceptors],
@@ -411,7 +337,7 @@ public sealed class FastCasSimulationNodeHostTests
         Promise(acceptors[1], Ballot.Zero, default);
         Accept(acceptors[0]);
         Accept(acceptors[1]);
-        RunUntilIdle(acceptorQueue, clientQueue, []);
+        RunUntilIdle(cluster);
 
         var value = new TestValue(1, "A");
         var writeResponse = Assert.IsType<FastCasProposeResponseMessage<TestValue>>(Assert.Single(responses));
@@ -423,7 +349,7 @@ public sealed class FastCasSimulationNodeHostTests
 
         Promise(acceptors[0], writeBallot, value);
         Promise(acceptors[1], writeBallot, value);
-        RunUntilIdle(acceptorQueue, clientQueue, []);
+        RunUntilIdle(cluster);
         var readAccepts = requests.OfType<FastCasAcceptRequestMessage<TestValue>>()
             .Where(message => message.Payload.Ballot == host.Ballot).ToArray();
         Assert.Equal(3, readAccepts.Length);
@@ -431,10 +357,10 @@ public sealed class FastCasSimulationNodeHostTests
         Assert.Single(responses);
 
         Accept(acceptors[0]);
-        RunUntilIdle(acceptorQueue, clientQueue, []);
+        RunUntilIdle(cluster);
         Assert.Single(responses);
         Accept(acceptors[1]);
-        RunUntilIdle(acceptorQueue, clientQueue, []);
+        RunUntilIdle(cluster);
 
         Assert.Equal(2, responses.Count);
         if (forwarded)
@@ -486,30 +412,19 @@ public sealed class FastCasSimulationNodeHostTests
             },
         };
 
-    private static void RunUntilIdle(
-        SimulationTaskQueue clusterQueue,
-        SimulationTaskQueue clientQueue,
-        ReadOnlySpan<SimulationTaskQueue> nodeQueues)
-    {
-        for (var i = 0; i < 1000; i++)
-        {
-            var madeProgress = false;
-            madeProgress |= clusterQueue.RunOnce();
-            madeProgress |= clientQueue.RunOnce();
+    private static SimulationCluster CreateCluster(int seed) => new(seed, DateTimeOffset.UnixEpoch);
 
-            foreach (var queue in nodeQueues)
-            {
-                madeProgress |= queue.RunOnce();
-            }
+    private static FastCasSimulationNode<TestValue> Attach(
+        SimulationCluster cluster,
+        IFastCasNodeHost<TestValue> host,
+        FastCasSimulationTransport<TestValue> transport) =>
+        cluster.AddCustomNode(
+            host.Address.NetworkAddress,
+            context => new FastCasSimulationNode<TestValue>(host, context, transport));
 
-            if (!madeProgress)
-            {
-                return;
-            }
-        }
-
-        throw new InvalidOperationException("Simulation queues did not quiesce.");
-    }
+    /// <summary>Runs the work which is due now, without advancing virtual time.</summary>
+    private static void RunUntilIdle(SimulationCluster cluster) =>
+        cluster.SchedulerLane.RunUntilIdle(CancellationToken.None);
 
     private readonly record struct TestValue(int Version, string Value) : IVersionedValue<TestValue>
     {

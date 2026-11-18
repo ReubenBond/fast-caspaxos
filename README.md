@@ -314,6 +314,8 @@ for the public contracts, lifecycle, and an example.
 
 This repository centers on a deterministic simulation suite built on a DST harness that I've called `Clockwork`. The simulation outputs traces that can be checked by Porcupine for linearizability violations. The repo also includes TLA+ models under the 'tla' directory that I've generated with copious amounts of assistance from coding agents.
 
+Clockwork is a git submodule at `vendor/Clockwork`, from which the build supplies its `Microsoft.Orleans.Testing.Simulation` packages. Clone with `--recurse-submodules`, or run `git submodule update --init vendor/Clockwork` in an existing clone. The [testing fixture guide](csharp/src/Orleans.Consensus.CasPaxos.Testing/README.md#clockwork-source-build) describes the source build and how an embedding repository supplies its own Clockwork checkout.
+
 Use the helper scripts to run the sim suite:
 
 ```powershell

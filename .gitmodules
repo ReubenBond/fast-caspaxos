@@ -1,0 +1,3 @@
+[submodule "vendor/Clockwork"]
+	path = vendor/Clockwork
+	url = https://github.com/ReubenBond/Clockwork.git

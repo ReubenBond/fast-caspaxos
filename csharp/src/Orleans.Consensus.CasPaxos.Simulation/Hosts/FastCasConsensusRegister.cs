@@ -1,9 +1,9 @@
 using System.Collections.Immutable;
-using Clockwork;
 using Orleans.Consensus.CasPaxos.Model;
 using Orleans.Consensus.CasPaxos.Protocol;
 using Orleans.Consensus.CasPaxos.Simulation.Contracts;
 using Orleans.Consensus.CasPaxos.Simulation.Transport;
+using Orleans.Testing.Simulation;
 
 namespace Orleans.Consensus.CasPaxos.Simulation.Hosts;
 

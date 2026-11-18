@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using Clockwork;
 using Orleans.Consensus.CasPaxos.Server;
 using Grpc.Core;
 using Xunit;
@@ -235,30 +234,29 @@ public sealed class GrpcRegisterClientTests
     [InlineData(true)]
     public async Task BudgetLimitsEachAttemptAndStopsAtOverallDeadline(bool mutation)
     {
-        var clock = new SimulationClock(new DateTimeOffset(2040, 1, 2, 3, 4, 5, TimeSpan.Zero));
-        var time = new SimulationTimeProvider(new SimulationTaskQueue(clock, new()), clock);
+        var clock = new DiagnosticClock();
         var first = new StubCallInvoker((_, options) =>
         {
-            Assert.Equal(clock.StartDateTime.UtcDateTime.AddSeconds(5), options.Deadline);
+            Assert.Equal(DateTime.UnixEpoch.AddSeconds(5), options.Deadline);
             clock.Advance(TimeSpan.FromSeconds(4));
             throw mutation ? Definite(StatusCode.Unavailable, "unavailable")
                 : new RpcException(new(StatusCode.DeadlineExceeded, "attempt expired"));
         });
         var second = new StubCallInvoker((_, options) =>
         {
-            Assert.Equal(clock.StartDateTime.UtcDateTime.AddSeconds(7), options.Deadline);
+            Assert.Equal(DateTime.UnixEpoch.AddSeconds(7), options.Deadline);
             clock.Advance(TimeSpan.FromSeconds(3));
             throw mutation ? Definite(StatusCode.Unavailable, "unavailable")
                 : new RpcException(new(StatusCode.DeadlineExceeded, "attempt expired"));
         });
         var third = StubCallInvoker.Reply(Absent());
         using var client = new GrpcRegisterClient([first, second, third],
-            new() { CallTimeout = TimeSpan.FromSeconds(7), AttemptTimeout = TimeSpan.FromSeconds(5) }, time);
+            new() { CallTimeout = TimeSpan.FromSeconds(7), AttemptTimeout = TimeSpan.FromSeconds(5) }, clock);
         var error = await Assert.ThrowsAsync<RemoteCallException>(() => mutation
             ? client.CompareExchangeAsync("key", null, Payload).AsTask()
             : (Task)client.ReadAsync("key").AsTask());
         Assert.Equal(StatusCode.DeadlineExceeded, error.StatusCode);
-        Assert.Equal(TimeSpan.FromSeconds(7), clock.CurrentTime);
+        Assert.Equal(DateTimeOffset.UnixEpoch.AddSeconds(7), clock.GetUtcNow());
         Assert.Single(first.Calls);
         Assert.Single(second.Calls);
         Assert.Empty(third.Calls);

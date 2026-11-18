@@ -1,8 +1,9 @@
+using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Globalization;
-using Clockwork;
+using System.Text;
 using Orleans.Consensus.CasPaxos.Diagnostics;
 using Orleans.Consensus.CasPaxos.Messages;
 using Orleans.Consensus.CasPaxos.Model;
@@ -11,6 +12,7 @@ using Orleans.Consensus.CasPaxos.Simulation.Invariants;
 using Orleans.Consensus.CasPaxos.Simulation.Hosts;
 using Orleans.Consensus.CasPaxos.Simulation.Nodes;
 using Microsoft.Extensions.Logging;
+using Orleans.Testing.Simulation;
 
 namespace Orleans.Consensus.CasPaxos.Simulation.Scenarios;
 
@@ -278,8 +280,7 @@ public sealed class SimulationObservabilitySession :
     IFastCasSimulationHistoryObserver,
     IFastCasSimulationAcceptorStateObserver
 {
-    private readonly InMemoryLoggerProvider _loggerProvider = new();
-    private readonly BufferingLoggerFactory _loggerFactory;
+    private readonly BufferingLoggerFactory _loggerFactory = new();
     private readonly DiagnosticListener _diagnosticListener =
         new("Orleans.Consensus.CasPaxos.Simulation.Runner");
     private readonly Meter _meter =
@@ -315,7 +316,6 @@ public sealed class SimulationObservabilitySession :
 
     public SimulationObservabilitySession()
     {
-        _loggerFactory = new BufferingLoggerFactory(_loggerProvider);
         _transportAttemptedMessages = _meter.CreateCounter<long>(SimulationMetricNames.TransportAttemptedMessages, description: "Number of inter-node transport sends attempted");
         _transportDeliveredMessages = _meter.CreateCounter<long>(SimulationMetricNames.TransportDeliveredMessages, description: "Number of inter-node messages delivered to registered endpoints");
         _transportDroppedMessages = _meter.CreateCounter<long>(SimulationMetricNames.TransportDroppedMessages, description: "Number of inter-node messages dropped by the simulated network");
@@ -354,7 +354,7 @@ public sealed class SimulationObservabilitySession :
         };
     }
 
-    public string GetLogOutput() => _loggerProvider.Buffer.FormatAllEntries();
+    public string GetLogOutput() => _loggerFactory.FormatEntries();
 
     public IReadOnlyDictionary<string, long> GetMeasurements() =>
         new Dictionary<string, long>(_measurements, StringComparer.Ordinal);
@@ -492,8 +492,7 @@ public sealed class SimulationObservabilitySession :
 
     private ProposerDiagnostics CreateProposerDiagnostics(FastCasNodeId nodeId)
     {
-        var logger = new NodePrefixedLoggerFactory(LoggerFactory, nodeId.Address.ToString())
-            .CreateLogger(typeof(ProposerDiagnostics).FullName!);
+        var logger = LoggerFactory.CreateLogger(typeof(ProposerDiagnostics).FullName!);
         return new ProposerDiagnostics(logger, _diagnosticListener, _meter);
     }
 
@@ -708,17 +707,57 @@ public sealed class SimulationObservabilitySession :
         }
     }
 
-    private sealed class BufferingLoggerFactory(InMemoryLoggerProvider provider) : ILoggerFactory
+    /// <summary>
+    /// Captures every entry a run logs, in order, for the run's artifacts: its level, event, category, and rendered
+    /// message, then its exception. Node identity is a structured property of the entry, such as a proposer's id.
+    /// </summary>
+    private sealed class BufferingLoggerFactory : ILoggerFactory
     {
-        private readonly InMemoryLoggerProvider _provider = provider;
+        private readonly ConcurrentQueue<string> _entries = new();
 
-        public ILogger CreateLogger(string categoryName) => _provider.CreateLogger(categoryName);
+        public ILogger CreateLogger(string categoryName) => new BufferingLogger(this, categoryName);
 
         public void AddProvider(ILoggerProvider provider) =>
-            throw new NotSupportedException("BufferingLoggerFactory uses a fixed in-memory provider.");
+            throw new NotSupportedException("BufferingLoggerFactory captures entries in memory only.");
 
-        public void Dispose() =>
-            _provider.Dispose();
+        public string FormatEntries()
+        {
+            var builder = new StringBuilder();
+            foreach (var entry in _entries)
+            {
+                builder.AppendLine(entry);
+            }
+
+            return builder.ToString();
+        }
+
+        public void Dispose() => _entries.Clear();
+
+        private sealed class BufferingLogger(BufferingLoggerFactory factory, string categoryName) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state)
+                where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => logLevel != LogLevel.None;
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                if (!IsEnabled(logLevel))
+                {
+                    return;
+                }
+
+                var entry = string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"[{logLevel}\t{eventId}\t{categoryName}]\t{formatter(state, exception)}");
+                factory._entries.Enqueue(exception is null ? entry : $"{entry}{Environment.NewLine}{exception}");
+            }
+        }
     }
 }
 
@@ -1857,7 +1896,7 @@ public static class SimulationScenarioCatalog
                 // Write interval: advance simulation clock between batches
                 if (writeInterval > TimeSpan.Zero && completedProposals < proposalCount)
                 {
-                    cluster.RunForDuration(writeInterval);
+                    cluster.RunFor(writeInterval);
                 }
             }
 
@@ -1946,7 +1985,7 @@ public static class SimulationScenarioCatalog
 
             if (writeInterval > TimeSpan.Zero && completedProposals < proposalCount)
             {
-                cluster.RunForDuration(writeInterval);
+                cluster.RunFor(writeInterval);
             }
         }
 
@@ -2184,7 +2223,7 @@ public static class SimulationScenarioCatalog
             // Write interval: advance simulation clock so learn broadcasts propagate
             if (writeInterval > TimeSpan.Zero && completedProposals < proposalCount)
             {
-                cluster.RunForDuration(writeInterval);
+                cluster.RunFor(writeInterval);
             }
         }
 
@@ -2418,7 +2457,7 @@ public static class SimulationScenarioCatalog
 
             if (writeInterval > TimeSpan.Zero && completedProposals < proposalCount)
             {
-                cluster.RunForDuration(writeInterval);
+                cluster.RunFor(writeInterval);
             }
         }
 
@@ -2548,7 +2587,7 @@ public static class SimulationScenarioCatalog
 
             if (writeInterval > TimeSpan.Zero && completedProposals < proposalCount)
             {
-                cluster.RunForDuration(writeInterval);
+                cluster.RunFor(writeInterval);
             }
         }
 

@@ -1,5 +1,5 @@
-using Clockwork;
 using Orleans.Consensus.CasPaxos.Simulation.Contracts;
+using Orleans.Testing.Simulation;
 
 namespace Orleans.Consensus.CasPaxos.Simulation.Transport;
 
@@ -11,6 +11,12 @@ public sealed class FastCasSimulationTransport<TValue>(
     private readonly IFastCasSimulationTransportObserver? _observer = observer;
 
     public SimulationNetwork Network { get; } = network ?? throw new ArgumentNullException(nameof(network));
+
+    /// <summary>
+    /// Gets or sets whether delivery waits for the network's message delay. While disabled, every delivered message,
+    /// including one on a link with a latency override, is due immediately.
+    /// </summary>
+    public bool EnableDelays { get; set; }
 
     public IReadOnlyCollection<FastCasAddress> RegisteredAddresses => _endpoints.Keys;
 
@@ -42,7 +48,10 @@ public sealed class FastCasSimulationTransport<TValue>(
             return deliveryStatus;
         }
 
-        endpoint.DeliveryQueue.EnqueueAfter(() => endpoint.Deliver(message), Network.GetMessageDelay(message.From.NetworkAddress, message.Destination.NetworkAddress));
+        var delay = EnableDelays
+            ? Network.GetMessageDelay(message.From.NetworkAddress, message.Destination.NetworkAddress)
+            : TimeSpan.Zero;
+        endpoint.DeliveryLane.EnqueueAfter(() => endpoint.Deliver(message), delay);
         return DeliveryStatus.Success;
     }
 

@@ -1,9 +1,9 @@
-using Clockwork;
 using Orleans.Consensus.CasPaxos.Messages;
 using Orleans.Consensus.CasPaxos.Model;
 using Orleans.Consensus.CasPaxos.Simulation.Contracts;
 using Orleans.Consensus.CasPaxos.Simulation.Hosts;
 using Orleans.Consensus.CasPaxos.Simulation.Transport;
+using Orleans.Testing.Simulation;
 using Xunit;
 
 namespace Orleans.Consensus.CasPaxos.Simulation.Tests;
@@ -27,13 +27,13 @@ public sealed class RegisterRestartSimulationTests
             },
             startDateTime: DateTimeOffset.UnixEpoch);
         cluster.CreateConfiguration(proposerCount: 1, acceptorCount: 3);
-        cluster.Network.EnableDelays = true;
+        cluster.Transport.EnableDelays = true;
         cluster.Network.BaseMessageDelay = TimeSpan.FromMilliseconds(1);
         cluster.Network.MaxJitter = TimeSpan.Zero;
         var probe = FastCasAddress.Client(42);
         var replies = new List<IFastCasTransportMessage<TestValue>>();
         cluster.Transport.RegisterEndpoint(new FastCasTransportEndpointRegistration<TestValue>(
-            probe, cluster.TaskQueue, replies.Add));
+            probe, cluster.Simulation.SchedulerLane, replies.Add));
         var acceptors = cluster.AcceptorNodes.Select(node => Assert.IsType<FastCasAcceptorHost<TestValue>>(node.Host)).ToArray();
         var oldValue = new TestValue(1, 1);
         var newValue = new TestValue(2, 2);
@@ -47,10 +47,10 @@ public sealed class RegisterRestartSimulationTests
         IFastCasTransportMessage<TestValue> Exchange(IFastCasTransportMessage<TestValue> request)
         {
             Assert.Empty(replies);
-            var sentAt = cluster.Clock.UtcNow;
+            var sentAt = cluster.TimeProvider.GetUtcNow();
             Assert.Equal(DeliveryStatus.Success, cluster.Transport.Send(request));
             Assert.True(cluster.RunUntil(() => replies.Count == 1, maxIterations: 1000));
-            Assert.Equal(sentAt + TimeSpan.FromMilliseconds(2), cluster.Clock.UtcNow);
+            Assert.Equal(sentAt + TimeSpan.FromMilliseconds(2), cluster.TimeProvider.GetUtcNow());
             var reply = Assert.Single(replies);
             Assert.Equal(request.Destination, reply.From);
             Assert.Equal(probe, reply.Destination);

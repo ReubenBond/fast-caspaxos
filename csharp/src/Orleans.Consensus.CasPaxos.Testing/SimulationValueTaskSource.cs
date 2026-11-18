@@ -6,7 +6,7 @@ namespace Orleans.Consensus.CasPaxos.Testing;
 /// <summary>
 /// Single-consumer, non-pooled boundary between a context-capturing fixture operation
 /// and consumer code which may opt out of context capture. This is not a scheduler:
-/// the operation and all completions are driven by the existing Clockwork queue.
+/// the operation and all completions are driven by the existing Clockwork scheduler.
 /// </summary>
 internal sealed class SimulationValueTaskSource<T> : IValueTaskSource<T>
 {
@@ -62,7 +62,7 @@ internal sealed class SimulationValueTaskSource<T> : IValueTaskSource<T>
         }
 
         // RunContinuationsAsynchronously is deliberately false. There is no race
-        // with registration: all fixture work runs on the single Clockwork thread.
+        // with registration: all fixture work runs on the simulation's logical thread.
         _completion.SetResult(result);
     }
 
