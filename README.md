@@ -211,7 +211,17 @@ function onAccept(b, v, next):
 
 Fast CASPaxos is a tidy modification to CASPaxos which is a tidy modification to single-decree Paxos. Piggybacking `prepare` onto `accept` already gives us distinguished-proposer mode. Using the same trick to prepare a shared fast ballot (and adopting Fast Paxos vote tallying and value selection rules) gives us leaderless mode too. All in all, this lets the same implementation tune for different scenarios on a whim, and there are many cases where leaderless consensus is superior to leadered consensus, as discussed above.
 
-This repository includes TLA+ and [Quint models](quint/README.md), plus a deterministic simulation suite with fault injection and a linearizability checker. The Quint model checks fast/classic agreement, recovery, piggybacked promises, and committed-value ancestry, with reproducible scenarios and finite-state safety verification in GitHub Actions. The repo-specific details are below.
+This repository includes TLA+ and [Quint models](quint/README.md), a normative [voter reconfiguration specification](docs/voter-reconfiguration-spec.md), and a Clockwork deterministic simulation suite with fault injection, linearizability checking, and Quint trace validation. The Quint model checks fast/classic agreement, recovery, piggybacked promises, voter reconfiguration (acceptor floor fencing and Vertical Paxos I hand-off), and committed-value ancestry, with reproducible scenarios, mutant checks, trace replay, and finite-state TLC verification in GitHub Actions. The repo-specific details are below.
+
+## Voter reconfiguration
+
+Fast CASPaxos supports operator-driven voter reconfiguration (replacing a lost voter, adding or removing a voter, chained reconfigurations, and disjoint migrations) through three protocol mechanisms specified in [`docs/voter-reconfiguration-spec.md`](docs/voter-reconfiguration-spec.md):
+
+- **Configuration-qualified ballots `(configuration, round, owner)`** whose quorums are counted strictly among the voters `V(configuration)`.
+- **Uniform acceptor floor `(c, 0, 0)`**, persisted once per acceptor database so raising the floor via `SetFloor` atomically fences all ballots of configurations `< c` across both present and absent keys while keeping ballot-free `Read` and `ListKeys` available for discovery and key transfer.
+- **Vertical Paxos I hand-off**, executed by `VoterReconfigurationDriver` through four idempotent, crash-resumable steps (**Choose → Fence `c` → Install → Activate**) over the reserved `__caspaxos/config` register. Stale proposers hitting a floor refusal discover and confirm the active successor configuration automatically and resume both classic and 1-RTT fast commits in `c > 1`.
+
+Reconfiguration safety is verified by TLC and seeded Quint simulations (including 7 protocol mutants) in [`quint/README.md`](quint/README.md), Clockwork deterministic fault-injection simulations (`VoterReconfigurationSimulationTests`), and per-key trace replay against `quint/FastCASPaxos.qnt` (`just quint-trace-validate`).
 
 ## C# durable keyed acceptors
 
