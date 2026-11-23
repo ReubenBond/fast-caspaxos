@@ -1,6 +1,6 @@
 # Fast CASPaxos Voter Reconfiguration Specification
 
-Status: **Proposed (awaiting Quint model validation in `ReubenBond/roux`)**
+Status: **Quint-validated in `ReubenBond/roux` (`rb-docs-caspaxos-reconfiguration` @ `7c65a97d52b3d10deaa1a9f3f559f17eff9a863f`)**
 
 This document is the normative, language- and transport-neutral specification for operator-driven reconfiguration of the Fast CASPaxos voter set (replacing a lost voter, adding a voter, removing a voter, or migrating to a new voter set). It is written to be shared verbatim across `ReubenBond/fast-caspaxos`, `ReubenBond/roux`, and `ReubenBond/orleans`; repository-specific bindings appear in [§13](#13-repository-binding-notes).
 
@@ -321,16 +321,17 @@ Two proof obligations bridge the multi-key system to the single-key model:
    - `FastQuorums: int -> int` (mapping `1..MaxConfig` to fast quorum sizes)
    - Keep `ProposerCount`, `MaxRound`, `ValueDepth`.
    - Derive `configIds = Configs.keys()`, `acceptors = configIds.map(c => Configs.get(c)).flatten()`, `votersOf(c)`, `classicQuorumOf(c)`, `fastQuorumOf(c)`, `firstConfig(a)`.
+   - Assert permanent retirement (`VR-I12`) directly in `finiteBounds` (no voter reappears in a later configuration after leaving).
 2. **Ballot, Acceptor, and message types:**
    - `type Ballot = { config: int, round: int, owner: int }`
    - `zero = { config: 0, round: 0, owner: 0 }`, `floorBallot(c) = { config: c, round: 0, owner: 0 }`, `initialFast = { config: 1, round: 1, owner: 0 }`.
    - `ballots = tuples(configIds, 1.to(MaxRound), 0.to(ProposerCount)).map(((c, r, p)) => { config: c, round: r, owner: p })`; `floorBallots = configIds.map(c => floorBallot(c))`.
    - `lt(a, b)` compares `config`, then `round`, then `owner`.
-   - Update `nextBallots(b)` to stay within `b.config` and allow classic ballots to piggyback fast ballots (enabling 1-RTT fast writes in `c > 1`):
+   - Update `nextBallots(b)` to stay within `b.config` and allow classic ballots to piggyback fast ballots (enabling 1-RTT fast writes in `c > 1`), while keeping fast ballots at `Set({ config: b.config, round: b.round + 1, owner: 0 })` (avoiding an 8x TLC state-space blowup on `FastCASPaxosPipeline`):
      ```quint
      pure def nextBallots(b: Ballot): Set[Ballot] =
        if (b.round == MaxRound) Set(zero)
-       else if (b.owner == 0) Set(zero, { config: b.config, round: b.round + 1, owner: 0 })
+       else if (b.owner == 0) Set({ config: b.config, round: b.round + 1, owner: 0 })
        else Set(zero, { config: b.config, round: b.round + 1, owner: 0 }, { config: b.config, round: b.round + 1, owner: b.owner })
      ```
    - `type Acceptor = { floor: Ballot, promised: Ballot, accepted: Ballot, value: int }`; `effPromised(acc) = maxBallot(acc.promised, acc.floor)`.
@@ -343,7 +344,7 @@ Two proof obligations bridge the multi-key system to the single-key model:
 4. **Actions (with sequentiality gate `c == 1 or complete.contains(c - 1)`):**
    - Add `raiseFloor(a, c)`: requires `configIds.contains(c)`, `c > 1`, `complete.contains(c - 1)`, `acceptors.contains(a)`, `lt(nodes.get(a).floor, floorBallot(c))`; sets `nodes.get(a).floor = floorBallot(c)`.
    - Update `prepare(a, b)`: requires `b.config == 1 or complete.contains(b.config - 1)`, leaves `a ∈ acceptors` ungated on `votersOf` (so misrouted prepares test the new voter's floor), gates on `le(maxBallot(effPromised(old), old.accepted), b)`, and records `floor: old.floor` on `PrepareReply`.
-   - Update `accept(a, r)`: gates on `votersOf(r.ballot.config).contains(a)` (`onlyVotersAccept`) and `maxBallot(effPromised(old), old.accepted)`; echoes `effPromised(updated)` and records `floor: old.floor, isDuplicate: duplicate(a, r)` on `Ack` (read-only duplicates leave `nodes` unchanged).
+   - Update `accept(a, r)`: gates on `votersOf(r.ballot.config).contains(a)` (`onlyVotersAccept`) and `maxBallot(effPromised(old), old.accepted)`; echoes `effPromised(updated)` and records `floor: old.floor, isDuplicate: duplicate(a, r)` on `Ack` (read-only duplicates leave `nodes` unchanged, and skip inserting a redundant `Ack` entry when an identical `(ballot, acceptor, value, promised, floor)` is `alreadyRecorded` in `acks`—avoiding an 18x–64x TLC powerset blowup while recording `isDuplicate: true` whenever `promised` or `floor` advances).
    - Gate `issuePrepared` on `complete.contains(b.config)`.
    - Split `issueRecovered` into:
      - **Normal (`complete.contains(b.config)`):** `q ⊆ responders(b).intersect(votersOf(b.config))`, `q.size() == classicQuorumOf(b.config)`.
@@ -390,18 +391,18 @@ Every mutant MUST violate its target invariant under Quint simulation:
 
 ### 11.4 MC configurations and bounds
 
-Keep all five existing single-configuration modules (updated to `Configs = Map(1 -> ...)`), and add reconfiguration modules:
+Keep all five existing single-configuration modules plus `FastCASPaxosReconfigExhaustive` in `FastCASPaxosMC.qnt`, and place the five reconfiguration simulation/mutant modules in `FastCASPaxosReconfigMC.qnt` so each file's compiled Quint IR JSON stays safely under Apalache's 20,000,000-byte Jackson `StreamReadConstraints` limit during `quint verify --backend=tlc` (~12.6 MB and ~14.5 MB respectively vs ~29.8 MB combined):
 
-| Module | `Configs` | `FastQuorums` | Owners / Rounds / Depth | Check |
-| --- | --- | --- | --- | --- |
-| `FastCASPaxosReconfigReplace` | `1 -> {1,2,3}, 2 -> {1,2,4}` | `1 -> 3, 2 -> 3` | 2 / 2 / 2 | Simulation + core mutants |
-| `FastCASPaxosReconfig4Voter` | `1 -> {1,2,3,5}, 2 -> {1,2,3,4}` | `1 -> 3, 2 -> 3` | 2 / 3 / 2 | Simulation + `mutantUnscopedFastTally` |
-| `FastCASPaxosReconfigDoubleReplace` | `1 -> {1,2,3}, 2 -> {1,2,4}, 3 -> {1,4,5}` | `1 -> 3, 2 -> 3, 3 -> 3` | 2 / 2 / 2 | Simulation (3-config chain exposing skip bugs) |
-| `FastCASPaxosReconfigAddRemove` | `1 -> {1,2,3}, 2 -> {1,2,3,4}, 3 -> {2,3,4}` | `1 -> 3, 2 -> 3, 3 -> 3` | 2 / 2 / 2 | Simulation (add then remove) |
-| `FastCASPaxosReconfigDisjoint` | `1 -> {1,2,3}, 2 -> {4,5,6}` | `1 -> 3, 2 -> 3` | 2 / 2 / 2 | Simulation (full migration) |
-| `FastCASPaxosReconfigExhaustive` | `1 -> {1,2}, 2 -> {1,3}` | `1 -> 2, 2 -> 2` | 1 / 2 / 1 (or 1 / 1 / 1 if TLC budget requires) | Exhaustive TLC |
+| Module | File | `Configs` | `FastQuorums` | Owners / Rounds / Depth | Check |
+| --- | --- | --- | --- | --- | --- |
+| `FastCASPaxosReconfigReplace` | `FastCASPaxosReconfigMC.qnt` | `1 -> {1,2,3}, 2 -> {1,2,4}` | `1 -> 3, 2 -> 3` | 2 / 2 / 2 | Simulation + core mutants |
+| `FastCASPaxosReconfig4Voter` | `FastCASPaxosReconfigMC.qnt` | `1 -> {1,2,3,5}, 2 -> {1,2,3,4}` | `1 -> 3, 2 -> 3` | 2 / 3 / 2 | Simulation + `mutantUnscopedFastTally` |
+| `FastCASPaxosReconfigDoubleReplace` | `FastCASPaxosReconfigMC.qnt` | `1 -> {1,2,3}, 2 -> {1,2,4}, 3 -> {1,4,5}` | `1 -> 3, 2 -> 3, 3 -> 3` | 2 / 2 / 2 | Simulation (3-config chain exposing skip bugs) |
+| `FastCASPaxosReconfigAddRemove` | `FastCASPaxosReconfigMC.qnt` | `1 -> {1,2,3}, 2 -> {1,2,3,4}, 3 -> {2,3,4}` | `1 -> 3, 2 -> 3, 3 -> 3` | 2 / 2 / 2 | Simulation (add then remove) |
+| `FastCASPaxosReconfigDisjoint` | `FastCASPaxosReconfigMC.qnt` | `1 -> {1,2,3}, 2 -> {4,5,6}` | `1 -> 3, 2 -> 3` | 2 / 2 / 2 | Simulation (full migration) |
+| `FastCASPaxosReconfigExhaustive` | `FastCASPaxosMC.qnt` | `1 -> {1,2}, 2 -> {1,3}` | `1 -> 2, 2 -> 2` | 1 / 1 / 1 | Exhaustive TLC (1,946,952 distinct states, 0 errors) |
 
-Add directed tests in `FastCASPaxosTests.qnt` covering: fast-round winner recovery across hand-off, tied fast-collision recovery across hand-off, vacuous completion for unseen keys, stale proposer holding prepared fast ballot of `c` fenced by floor, exact-duplicate replay below floor, and chained `1 → 2 → 3` reconfiguration.
+Add directed tests in `FastCASPaxosTests.qnt` (`FastCASPaxosReconfigTests`) covering: fast-round winner recovery across hand-off, tied fast-collision recovery across hand-off, vacuous completion for unseen keys, stale proposer holding prepared fast ballot of `c` fenced by floor, exact-duplicate replay below floor, and chained `1 → 2 → 3` reconfiguration.
 
 ### 11.5 Trace-validation mapping (Phase 2)
 
@@ -421,13 +422,13 @@ Traces replay against `FastCASPaxos.qnt` (via Quint trace validation / ITF check
 
 To maximize sharing and prevent specification or model drift across `ReubenBond/roux`, `ReubenBond/fast-caspaxos`, and `ReubenBond/orleans`:
 
-1. **Byte-identical Quint files:** `FastCASPaxos.qnt`, `FastCASPaxosMC.qnt`, `FastCASPaxosTests.qnt`, and `tlc.json` MUST remain **byte-identical** between `ReubenBond/roux` (`specs/fast-caspaxos/`) and `ReubenBond/fast-caspaxos` (`quint/`).
+1. **Byte-identical Quint files:** `FastCASPaxos.qnt`, `FastCASPaxosMC.qnt`, `FastCASPaxosReconfigMC.qnt`, `FastCASPaxosTests.qnt`, and `tlc.json` MUST remain **byte-identical** between `ReubenBond/roux` (`specs/fast-caspaxos/`) and `ReubenBond/fast-caspaxos` (`quint/`).
 2. **Single spec body:** The normative sections (§1–§11) of this document are the single shared specification text. Per-repository transport, storage, and hosting bindings live only in repository-local binding sections ([§13](#13-repository-binding-notes) / `docs/design/fast-caspaxos.md` / `metastore.md §8.1`).
 3. **Authoring sequence:**
-   - **Phase 1 (Roux):** `ReubenBond/roux` implements the Quint model, mutants, MC configs, tests, CI wiring (`specs-storage.yml`), and design-doc updates first, iterating until all directed tests, simulations, mutants, and TLC checks pass in CI. Any model-discovered spec adjustments update the normative text.
-   - **Phase 2 (`fast-caspaxos`):** `ReubenBond/fast-caspaxos` copies the four Quint files byte-identically from `roux`, wires `check-mutants.sh` into `.github/workflows/quint.yml`, updates this spec to **Decided**, implements the protocol in `Orleans.Consensus.CasPaxos*` with trace validation, and merges to `main`. From this point onward, `ReubenBond/fast-caspaxos` is the long-term canonical upstream for the protocol and Quint model, synced byte-identically to `roux`.
+   - **Phase 1 (Roux — validated @ `7c65a97d52b3d10deaa1a9f3f559f17eff9a863f`):** `ReubenBond/roux` implements the Quint model, mutants, MC configs, tests, CI wiring (`specs-storage.yml`), and design-doc updates first, iterating until all directed tests, simulations, mutants, and TLC checks pass. Any model-discovered spec adjustments update the normative text.
+   - **Phase 2 (`fast-caspaxos`):** `ReubenBond/fast-caspaxos` copies the five Quint files byte-identically from `roux`, wires `check-mutants.sh` into `.github/workflows/quint.yml`, updates this spec to **Decided**, implements the protocol in `Orleans.Consensus.CasPaxos*` with trace validation, and merges to `main`. From this point onward, `ReubenBond/fast-caspaxos` is the long-term canonical upstream for the protocol and Quint model, synced byte-identically to `roux`.
    - **Phase 3 (Orleans):** `ReubenBond/orleans` imports the updated `Orleans.Consensus.CasPaxos*` implementation from `fast-caspaxos` and binds the operator reconfiguration API to Orleans hosting without forking the Quint model.
-4. **Drift detection:** Each copy of `FastCASPaxos.qnt` / `README.md` records the upstream commit SHA and SHA-256 of the four shared Quint files; CI or a sync-check script fails on any unintended divergence.
+4. **Drift detection:** Each copy of `FastCASPaxos.qnt` / `README.md` records the upstream commit SHA and SHA-256 of the five shared Quint files; CI or a sync-check script fails on any unintended divergence.
 
 ---
 
