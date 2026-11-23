@@ -3,6 +3,8 @@
     <TargetFramework>net11.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- LibraryImport for immediate process termination after a fatal storage failure. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- A separately published executable. -->
     <IsPackable>false</IsPackable>
     <BuildAdminConsole Condition="'$(BuildAdminConsole)' == ''">true</BuildAdminConsole>

@@ -114,7 +114,10 @@ database participate in the owner's fence.
 
 Any storage/transaction failure faults all affected requests and retires the
 writer. Pending and future operations report that failure; disposal reports it
-as well. Commit errors and process/transport failures can leave an unknown
+as well. A failure once the server serves is reported to the opener's
+`IFatalErrorHandler` as `transaction`, after which the process cannot know what
+the device holds; a failed open reaches its caller instead. A failed ballot
+reservation likewise reports `ballot reservation` and retires the allocator. Commit errors and process/transport failures can leave an unknown
 outcome: reopen the same database and recover through the protocol, using exact
 ballot/value retries where appropriate. Rejections remain protocol results;
 storage errors remain exceptions.
@@ -185,6 +188,25 @@ rejections preserve state. The journal keeps a disposable bounded history
 independent of subscriber speed. See the [SSE contract](../Orleans.Consensus.CasPaxos.Host/README.md)
 for snapshots, replay, and health semantics.
 
+## Voter identity and admission
+
+`SqliteVoterRegistry.OpenAsync(acceptor, voterId)` binds the database an open
+`SqliteAcceptorServer` serves to the fixed voter identity it serves, in tables
+beside the acceptor state which the acceptor's own writer writes in its
+immediate transactions, so the binding shares the database's fate and one
+connection writes the file. A fresh database receives the binding with a
+random incarnation, unadmitted. Opening a database bound to another voter, or
+one holding acceptor state without a binding, fails with
+`InvalidDataException` and leaves the writer serving.
+
+`AdmitAsync(voter, incarnation)` durably records the first incarnation this
+voter admits for another voter and returns it ever after. A host admits a fresh
+voter once a majority of the other voters answer its own incarnation
+(`MarkAdmittedAsync`), and serves protocol requests only after: any later
+majority includes a voter which answers the earlier incarnation, so a voter
+restarted on a fresh database under its old identity is refused. Each record
+commits under WAL and `synchronous=FULL` before its task completes; a failed
+record fails the writer, which reports it like any other transaction.
 ## Validation
 
 The solution includes `Orleans.Consensus.CasPaxos.Sqlite.Tests`, which exercises isolated real

@@ -17,6 +17,9 @@ public sealed class SqliteProposerBallotSource : IProposerBallotSource, IDisposa
 {
     private readonly Lock _gate = new();
     private readonly SqliteConnection _connection;
+    private readonly IFatalErrorHandler _fatalErrors;
+    private readonly string _path;
+    private Exception? _failure;
     private bool _disposed;
     public int ProposerId { get; }
 
@@ -26,7 +29,9 @@ public sealed class SqliteProposerBallotSource : IProposerBallotSource, IDisposa
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(proposerId);
         ArgumentNullException.ThrowIfNull(fatalErrors);
         ProposerId = proposerId;
+        _fatalErrors = fatalErrors;
         var fullPath = Path.GetFullPath(databasePath);
+        _path = fullPath;
         _connection = new SqliteConnection(new SqliteConnectionStringBuilder
         {
             DataSource = fullPath,
@@ -68,23 +73,38 @@ public sealed class SqliteProposerBallotSource : IProposerBallotSource, IDisposa
         }
     }
 
+    /// <summary>
+    /// Reserves a round of at least <paramref name="minimumRound"/>, returning it once its reservation commits. A failed
+    /// reservation is reported to the fatal-error handler and retires the allocator: its outcome may be durable, and
+    /// only a fresh process recovering from the database allocates again.
+    /// </summary>
     public Ballot Reserve(int minimumRound)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(minimumRound);
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            using var transaction = _connection.BeginTransaction(deferred: false);
-            using var command = _connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = "SELECT reserved FROM proposer_round WHERE singleton = 1;";
-            var previous = Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
-            var round = Math.Max(checked(previous + 1), minimumRound);
-            command.CommandText = "UPDATE proposer_round SET reserved = $round WHERE singleton = 1;";
-            command.Parameters.AddWithValue("$round", round);
-            command.ExecuteNonQuery();
-            transaction.Commit();
-            return new Ballot(round, ProposerId);
+            if (_failure is not null) throw new InvalidOperationException("The ballot allocator failed and allocates no more rounds.", _failure);
+            try
+            {
+                using var transaction = _connection.BeginTransaction(deferred: false);
+                using var command = _connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = "SELECT reserved FROM proposer_round WHERE singleton = 1;";
+                var previous = Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+                var reserved = Math.Max(checked(previous + 1), minimumRound);
+                command.CommandText = "UPDATE proposer_round SET reserved = $round WHERE singleton = 1;";
+                command.Parameters.AddWithValue("$round", reserved);
+                command.ExecuteNonQuery();
+                transaction.Commit();
+                return new Ballot(reserved, ProposerId);
+            }
+            catch (Exception exception) when (exception is SqliteException or IOException or InvalidCastException or FormatException)
+            {
+                _failure = exception;
+                _fatalErrors.OnLocalStorageFailure("ballot reservation", _path, exception);
+                throw;
+            }
         }
     }
 

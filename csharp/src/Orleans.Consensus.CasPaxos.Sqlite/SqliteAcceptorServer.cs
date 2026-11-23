@@ -29,6 +29,9 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
     private Exception? _failure;
     private int _disposeRequested;
 
+    /// <summary>The database's full path.</summary>
+    internal string DatabasePath => _databasePath;
+
     // Exposes the durability boundary to deterministic fault/cancellation tests.
     internal Action<SqliteConnection, SqliteTransaction, int>? BeforeCommit { get; set; }
 
@@ -353,6 +356,15 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         return new ValueTask(_stopped.Task);
     }
 
+    /// <summary>
+    /// Runs <paramref name="operation"/> in the writer's next immediate transaction, beside the acceptor's own requests,
+    /// so one connection writes the database. The operation reports its outcomes as values: an exception fails its whole
+    /// transaction and retires the writer.
+    /// </summary>
+    internal ValueTask<TResult> ExecuteAsync<TResult>(
+        Func<SqliteConnection, SqliteTransaction, TResult> operation, CancellationToken cancellationToken) =>
+        Enqueue(operation, cancellationToken);
+
     private async ValueTask<TResult> Enqueue<TResult>(
         Func<SqliteConnection, SqliteTransaction, TResult> operation, CancellationToken cancellationToken)
     {
@@ -447,6 +459,14 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         {
             // A commit error can be ambiguous. Retire the connection and require recovery from disk.
             Volatile.Write(ref _failure, exception);
+
+            // Once serving, the process cannot know what the device holds, so only a fresh process answers again.
+            // A failed open reaches its caller instead, which never received an answer from this writer.
+            if (_ready.Task.IsCompletedSuccessfully)
+            {
+                _fatalErrors.OnLocalStorageFailure("transaction", _databasePath, exception);
+            }
+
             _changes.Clear();
             _diagnostics?.Publish("storage", new StorageObservation("failed", exception.GetType().Name));
             _queue.Writer.TryComplete(exception);

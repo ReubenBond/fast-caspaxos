@@ -417,7 +417,7 @@ and a `repair` cancellation event with the incomplete-durability outcome.
 `GET /v1/admin/repair` exposes `draining`, `shutdownComplete`, the target, and
 the timestamped latest observation while the HTTP listener remains available.
 The executable exits with code 0 after the selected shutdown barrier completes,
-code 1 after an interrupted barrier, and code 74 after a failed directory flush
+code 1 after an interrupted barrier, and code 74 after a failed local storage operation
 ([durable data directories](#durable-data-directories)). Restart drain observations set
 `departing=false`; departure replication observations set `departing=true`.
 
@@ -464,9 +464,14 @@ error and exits with code 74 (`EX_IOERR`); the process supervisor restarts it,
 and the restarted host recovers from the device's state. A missing parent, a
 path which names a file, a denied directory open, or an unsupported volume
 attempts no flush, so a later start's flush still makes the names durable; it
-fails startup with that error. Embedders pass an
-`IFatalErrorHandler` to `NodeRuntime.OpenAsync`, which reports a failed flush to
-it and then fails the open.
+fails startup with that error.
+
+The same stop follows a failed SQLite acceptor transaction once the node serves,
+and a failed proposer ballot reservation: their outcomes may be durable. The host
+terminates at once with code 74, running no shutdown barrier against the failed
+storage. Embedders pass an `IFatalErrorHandler` to `NodeRuntime.OpenAsync`, which
+reports a failed flush to it and then fails the open, and which receives the
+serving components' later reports.
 
 ## Verification
 
