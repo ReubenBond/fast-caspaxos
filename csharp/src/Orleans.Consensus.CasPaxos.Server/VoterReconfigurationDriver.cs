@@ -40,7 +40,11 @@ public sealed class VoterReconfigurationDriver
     {
         var sourceConfig = new VoterConfiguration(currentConfiguration, currentVoters, VoterConfigurationState.Active);
         sourceConfig.Validate();
-        var desiredNext = new VoterConfiguration(checked(currentConfiguration + 1), nextVoters, VoterConfigurationState.Pending);
+        var desiredNext = new VoterConfiguration(
+            checked(currentConfiguration + 1),
+            nextVoters,
+            VoterConfigurationState.Pending,
+            sourceConfig.CanonicalVoters);
         desiredNext.Validate();
 
         // Step 1: Choose (classic CompareExchange on K_cfg in configuration c).
@@ -68,7 +72,7 @@ public sealed class VoterReconfigurationDriver
         seed.Validate();
 
         var discovery = await DiscoverConfigurationChainAsync(
-            seed.Number,
+            seed,
             ResolvePeers(seed.CanonicalVoters),
             _peerResolver,
             _options,
@@ -79,13 +83,17 @@ public sealed class VoterReconfigurationDriver
             return discovery.Latest;
         }
 
-        if (discovery.Previous is null || discovery.Previous.Number != discovery.Latest.Number - 1)
+        var previous = !discovery.Latest.PreviousVoters.IsDefaultOrEmpty
+            ? new VoterConfiguration(discovery.Latest.Number - 1, discovery.Latest.PreviousVoters, VoterConfigurationState.Active)
+            : discovery.Previous;
+
+        if (previous is null || previous.Number != discovery.Latest.Number - 1)
         {
             throw new RegisterUnavailableException(new InvalidOperationException(
                 $"Cannot resume pending configuration {discovery.Latest.Number} without its predecessor configuration {discovery.Latest.Number - 1}."));
         }
 
-        return await CompletePendingConfigurationAsync(discovery.Previous, discovery.Latest, cancellationToken)
+        return await CompletePendingConfigurationAsync(previous, discovery.Latest, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -134,7 +142,7 @@ public sealed class VoterReconfigurationDriver
                 ?? throw new InvalidOperationException("Hand-off engine has no pending protocol message.");
 
             using var phase = CancellationTokenSource.CreateLinkedTokenSource(token);
-            var timeout = Task.Delay(_options.AttemptTimeout, _options.TimeProvider, phase.Token);
+            var timeout = TimeProviderDelay.DelayAsync(_options.TimeProvider, _options.AttemptTimeout, phase.Token);
             try
             {
                 if (outgoing.Prepare is { } prepare)
@@ -243,7 +251,7 @@ public sealed class VoterReconfigurationDriver
             {
                 // A concurrent operator already fenced c (Step 2). Discover the chosen configuration via §4.6.
                 var discovered = await DiscoverConfigurationChainAsync(
-                    sourceConfig.Number, sourcePeers, _peerResolver, _options, cancellationToken).ConfigureAwait(false);
+                    sourceConfig, sourcePeers, _peerResolver, _options, cancellationToken).ConfigureAwait(false);
                 return ValidateOrAcceptDiscovered(discovered.Latest, desiredNext);
             }
 
@@ -281,8 +289,19 @@ public sealed class VoterReconfigurationDriver
             }
 
             var encodedNext = VoterConfigurationEncoding.Encode(desiredNext);
-            var cas = await service.CompareExchangeAsync(
-                VoterConfiguration.RegisterKey, expectedVersion, encodedNext, cancellationToken).ConfigureAwait(false);
+            CompareExchangeResult cas;
+            try
+            {
+                cas = await service.CompareExchangeAsync(
+                    VoterConfiguration.RegisterKey, expectedVersion, encodedNext, cancellationToken).ConfigureAwait(false);
+            }
+            catch (RegisterUnavailableException) when (service.LastObservedHigherConfiguration is not null)
+            {
+                // A concurrent operator already fenced c before our Prepare could succeed.
+                var discovered = await DiscoverConfigurationChainAsync(
+                    sourceConfig, sourcePeers, _peerResolver, _options, cancellationToken).ConfigureAwait(false);
+                return ValidateOrAcceptDiscovered(discovered.Latest, desiredNext);
+            }
 
             if (cas.Status == CompareExchangeStatus.Applied)
             {
@@ -306,7 +325,7 @@ public sealed class VoterReconfigurationDriver
             if (service.LastObservedHigherConfiguration is not null)
             {
                 var discovered = await DiscoverConfigurationChainAsync(
-                    sourceConfig.Number, sourcePeers, _peerResolver, _options, cancellationToken).ConfigureAwait(false);
+                    sourceConfig, sourcePeers, _peerResolver, _options, cancellationToken).ConfigureAwait(false);
                 return ValidateOrAcceptDiscovered(discovered.Latest, desiredNext);
             }
 
@@ -341,25 +360,43 @@ public sealed class VoterReconfigurationDriver
         await RaiseFloorOnNewVotersAsync(newPeers, targetFloor, cancellationToken).ConfigureAwait(false);
         var fencedPrevious = await FenceClassicQuorumAsync(previousPeers, targetFloor, cancellationToken).ConfigureAwait(false);
 
-        // Step 3: Install — enumerate all keys across the fenced quorum F, transfer K_cfg last.
-        var keys = await EnumerateKeysAsync(fencedPrevious, cancellationToken).ConfigureAwait(false);
+        // Step 3: Install — enumerate all keys across a fenced classic quorum F, transfer K_cfg last.
+        var keys = await EnumerateKeysFromFencedQuorumAsync(
+            previousPeers, fencedPrevious, targetFloor, cancellationToken).ConfigureAwait(false);
         if (!keys.Contains(VoterConfiguration.RegisterKey))
         {
             throw new InvalidOperationException(
                 $"Configuration key '{VoterConfiguration.RegisterKey}' was not found on the fenced quorum of configuration {previousConfig.Number}.");
         }
 
-        foreach (var key in keys)
+        RegisterValue transferredConfigValue;
+        try
         {
-            if (string.Equals(key, VoterConfiguration.RegisterKey, StringComparison.Ordinal)) continue;
-            await TransferKeyHandOffAsync(key, pendingConfig.Number, previousPeers, nextPeers, cancellationToken)
+            foreach (var key in keys)
+            {
+                if (string.Equals(key, VoterConfiguration.RegisterKey, StringComparison.Ordinal)) continue;
+                await TransferKeyHandOffAsync(key, pendingConfig.Number, previousPeers, nextPeers, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            // Transfer K_cfg last as operational hygiene (§5 Step 3).
+            transferredConfigValue = await TransferKeyHandOffAsync(
+                VoterConfiguration.RegisterKey, pendingConfig.Number, previousPeers, nextPeers, cancellationToken)
                 .ConfigureAwait(false);
         }
+        catch (RegisterUnavailableException)
+        {
+            // If a concurrent operator already activated c + 1 and advanced further, discover the active configuration.
+            var discovered = await DiscoverConfigurationChainAsync(
+                pendingConfig, nextPeers, _peerResolver, _options, cancellationToken).ConfigureAwait(false);
+            if (discovered.Latest.Number > pendingConfig.Number
+                || (discovered.Latest.Number == pendingConfig.Number && discovered.Latest.State == VoterConfigurationState.Active))
+            {
+                return discovered.Latest;
+            }
 
-        // Transfer K_cfg last as operational hygiene (§5 Step 3).
-        var transferredConfigValue = await TransferKeyHandOffAsync(
-            VoterConfiguration.RegisterKey, pendingConfig.Number, previousPeers, nextPeers, cancellationToken)
-            .ConfigureAwait(false);
+            throw;
+        }
         if (!transferredConfigValue.IsPresent)
         {
             throw new InvalidDataException($"Configuration key '{VoterConfiguration.RegisterKey}' became absent during hand-off.");
@@ -374,7 +411,7 @@ public sealed class VoterReconfigurationDriver
         }
 
         // Step 4: Activate in c + 1 using V(c + 1) quorums only.
-        var activeConfig = pendingConfig with { State = VoterConfigurationState.Active };
+        var activeConfig = pendingConfig with { State = VoterConfigurationState.Active, PreviousVoters = default };
         var encodedActive = VoterConfigurationEncoding.Encode(activeConfig);
         await using var nextService = CreateClassicService(nextPeers, pendingConfig.Number);
         var expectedVersion = transferredConfigValue.Version;
@@ -382,8 +419,18 @@ public sealed class VoterReconfigurationDriver
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var cas = await nextService.CompareExchangeAsync(
-                VoterConfiguration.RegisterKey, expectedVersion, encodedActive, cancellationToken).ConfigureAwait(false);
+            CompareExchangeResult cas;
+            try
+            {
+                cas = await nextService.CompareExchangeAsync(
+                    VoterConfiguration.RegisterKey, expectedVersion, encodedActive, cancellationToken).ConfigureAwait(false);
+            }
+            catch (RegisterUnavailableException) when (nextService.LastObservedHigherConfiguration is not null)
+            {
+                var discovered = await DiscoverConfigurationChainAsync(
+                    pendingConfig, nextPeers, _peerResolver, _options, cancellationToken).ConfigureAwait(false);
+                return discovered.Latest;
+            }
             if (cas.Status == CompareExchangeStatus.Applied)
             {
                 return activeConfig;
@@ -402,8 +449,25 @@ public sealed class VoterReconfigurationDriver
                 continue;
             }
 
+            if (nextService.LastObservedHigherConfiguration is not null)
+            {
+                var discovered = await DiscoverConfigurationChainAsync(
+                    pendingConfig, nextPeers, _peerResolver, _options, cancellationToken).ConfigureAwait(false);
+                return discovered.Latest;
+            }
+
             // Unknown — re-read K_cfg in c + 1 to check whether activation committed.
-            var read = await nextService.ReadAsync(VoterConfiguration.RegisterKey, cancellationToken).ConfigureAwait(false);
+            RegisterValue read;
+            try
+            {
+                read = await nextService.ReadAsync(VoterConfiguration.RegisterKey, cancellationToken).ConfigureAwait(false);
+            }
+            catch (RegisterUnavailableException) when (nextService.LastObservedHigherConfiguration is not null)
+            {
+                var discovered = await DiscoverConfigurationChainAsync(
+                    pendingConfig, nextPeers, _peerResolver, _options, cancellationToken).ConfigureAwait(false);
+                return discovered.Latest;
+            }
             if (read.IsPresent)
             {
                 var observed = VoterConfigurationEncoding.Decode(read.Value!.Value);
@@ -454,7 +518,7 @@ public sealed class VoterReconfigurationDriver
         {
             token.ThrowIfCancellationRequested();
             using var attempt = CancellationTokenSource.CreateLinkedTokenSource(token);
-            var timeout = Task.Delay(_options.AttemptTimeout, _options.TimeProvider, attempt.Token);
+            var timeout = TimeProviderDelay.DelayAsync(_options.TimeProvider, _options.AttemptTimeout, attempt.Token);
             var remaining = peers.Where(p => !fenced.ContainsKey(p.Id)).ToArray();
             var pending = remaining.Select(peer => InvokeAsync(
                 peer.Id,
@@ -491,26 +555,89 @@ public sealed class VoterReconfigurationDriver
         return [.. fenced.Values];
     }
 
-    private static async Task<SortedSet<string>> EnumerateKeysAsync(
-        ImmutableArray<AcceptorPeer> fencedPeers,
+    private async Task<SortedSet<string>> EnumerateKeysFromFencedQuorumAsync(
+        ImmutableArray<AcceptorPeer> allPreviousPeers,
+        ImmutableArray<AcceptorPeer> initialFencedPeers,
+        Ballot targetFloor,
         CancellationToken cancellationToken)
     {
-        var keys = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var peer in fencedPeers)
+        var classicQuorum = allPreviousPeers.Length / 2 + 1;
+        using var deadline = new CancellationTokenSource(_options.OperationTimeout, _options.TimeProvider);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        var token = linked.Token;
+
+        var fenced = initialFencedPeers.ToDictionary(static p => p.Id, static p => p, StringComparer.Ordinal);
+        var enumerated = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var retries = 0;
+
+        while (enumerated.Count < classicQuorum)
         {
-            string? cursor = null;
-            while (true)
+            token.ThrowIfCancellationRequested();
+
+            foreach (var peer in allPreviousPeers)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var page = await peer.Acceptor.ListKeysAsync(
-                    prefix: "", afterKey: cursor, limit: 128, cancellationToken).ConfigureAwait(false);
-                foreach (var entry in page.Entries)
+                if (enumerated.ContainsKey(peer.Id)) continue;
+                token.ThrowIfCancellationRequested();
+
+                // Ensure the peer is fenced before relying on its key list (§9.2 survivor re-fencing).
+                if (!fenced.ContainsKey(peer.Id))
                 {
-                    keys.Add(entry.Key);
+                    using var fenceTimeout = new CancellationTokenSource(_options.AttemptTimeout, _options.TimeProvider);
+                    using var fenceAttempt = CancellationTokenSource.CreateLinkedTokenSource(token, fenceTimeout.Token);
+                    var (_, floor, fenceError) = await InvokeAsync(
+                        peer.Id,
+                        t => peer.Acceptor.SetFloorAsync(targetFloor, t),
+                        fenceAttempt.Token).ConfigureAwait(false);
+                    if (fenceError is not null || floor < targetFloor) continue;
+                    fenced[peer.Id] = peer;
                 }
 
-                if (page.ContinuationKey is null) break;
-                cursor = page.ContinuationKey;
+                var peerKeys = new List<string>();
+                string? cursor = null;
+                var succeeded = true;
+                while (true)
+                {
+                    token.ThrowIfCancellationRequested();
+                    using var listTimeout = new CancellationTokenSource(_options.AttemptTimeout, _options.TimeProvider);
+                    using var listAttempt = CancellationTokenSource.CreateLinkedTokenSource(token, listTimeout.Token);
+                    var (_, page, listError) = await InvokeAsync(
+                        peer.Id,
+                        t => peer.Acceptor.ListKeysAsync(prefix: "", afterKey: cursor, limit: 128, t),
+                        listAttempt.Token).ConfigureAwait(false);
+                    if (listError is not null)
+                    {
+                        succeeded = false;
+                        break;
+                    }
+
+                    foreach (var entry in page.Entries)
+                    {
+                        peerKeys.Add(entry.Key);
+                    }
+
+                    if (page.ContinuationKey is null) break;
+                    cursor = page.ContinuationKey;
+                }
+
+                if (succeeded)
+                {
+                    enumerated[peer.Id] = peerKeys;
+                    if (enumerated.Count >= classicQuorum) break;
+                }
+            }
+
+            if (enumerated.Count < classicQuorum)
+            {
+                await BackoffAsync(retries++, token).ConfigureAwait(false);
+            }
+        }
+
+        var keys = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var peerKeys in enumerated.Values)
+        {
+            foreach (var key in peerKeys)
+            {
+                keys.Add(key);
             }
         }
 
@@ -521,28 +648,44 @@ public sealed class VoterReconfigurationDriver
     /// Discovers the latest reachable configuration starting from <paramref name="seedPeers"/> using
     /// ballot-free <c>Read(K_cfg)</c> per §4.6, following the chain until reaching the highest configuration.
     /// </summary>
-    internal static async Task<DiscoveredConfigurationChain> DiscoverConfigurationChainAsync(
+    internal static Task<DiscoveredConfigurationChain> DiscoverConfigurationChainAsync(
         long seedConfiguration,
+        ImmutableArray<AcceptorPeer> seedPeers,
+        Func<VoterDescriptor, IKeyedAcceptor> peerResolver,
+        RegisterServiceOptions options,
+        CancellationToken cancellationToken) =>
+        DiscoverConfigurationChainAsync(
+            new VoterConfiguration(
+                seedConfiguration,
+                [.. seedPeers.Select(static p => new VoterDescriptor(p.Id))],
+                VoterConfigurationState.Active),
+            seedPeers,
+            peerResolver,
+            options,
+            cancellationToken);
+
+    internal static async Task<DiscoveredConfigurationChain> DiscoverConfigurationChainAsync(
+        VoterConfiguration seedConfig,
         ImmutableArray<AcceptorPeer> seedPeers,
         Func<VoterDescriptor, IKeyedAcceptor> peerResolver,
         RegisterServiceOptions options,
         CancellationToken cancellationToken)
     {
-        var currentNumber = seedConfiguration;
+        var currentConfig = seedConfig;
         var currentPeers = seedPeers;
         VoterConfiguration? previous = null;
         VoterConfiguration? latest = null;
         var visited = new HashSet<long>();
 
-        while (visited.Add(currentNumber))
+        while (visited.Add(currentConfig.Number))
         {
             var observations = await ReadConfigKeyFromQuorumAsync(
                 currentPeers, options, confirmActiveConfiguration: null, cancellationToken).ConfigureAwait(false);
 
-            // Order candidate configurations with Number > currentNumber from highest downward,
+            // Order candidate configurations with Number > currentConfig.Number from highest downward,
             // falling back to c + 1 if a higher candidate is unreachable or unconfirmed (§4.6 step 2).
             var candidates = observations
-                .Where(o => o.Config is not null && o.Config.Number > currentNumber)
+                .Where(o => o.Config is not null && o.Config.Number > currentConfig.Number)
                 .Select(o => o.Config!)
                 .GroupBy(c => c.Number)
                 .Select(g => g.First())
@@ -564,14 +707,12 @@ public sealed class VoterReconfigurationDriver
                         && o.Config.HasSameVoters(candidate.Voters));
                     var classicQuorum = candidatePeers.Length / 2 + 1;
 
-                    previous = latest ?? new VoterConfiguration(
-                        currentNumber,
-                        [.. currentPeers.Select(static p => new VoterDescriptor(p.Id))],
-                        VoterConfigurationState.Active);
+                    // Predecessor of candidate is the configuration we just traversed from (preserving endpoints).
+                    previous = currentConfig with { State = VoterConfigurationState.Active, PreviousVoters = default };
 
                     if (matchingActive >= classicQuorum)
                     {
-                        latest = candidate with { State = VoterConfigurationState.Active };
+                        latest = candidate with { State = VoterConfigurationState.Active, PreviousVoters = default };
                     }
                     else
                     {
@@ -584,7 +725,7 @@ public sealed class VoterReconfigurationDriver
                         latest = highestOnCandidate ?? candidate;
                     }
 
-                    currentNumber = candidate.Number;
+                    currentConfig = candidate;
                     currentPeers = candidatePeers;
                     advanced = true;
                     break;
@@ -600,14 +741,11 @@ public sealed class VoterReconfigurationDriver
                 if (latest is null)
                 {
                     var matching = observations
-                        .Where(o => o.Config is not null && o.Config.Number == currentNumber)
+                        .Where(o => o.Config is not null && o.Config.Number == currentConfig.Number)
                         .OrderByDescending(o => (int)o.Config!.State)
                         .Select(o => o.Config!)
                         .FirstOrDefault();
-                    latest = matching ?? new VoterConfiguration(
-                        currentNumber,
-                        [.. currentPeers.Select(static p => new VoterDescriptor(p.Id))],
-                        VoterConfigurationState.Active);
+                    latest = matching ?? currentConfig;
                 }
 
                 break;
@@ -624,70 +762,93 @@ public sealed class VoterReconfigurationDriver
         CancellationToken cancellationToken)
     {
         var classicQuorum = peers.Length / 2 + 1;
-        using var phase = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var timeout = Task.Delay(options.AttemptTimeout, options.TimeProvider, phase.Token);
-        var pending = peers.Select(peer => InvokeAsync(
-            peer.Id,
-            t => peer.Acceptor.ReadAsync(VoterConfiguration.RegisterKey, cancellationToken: t),
-            phase.Token)).ToList();
+        using var deadline = new CancellationTokenSource(options.OperationTimeout, options.TimeProvider);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        var token = linked.Token;
 
-        var observations = new List<ConfigReadObservation>(peers.Length);
-        var activeMatches = 0;
-        try
+        var retries = 0;
+        var lastCount = 0;
+        while (!token.IsCancellationRequested)
         {
-            while (pending.Count > 0)
+            using var phase = CancellationTokenSource.CreateLinkedTokenSource(token);
+            var timeout = TimeProviderDelay.DelayAsync(options.TimeProvider, options.AttemptTimeout, phase.Token);
+            var pending = peers.Select(peer => InvokeAsync(
+                peer.Id,
+                t => peer.Acceptor.ReadAsync(VoterConfiguration.RegisterKey, cancellationToken: t),
+                phase.Token)).ToList();
+
+            var observations = new List<ConfigReadObservation>(peers.Length);
+            var activeMatches = 0;
+            try
             {
-                var finished = await Task.WhenAny(pending.Cast<Task>().Append(timeout)).ConfigureAwait(false);
-                cancellationToken.ThrowIfCancellationRequested();
-                if (finished == timeout) break;
-                var task = (Task<(string Id, AcceptorReadResult Result, Exception? Error)>)finished;
-                pending.Remove(task);
-                var (id, result, error) = await task.ConfigureAwait(false);
-                if (error is not null) continue;
+                while (pending.Count > 0)
+                {
+                    var finished = await Task.WhenAny(pending.Cast<Task>().Append(timeout)).ConfigureAwait(false);
+                    if (finished == timeout) break;
+                    var task = (Task<(string Id, AcceptorReadResult Result, Exception? Error)>)finished;
+                    pending.Remove(task);
+                    var (id, result, error) = await task.ConfigureAwait(false);
+                    if (error is not null) continue;
 
-                switch (result)
-                {
-                    case AcceptorMissing:
-                        observations.Add(new ConfigReadObservation(id, Ballot.Zero, Ballot.Zero, null));
-                        break;
-                    case KeyedAcceptorState state:
-                        var register = RegisterEncoding.Decode(state.AcceptedValue);
-                        var cfg = register.IsPresent
-                            ? VoterConfigurationEncoding.Decode(register.Value!.Value)
-                            : null;
-                        observations.Add(new ConfigReadObservation(id, state.PromisedBallot, state.AcceptedBallot, cfg));
-                        if (confirmActiveConfiguration is { } target
-                            && cfg is not null
-                            && cfg.Number == target
-                            && cfg.State == VoterConfigurationState.Active)
-                        {
-                            activeMatches++;
-                        }
-                        break;
-                }
+                    switch (result)
+                    {
+                        case AcceptorMissing missing:
+                            observations.Add(new ConfigReadObservation(id, missing.PromisedBallot, Ballot.Zero, null));
+                            break;
+                        case KeyedAcceptorState state:
+                            var register = RegisterEncoding.Decode(state.AcceptedValue);
+                            var cfg = register.IsPresent
+                                ? VoterConfigurationEncoding.Decode(register.Value!.Value)
+                                : null;
+                            observations.Add(new ConfigReadObservation(id, state.PromisedBallot, state.AcceptedBallot, cfg));
+                            if (confirmActiveConfiguration is { } target
+                                && cfg is not null
+                                && cfg.Number == target
+                                && cfg.State == VoterConfigurationState.Active)
+                            {
+                                activeMatches++;
+                            }
+                            break;
+                    }
 
-                if (confirmActiveConfiguration is not null)
-                {
-                    if (activeMatches >= classicQuorum || observations.Count == peers.Length) break;
-                }
-                else if (observations.Count >= classicQuorum)
-                {
-                    break;
+                    if (confirmActiveConfiguration is not null)
+                    {
+                        if (activeMatches >= classicQuorum || observations.Count == peers.Length) break;
+                    }
+                    else if (observations.Count >= classicQuorum)
+                    {
+                        break;
+                    }
                 }
             }
-        }
-        finally
-        {
-            phase.Cancel();
+            finally
+            {
+                phase.Cancel();
+            }
+
+            lastCount = observations.Count;
+            if (observations.Count >= classicQuorum)
+            {
+                return observations;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            if (deadline.IsCancellationRequested) break;
+
+            var backoff = TimeSpan.FromTicks(options.RetryBackoff.Ticks * (1 + (retries++ % 7)));
+            try
+            {
+                await TimeProviderDelay.DelayAsync(options.TimeProvider, backoff, token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
         }
 
-        if (observations.Count < classicQuorum)
-        {
-            throw new RegisterUnavailableException(new InvalidOperationException(
-                $"Could not read '{VoterConfiguration.RegisterKey}' from a classic quorum ({observations.Count}/{classicQuorum})."));
-        }
-
-        return observations;
+        cancellationToken.ThrowIfCancellationRequested();
+        throw new RegisterUnavailableException(new InvalidOperationException(
+            $"Could not read '{VoterConfiguration.RegisterKey}' from a classic quorum ({lastCount}/{classicQuorum})."));
     }
 
     private ReplicatedRegisterService CreateClassicService(ImmutableArray<AcceptorPeer> peers, long configuration) =>
@@ -717,7 +878,7 @@ public sealed class VoterReconfigurationDriver
     private Task BackoffAsync(int attempt, CancellationToken token)
     {
         var factor = 1 + ((_ballots.ProposerId % 7 + attempt % 7) % 7);
-        return Task.Delay(TimeSpan.FromTicks(_options.RetryBackoff.Ticks * factor), _options.TimeProvider, token);
+        return TimeProviderDelay.DelayAsync(_options.TimeProvider, TimeSpan.FromTicks(_options.RetryBackoff.Ticks * factor), token);
     }
 
     private static async Task<(string Id, T Result, Exception? Error)> InvokeAsync<T>(

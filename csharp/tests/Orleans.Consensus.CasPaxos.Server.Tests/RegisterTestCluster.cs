@@ -193,11 +193,21 @@ internal sealed class MemoryAcceptor : IKeyedAcceptor, ILocalAcceptorInspection
     {
         cancellationToken.ThrowIfCancellationRequested();
         known?.Validate();
-        var state = Snapshot(key);
-        AcceptorReadResult result = state is null ? new AcceptorMissing()
-            : known == new AcceptedDigest(state.AcceptedBallot, AcceptedDigest.Hash(state.AcceptedValue))
+        lock (_gate)
+        {
+            if (!_states.TryGetValue(key, out var raw) || raw.AcceptedValue is null)
+            {
+                var promised = _states.TryGetValue(key, out var promisedState)
+                    ? Ballot.Max(promisedState.PromisedBallot, _floor)
+                    : _floor;
+                return ValueTask.FromResult<AcceptorReadResult>(new AcceptorMissing(promised));
+            }
+
+            var state = new KeyedAcceptorState(key, Ballot.Max(raw.PromisedBallot, _floor), raw.AcceptedBallot, raw.AcceptedValue.Value);
+            AcceptorReadResult result = known == new AcceptedDigest(state.AcceptedBallot, AcceptedDigest.Hash(state.AcceptedValue))
                 ? new AcceptorUnchanged() : state;
-        return ValueTask.FromResult(result);
+            return ValueTask.FromResult(result);
+        }
     }
 
     public ValueTask<AcceptorPrepareResult<ByteString?>> PrepareAsync(
@@ -240,7 +250,7 @@ internal sealed class MemoryAcceptor : IKeyedAcceptor, ILocalAcceptorInspection
                 .Select(pair => new KeyedAcceptorState(pair.Key, Ballot.Max(pair.Value.PromisedBallot, _floor),
                     pair.Value.AcceptedBallot, pair.Value.AcceptedValue!.Value)).ToArray();
             return ValueTask.FromResult(new KeyPage([.. entries.Take(limit)],
-                entries.Length > limit ? entries[limit - 1].Key : null));
+                entries.Length > limit ? entries[limit - 1].Key : null, _floor));
         }
     }
 

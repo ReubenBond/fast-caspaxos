@@ -223,4 +223,145 @@ public sealed class VoterReconfigurationTests
         Assert.Equal(2, idempotent.Number);
         Assert.Equal(VoterConfigurationState.Active, idempotent.State);
     }
+
+    [Fact]
+    public async Task StaleProposerReadOfAbsentKeyAndListKeysRefreshAfterDisjointReconfiguration()
+    {
+        var peers = new Dictionary<string, ControlledPeer>(StringComparer.Ordinal)
+        {
+            ["v1"] = new(initialConfiguration: 1),
+            ["v2"] = new(initialConfiguration: 1),
+            ["v3"] = new(initialConfiguration: 1),
+            ["v4"] = new(initialConfiguration: 2),
+            ["v5"] = new(initialConfiguration: 2),
+            ["v6"] = new(initialConfiguration: 2),
+        };
+        IKeyedAcceptor Resolve(VoterDescriptor d) => peers[d.Id];
+
+        ImmutableArray<VoterDescriptor> c1 = [new("v1"), new("v2"), new("v3")];
+        ImmutableArray<VoterDescriptor> c2 = [new("v4"), new("v5"), new("v6")];
+
+        using var staleBallots = new TestBallots(1);
+        using var c2Ballots = new TestBallots(2);
+        using var opBallots = new TestBallots(3);
+
+        await using var staleClient = new ReplicatedRegisterService(
+            [.. c1.Select(v => new AcceptorPeer(v.Id, peers[v.Id]))],
+            staleBallots,
+            new RegisterServiceOptions
+            {
+                Mode = ProposerModePolicy.Adaptive(),
+                OperationTimeout = TimeSpan.FromSeconds(5),
+                AttemptTimeout = TimeSpan.FromSeconds(1),
+                RetryBackoff = TimeSpan.FromMilliseconds(5),
+                PeerResolver = Resolve,
+            });
+        await using var staleLister = new ReplicatedRegisterService(
+            [.. c1.Select(v => new AcceptorPeer(v.Id, peers[v.Id]))],
+            new TestBallots(4),
+            new RegisterServiceOptions
+            {
+                Mode = ProposerModePolicy.Adaptive(),
+                OperationTimeout = TimeSpan.FromSeconds(5),
+                AttemptTimeout = TimeSpan.FromSeconds(1),
+                RetryBackoff = TimeSpan.FromMilliseconds(5),
+                PeerResolver = Resolve,
+            });
+
+        var driver = new VoterReconfigurationDriver(opBallots, Resolve, TestSupport.Options());
+        var active2 = await driver.ReconfigureAsync(c1, 1, c2);
+        Assert.Equal(2, active2.Number);
+        Assert.Equal(VoterConfigurationState.Active, active2.State);
+
+        // Create a brand-new key strictly in c = 2 (completely absent on V(1)).
+        await using var c2Client = new ReplicatedRegisterService(
+            [.. c2.Select(v => new AcceptorPeer(v.Id, peers[v.Id]))],
+            c2Ballots,
+            new RegisterServiceOptions
+            {
+                Mode = ProposerModePolicy.Adaptive(),
+                InitialConfiguration = 2,
+                OperationTimeout = TimeSpan.FromSeconds(5),
+                AttemptTimeout = TimeSpan.FromSeconds(1),
+                RetryBackoff = TimeSpan.FromMilliseconds(5),
+                PeerResolver = Resolve,
+            });
+        var created = await c2Client.CompareExchangeAsync("users/alice", null, new("hello"u8));
+        Assert.Equal(CompareExchangeStatus.Applied, created.Status);
+
+        // Stale reader on c = 1 must NOT certify stale absence from fenced V(1) — it must see floor and refresh.
+        var read = await staleClient.ReadAsync("users/alice");
+        Assert.Equal(2, staleClient.ActiveConfiguration);
+        Assert.Equal(new ByteString("hello"u8), read.Value);
+        Assert.Equal(created.Current!.Version, read.Version);
+
+        // Stale lister on c = 1 listing a prefix absent on V(1) must also see floor and refresh to c = 2.
+        var listed = await staleLister.ListKeysAsync(prefix: "users/");
+        Assert.Equal(2, staleLister.ActiveConfiguration);
+        Assert.Equal<string>(["users/alice"], listed.Keys);
+    }
+
+    [Fact]
+    public async Task ResumeAsyncFromC1SeedCompletesPendingC3AndLosingOperatorHandlesFencedChoose()
+    {
+        var peers = new Dictionary<string, ControlledPeer>(StringComparer.Ordinal)
+        {
+            ["v1"] = new(initialConfiguration: 1),
+            ["v2"] = new(initialConfiguration: 1),
+            ["v3"] = new(initialConfiguration: 1),
+            ["v4"] = new(initialConfiguration: 2),
+            ["v5"] = new(initialConfiguration: 3),
+            ["v6"] = new(initialConfiguration: 2),
+        };
+        IKeyedAcceptor Resolve(VoterDescriptor d) => peers[d.Id];
+
+        ImmutableArray<VoterDescriptor> c1 = [new("v1", "ep1"), new("v2", "ep2"), new("v3", "ep3")];
+        ImmutableArray<VoterDescriptor> c2 = [new("v1", "ep1"), new("v2", "ep2"), new("v4", "ep4")];
+        ImmutableArray<VoterDescriptor> c2Alt = [new("v1", "ep1"), new("v3", "ep3"), new("v6", "ep6")];
+        ImmutableArray<VoterDescriptor> c3 = [new("v1", "ep1"), new("v4", "ep4"), new("v5", "ep5")];
+
+        var op1 = new VoterReconfigurationDriver(new TestBallots(1), Resolve, TestSupport.Options());
+        var active2 = await op1.ReconfigureAsync(c1, 1, c2);
+        Assert.Equal(2, active2.Number);
+        Assert.Equal(VoterConfigurationState.Active, active2.State);
+
+        // A late operator trying to Choose c2Alt in c = 1 after c = 1 is already fenced receives ReconfigurationConflictException.
+        var lateOp = new VoterReconfigurationDriver(new TestBallots(2), Resolve, TestSupport.Options());
+        var conflict = await Assert.ThrowsAsync<ReconfigurationConflictException>(
+            () => lateOp.ReconfigureAsync(c1, 1, c2Alt));
+        Assert.Equal(2, conflict.WinningConfiguration.Number);
+        Assert.True(conflict.WinningConfiguration.HasSameVoters(c2));
+
+        // Write a key in c = 2, then Choose c3 (Pending) in c = 2 and crash before Fence/Install/Activate.
+        await using var c2Writer = new ReplicatedRegisterService(
+            [.. c2.Select(v => new AcceptorPeer(v.Id, peers[v.Id]))],
+            new TestBallots(3),
+            new RegisterServiceOptions
+            {
+                Mode = ProposerModePolicy.StaticClassic,
+                InitialConfiguration = 2,
+                OperationTimeout = TimeSpan.FromSeconds(5),
+                AttemptTimeout = TimeSpan.FromSeconds(1),
+                RetryBackoff = TimeSpan.FromMilliseconds(5),
+            });
+        var w = await c2Writer.CompareExchangeAsync("k", null, new("v2-val"u8));
+        Assert.Equal(CompareExchangeStatus.Applied, w.Status);
+        var cfgRead = await c2Writer.ReadAsync(VoterConfiguration.RegisterKey);
+        var pendingC3 = new VoterConfiguration(3, c3, VoterConfigurationState.Pending, c2);
+        var choose3 = await c2Writer.CompareExchangeAsync(
+            VoterConfiguration.RegisterKey, cfgRead.Version, VoterConfigurationEncoding.Encode(pendingC3));
+        Assert.Equal(CompareExchangeStatus.Applied, choose3.Status);
+
+        // Even if v3 (retired after c=2 activated) is decommissioned, ResumeAsync from c = 1 seed
+        // discovers (3, c3, Pending, PreviousVoters=c2) and completes Fence -> Install -> Activate!
+        peers["v3"].GoOffline();
+
+        // Resume starting all the way from c = 1 seed must discover previous = c2 and latest = c3 (Pending) and activate c3!
+        var resumer = new VoterReconfigurationDriver(new TestBallots(4), Resolve, TestSupport.Options());
+        var active3 = await resumer.ResumeAsync(c1, 1);
+        Assert.Equal(3, active3.Number);
+        Assert.Equal(VoterConfigurationState.Active, active3.State);
+        Assert.True(active3.HasSameVoters(c3));
+        Assert.NotNull(peers["v5"].Inner.Snapshot("k"));
+    }
 }

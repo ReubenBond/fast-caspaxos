@@ -162,9 +162,28 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         using var call = Enter(cancellationToken);
         var keys = ImmutableArray.CreateBuilder<string>();
         var cursor = afterKey;
+        var configRetries = 0;
+        var listingConfig = CurrentSnapshot().Configuration;
         while (true)
         {
-            var pages = await ReadInventoryQuorumAsync(prefix, cursor, Math.Min(limit, 128), call).ConfigureAwait(false);
+            var (pages, pageConfig, higherBallot) = await ReadInventoryQuorumAsync(prefix, cursor, Math.Min(limit, 128), call).ConfigureAwait(false);
+            if (higherBallot is { } observedHigher)
+            {
+                await RefreshConfigurationForHigherBallotAsync(pageConfig, observedHigher, configRetries++, call).ConfigureAwait(false);
+                keys.Clear();
+                cursor = afterKey;
+                listingConfig = CurrentSnapshot().Configuration;
+                continue;
+            }
+
+            if (pageConfig.Configuration != listingConfig)
+            {
+                keys.Clear();
+                cursor = afterKey;
+                listingConfig = pageConfig.Configuration;
+                continue;
+            }
+
             string? frontier = null;
             foreach (var page in pages)
             {
@@ -188,9 +207,19 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
                 }
             }
 
+            var restarted = false;
             foreach (var key in candidates)
             {
                 var current = await ExecuteAsync(key, new RegisterOperation(), call).ConfigureAwait(false);
+                if (CurrentSnapshot().Configuration != listingConfig)
+                {
+                    keys.Clear();
+                    cursor = afterKey;
+                    listingConfig = CurrentSnapshot().Configuration;
+                    restarted = true;
+                    break;
+                }
+
                 if (!current.IsPresent) continue;
                 if (keys.Count == limit)
                 {
@@ -200,6 +229,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
                 keys.Add(key);
             }
 
+            if (restarted) continue;
             if (frontier is null) return new RegisterKeyPage(keys.DrainToImmutable(), null);
             cursor = frontier;
         }
@@ -376,8 +406,18 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         int attempt,
         Call call)
     {
-        RecordHigherConfiguration(higherBallot);
         currentKeyState.Engine = NewEngine(staleConfig);
+        await RefreshConfigurationForHigherBallotAsync(staleConfig, higherBallot, attempt, call).ConfigureAwait(false);
+        currentKeyState.Engine = NewEngine(CurrentSnapshot());
+    }
+
+    private async Task RefreshConfigurationForHigherBallotAsync(
+        ConfigurationSnapshot staleConfig,
+        Ballot higherBallot,
+        int attempt,
+        Call call)
+    {
+        RecordHigherConfiguration(higherBallot);
 
         if (_options.PeerResolver is null)
         {
@@ -408,7 +448,6 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
                     }
                 }
 
-                currentKeyState.Engine = NewEngine(CurrentSnapshot());
                 return;
             }
         }
@@ -452,7 +491,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
     private async Task<ReadQuorumOutcome> TryReadQuorumAsync(string key, ConfigurationSnapshot config, Engine engine, Call call)
     {
         using var phase = CancellationTokenSource.CreateLinkedTokenSource(call.Token);
-        var timeout = Task.Delay(_options.AttemptTimeout, _options.TimeProvider, phase.Token);
+        var timeout = TimeProviderDelay.DelayAsync(_options.TimeProvider, _options.AttemptTimeout, phase.Token);
         var pending = Enumerable.Range(0, config.Peers.Length).Select(index =>
             InvokePeerAsync(config, index, (peer, token) => peer.ReadAsync(key, cancellationToken: token), phase.Token)).ToList();
         var matching = new Dictionary<(Ballot Ballot, ByteString Value), int>();
@@ -476,7 +515,11 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
 
                 switch (reply.Value)
                 {
-                    case AcceptorMissing:
+                    case AcceptorMissing missingReply:
+                        if (missingReply.PromisedBallot.Configuration > config.Configuration)
+                        {
+                            return new ReadQuorumOutcome(null, missingReply.PromisedBallot);
+                        }
                         if (++missing > config.Peers.Length / 2) return new ReadQuorumOutcome(new RegisterValue(null, null), null);
                         break;
                     case KeyedAcceptorState accepted:
@@ -531,7 +574,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
     private async Task DrivePhaseAsync(string key, ConfigurationSnapshot config, Engine engine, Outbound request, RegisterOperation operation, Call call)
     {
         using var phase = CancellationTokenSource.CreateLinkedTokenSource(call.Token);
-        var timeout = Task.Delay(_options.AttemptTimeout, _options.TimeProvider, phase.Token);
+        var timeout = TimeProviderDelay.DelayAsync(_options.TimeProvider, _options.AttemptTimeout, phase.Token);
         var pending = new List<Task<PeerResult<ProtocolReply>>>(config.Peers.Length);
         try
         {
@@ -605,7 +648,8 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         }
     }
 
-    private async Task<List<KeyPage>> ReadInventoryQuorumAsync(string prefix, string? cursor, int limit, Call call)
+    private async Task<(List<KeyPage> Pages, ConfigurationSnapshot Config, Ballot? HigherConfiguration)> ReadInventoryQuorumAsync(
+        string prefix, string? cursor, int limit, Call call)
     {
         var retries = 0;
         while (true)
@@ -615,7 +659,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
                 call.Token.ThrowIfCancellationRequested();
                 var config = CurrentSnapshot();
                 using var phase = CancellationTokenSource.CreateLinkedTokenSource(call.Token);
-                var timeout = Task.Delay(_options.AttemptTimeout, _options.TimeProvider, phase.Token);
+                var timeout = TimeProviderDelay.DelayAsync(_options.TimeProvider, _options.AttemptTimeout, phase.Token);
                 var pending = Enumerable.Range(0, config.Peers.Length).Select(index =>
                     InvokePeerAsync(config, index, (peer, token) => peer.ListKeysAsync(prefix, cursor, limit, token), phase.Token)).ToList();
                 var pages = new List<KeyPage>();
@@ -630,8 +674,23 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
                         pending.Remove(task);
                         var reply = await task.ConfigureAwait(false);
                         if (reply.Error is { } error) call.RecordError(reply.Peer, error);
-                        else pages.Add(reply.Value!);
-                        if (pages.Count > config.Peers.Length / 2) return pages;
+                        else
+                        {
+                            var page = reply.Value!;
+                            var highestObserved = page.FloorBallot;
+                            foreach (var entry in page.Entries)
+                            {
+                                highestObserved = Ballot.Max(highestObserved, Ballot.Max(entry.PromisedBallot, entry.AcceptedBallot));
+                            }
+
+                            if (highestObserved.Configuration > config.Configuration)
+                            {
+                                return (pages, config, highestObserved);
+                            }
+
+                            pages.Add(page);
+                        }
+                        if (pages.Count > config.Peers.Length / 2) return (pages, config, null);
                     }
                 }
                 finally { phase.Cancel(); }
@@ -667,7 +726,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
     private Task BackoffAsync(int attempt, CancellationToken token)
     {
         var factor = 1 + ((_ballots.ProposerId % 7 + attempt % 7) % 7);
-        return Task.Delay(TimeSpan.FromTicks(_options.RetryBackoff.Ticks * factor), _options.TimeProvider, token);
+        return TimeProviderDelay.DelayAsync(_options.TimeProvider, TimeSpan.FromTicks(_options.RetryBackoff.Ticks * factor), token);
     }
 
     private Engine NewEngine(ConfigurationSnapshot config) => new(_ballots, config.Configuration, config.PeerIds, _options.Mode);

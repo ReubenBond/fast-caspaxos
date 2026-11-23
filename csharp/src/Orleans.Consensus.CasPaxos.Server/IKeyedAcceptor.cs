@@ -49,9 +49,12 @@ public interface IKeyedAcceptor
 public sealed record KeyedAcceptorState(
     string Key, Ballot PromisedBallot, Ballot AcceptedBallot, ByteString AcceptedValue);
 
-public sealed record AcceptorMissing;
+public sealed record AcceptorMissing(Ballot PromisedBallot = default);
 public sealed record AcceptorUnchanged;
 public union AcceptorReadResult(AcceptorMissing, AcceptorUnchanged, KeyedAcceptorState);
 
 /// <summary>A local inventory page. A null continuation means the page exhausted its snapshot.</summary>
-public sealed record KeyPage(ImmutableArray<KeyedAcceptorState> Entries, string? ContinuationKey);
+public sealed record KeyPage(
+    ImmutableArray<KeyedAcceptorState> Entries,
+    string? ContinuationKey,
+    Ballot FloorBallot = default);

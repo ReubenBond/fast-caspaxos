@@ -26,7 +26,8 @@ public sealed record VoterDescriptor(string Id, string Endpoint = "")
 public sealed record VoterConfiguration(
     long Number,
     ImmutableArray<VoterDescriptor> Voters,
-    VoterConfigurationState State)
+    VoterConfigurationState State,
+    ImmutableArray<VoterDescriptor> PreviousVoters = default)
 {
     /// <summary>Reserved register key storing the authoritative voter configuration.</summary>
     public const string RegisterKey = "__caspaxos/config";
@@ -44,20 +45,42 @@ public sealed record VoterConfiguration(
             throw new ArgumentOutOfRangeException(nameof(State), State, "Unknown voter configuration state.");
         }
 
+        ValidateVoterSet(Voters, Number, nameof(Voters));
+
+        if (!PreviousVoters.IsDefaultOrEmpty)
+        {
+            if (State != VoterConfigurationState.Pending || Number < 2)
+            {
+                throw new ArgumentException(
+                    "Previous voters may only be recorded on a pending configuration with number >= 2.",
+                    nameof(PreviousVoters));
+            }
+
+            ValidateVoterSet(PreviousVoters, Number - 1, nameof(PreviousVoters));
+        }
+    }
+
+    private static void ValidateVoterSet(ImmutableArray<VoterDescriptor> voters, long configNumber, string paramName)
+    {
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var voter in Voters)
+        foreach (var voter in voters)
         {
             ArgumentNullException.ThrowIfNull(voter);
             voter.Validate();
             if (!seen.Add(voter.Id))
             {
-                throw new ArgumentException($"Duplicate voter identity '{voter.Id}' in configuration {Number}.", nameof(Voters));
+                throw new ArgumentException($"Duplicate voter identity '{voter.Id}' in configuration {configNumber}.", paramName);
             }
         }
     }
 
     public ImmutableArray<VoterDescriptor> CanonicalVoters =>
         [.. Voters.OrderBy(static v => v.Id, StringComparer.Ordinal)];
+
+    public ImmutableArray<VoterDescriptor> CanonicalPreviousVoters =>
+        PreviousVoters.IsDefaultOrEmpty
+            ? []
+            : [.. PreviousVoters.OrderBy(static v => v.Id, StringComparer.Ordinal)];
 
     public bool HasSameVoters(ImmutableArray<VoterDescriptor> other)
     {
@@ -123,15 +146,10 @@ public static class VoterConfigurationEncoding
         ArgumentNullException.ThrowIfNull(configuration);
         configuration.Validate();
         var voters = configuration.CanonicalVoters;
-        var encodedVoters = new (byte[] Id, byte[] Endpoint)[voters.Length];
-        var totalSize = 4 + 8 + 1 + 4;
-        for (var i = 0; i < voters.Length; i++)
-        {
-            var idBytes = Encoding.UTF8.GetBytes(voters[i].Id);
-            var endpointBytes = Encoding.UTF8.GetBytes(voters[i].Endpoint);
-            encodedVoters[i] = (idBytes, endpointBytes);
-            totalSize = checked(totalSize + 4 + idBytes.Length + 4 + endpointBytes.Length);
-        }
+        var previousVoters = configuration.CanonicalPreviousVoters;
+        var encodedVoters = EncodeVoterList(voters, out var votersSize);
+        var encodedPrevious = EncodeVoterList(previousVoters, out var previousSize);
+        var totalSize = checked(4 + 8 + 1 + 4 + votersSize + 4 + previousSize);
 
         var buffer = new byte[totalSize];
         var offset = 0;
@@ -140,19 +158,8 @@ public static class VoterConfigurationEncoding
         BinaryPrimitives.WriteInt64BigEndian(buffer.AsSpan(offset), configuration.Number);
         offset += 8;
         buffer[offset++] = (byte)configuration.State;
-        BinaryPrimitives.WriteInt32BigEndian(buffer.AsSpan(offset), encodedVoters.Length);
-        offset += 4;
-        foreach (var (idBytes, endpointBytes) in encodedVoters)
-        {
-            BinaryPrimitives.WriteInt32BigEndian(buffer.AsSpan(offset), idBytes.Length);
-            offset += 4;
-            idBytes.CopyTo(buffer, offset);
-            offset += idBytes.Length;
-            BinaryPrimitives.WriteInt32BigEndian(buffer.AsSpan(offset), endpointBytes.Length);
-            offset += 4;
-            endpointBytes.CopyTo(buffer, offset);
-            offset += endpointBytes.Length;
-        }
+        WriteVoterList(buffer, ref offset, encodedVoters);
+        WriteVoterList(buffer, ref offset, encodedPrevious);
 
         return new ByteString(buffer);
     }
@@ -165,7 +172,7 @@ public static class VoterConfigurationEncoding
         }
 
         var bytes = payload.Span;
-        if (bytes.Length < 17 || !bytes[..4].SequenceEqual(Magic))
+        if (bytes.Length < 21 || !bytes[..4].SequenceEqual(Magic))
         {
             throw new InvalidDataException("Configuration payload has an invalid header.");
         }
@@ -180,11 +187,83 @@ public static class VoterConfigurationEncoding
         }
 
         var state = (VoterConfigurationState)rawState;
+        var voters = ReadVoterList(bytes, ref offset, allowEmpty: false);
+        var previousVoters = ReadVoterList(bytes, ref offset, allowEmpty: true);
+        if (number < 1)
+        {
+            throw new InvalidDataException("Configuration payload has invalid number.");
+        }
+
+        if (offset != bytes.Length)
+        {
+            throw new InvalidDataException("Configuration payload has trailing bytes.");
+        }
+
+        if (!previousVoters.IsEmpty && (state != VoterConfigurationState.Pending || number < 2))
+        {
+            throw new InvalidDataException("Previous voters are only valid on pending configurations with number >= 2.");
+        }
+
+        return new VoterConfiguration(number, voters, state, previousVoters);
+    }
+
+    private static (byte[] Id, byte[] Endpoint)[] EncodeVoterList(
+        ImmutableArray<VoterDescriptor> voters,
+        out int byteLength)
+    {
+        var encoded = new (byte[] Id, byte[] Endpoint)[voters.Length];
+        byteLength = 0;
+        for (var i = 0; i < voters.Length; i++)
+        {
+            var idBytes = Encoding.UTF8.GetBytes(voters[i].Id);
+            var endpointBytes = Encoding.UTF8.GetBytes(voters[i].Endpoint);
+            encoded[i] = (idBytes, endpointBytes);
+            byteLength = checked(byteLength + 4 + idBytes.Length + 4 + endpointBytes.Length);
+        }
+
+        return encoded;
+    }
+
+    private static void WriteVoterList(
+        byte[] buffer,
+        ref int offset,
+        (byte[] Id, byte[] Endpoint)[] encoded)
+    {
+        BinaryPrimitives.WriteInt32BigEndian(buffer.AsSpan(offset), encoded.Length);
+        offset += 4;
+        foreach (var (idBytes, endpointBytes) in encoded)
+        {
+            BinaryPrimitives.WriteInt32BigEndian(buffer.AsSpan(offset), idBytes.Length);
+            offset += 4;
+            idBytes.CopyTo(buffer, offset);
+            offset += idBytes.Length;
+            BinaryPrimitives.WriteInt32BigEndian(buffer.AsSpan(offset), endpointBytes.Length);
+            offset += 4;
+            endpointBytes.CopyTo(buffer, offset);
+            offset += endpointBytes.Length;
+        }
+    }
+
+    private static ImmutableArray<VoterDescriptor> ReadVoterList(
+        ReadOnlySpan<byte> bytes,
+        ref int offset,
+        bool allowEmpty)
+    {
+        if (offset + 4 > bytes.Length)
+        {
+            throw new InvalidDataException("Configuration payload is truncated.");
+        }
+
         var count = BinaryPrimitives.ReadInt32BigEndian(bytes.Slice(offset, 4));
         offset += 4;
-        if (number < 1 || count <= 0)
+        if (count < 0 || (!allowEmpty && count == 0))
         {
-            throw new InvalidDataException("Configuration payload has invalid number or voter count.");
+            throw new InvalidDataException("Configuration payload has invalid voter count.");
+        }
+
+        if (count == 0)
+        {
+            return [];
         }
 
         var voters = ImmutableArray.CreateBuilder<VoterDescriptor>(count);
@@ -201,12 +280,7 @@ public static class VoterConfigurationEncoding
             voters.Add(new VoterDescriptor(id, endpoint));
         }
 
-        if (offset != bytes.Length)
-        {
-            throw new InvalidDataException("Configuration payload has trailing bytes.");
-        }
-
-        return new VoterConfiguration(number, voters.MoveToImmutable(), state);
+        return voters.MoveToImmutable();
     }
 
     private static string ReadString(ReadOnlySpan<byte> bytes, ref int offset)

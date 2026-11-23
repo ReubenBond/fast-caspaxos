@@ -71,6 +71,7 @@ public sealed class AcceptorGrpcService(IKeyedAcceptor acceptor, ILogger<Accepto
                         Accepted = WireConvert.Accepted(entry.AcceptedBallot, entry.AcceptedValue),
                     });
                 if (page.ContinuationKey is not null) response.ContinuationKey = page.ContinuationKey;
+                if (!page.FloorBallot.IsZero) response.FloorBallot = WireConvert.ToWire(page.FloorBallot, allowFloor: true);
                 return response;
             });
         }, context, logger);

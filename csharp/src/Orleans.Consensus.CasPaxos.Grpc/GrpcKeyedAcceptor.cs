@@ -28,7 +28,10 @@ public sealed class GrpcKeyedAcceptor(CallInvoker callInvoker, TimeSpan? callTim
             switch (response.OutcomeCase)
             {
                 case Wire.ConditionalAcceptorState.OutcomeOneofCase.Missing:
-                    return new AcceptorMissing();
+                    var missingPromised = response.PromisedBallot is null
+                        ? Ballot.Zero
+                        : WireConvert.Ballot(response.PromisedBallot, allowZero: true, allowFloor: true);
+                    return new AcceptorMissing(missingPromised);
                 case Wire.ConditionalAcceptorState.OutcomeOneofCase.Unchanged:
                     WireConvert.Require(known is not null, "Unchanged requires a supplied digest.");
                     return new AcceptorUnchanged();
@@ -127,8 +130,9 @@ public sealed class GrpcKeyedAcceptor(CallInvoker callInvoker, TimeSpan? callTim
                     WireConvert.Ballot(entry.PromisedBallot, allowFloor: true), ballot, value!.Value);
             })];
             var cursor = response.HasContinuationKey ? response.ContinuationKey : null;
+            var floor = response.FloorBallot is null ? Ballot.Zero : WireConvert.FloorBallot(response.FloorBallot);
             WireConvert.ValidatePage(entries.Select(e => e.Key).ToArray(), cursor, request);
-            return new KeyPage(entries, cursor);
+            return new KeyPage(entries, cursor, floor);
         });
     }
 }

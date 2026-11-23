@@ -23,8 +23,9 @@ public sealed class ObservedAcceptor(
                     Record("read", ResponsePhase, context, key, Ballot.Zero, Ballot.Zero, "present",
                         state.PromisedBallot, state.AcceptedBallot, value: state.AcceptedValue);
                     break;
-                case AcceptorMissing:
-                    Record("read", ResponsePhase, context, key, Ballot.Zero, Ballot.Zero, "missing");
+                case AcceptorMissing missing:
+                    Record("read", ResponsePhase, context, key, Ballot.Zero, Ballot.Zero, "missing",
+                        promised: missing.PromisedBallot.IsZero ? null : missing.PromisedBallot);
                     break;
                 case AcceptorUnchanged:
                     Record("read", ResponsePhase, context, key, Ballot.Zero, Ballot.Zero, "unchanged");

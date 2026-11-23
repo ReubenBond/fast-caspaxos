@@ -50,7 +50,13 @@ public sealed class AcceptorDigestGrpcService(
                 }
                 return result switch
                 {
-                    AcceptorMissing => new Wire.ConditionalAcceptorState { Missing = new() },
+                    AcceptorMissing missing => missing.PromisedBallot.IsZero
+                        ? new Wire.ConditionalAcceptorState { Missing = new() }
+                        : new Wire.ConditionalAcceptorState
+                        {
+                            Missing = new(),
+                            PromisedBallot = WireConvert.ToWire(missing.PromisedBallot, allowZero: true, allowFloor: true),
+                        },
                     AcceptorUnchanged when known is not null => new Wire.ConditionalAcceptorState { Unchanged = new() },
                     _ => throw new ArgumentException("A valid explicit read outcome is required."),
                 };

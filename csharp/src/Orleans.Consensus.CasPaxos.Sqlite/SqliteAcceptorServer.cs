@@ -183,7 +183,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
             {
                 if (entries.Count == limit)
                 {
-                    return new KeyPage(entries.ToImmutable(), entries[^1].Key);
+                    return new KeyPage(entries.ToImmutable(), entries[^1].Key, floor);
                 }
 
                 var promised = Ballot.Max(
@@ -196,7 +196,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
                     ReadAcceptedValue(reader, 7)));
             }
 
-            return new KeyPage(entries.DrainToImmutable(), null);
+            return new KeyPage(entries.DrainToImmutable(), null, floor);
         }, cancellationToken);
     }
 
@@ -250,7 +250,12 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
                     """;
                 command.Parameters.AddWithValue("$key", encodedKey);
                 using var reader = command.ExecuteReader();
-                if (!reader.Read()) return new AcceptorMissing();
+                if (!reader.Read())
+                {
+                    reader.Close();
+                    var missingState = Load(connection, transaction, encodedKey, out _);
+                    return new AcceptorMissing(missingState.EffectivePromisedBallot);
+                }
                 digest = new(new(reader.GetInt64(0), reader.GetInt32(1), reader.GetInt32(2)), new(reader.GetFieldValue<byte[]>(3)));
                 if (digest == known) return new AcceptorUnchanged();
             }

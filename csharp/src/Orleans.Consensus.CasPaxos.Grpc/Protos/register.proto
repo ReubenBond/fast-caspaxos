@@ -70,6 +70,7 @@ message ConditionalAcceptorState {
     Empty unchanged = 2;
     AcceptorEntry different = 3;
   }
+  Ballot promised_ballot = 4;
 }
 
 message Empty {}
@@ -126,6 +127,7 @@ message AcceptorEntry {
 message AcceptorKeyPage {
   repeated AcceptorEntry entries = 1;
   optional string continuation_key = 2;
+  Ballot floor_ballot = 3;
 }
 message ReadRequest { optional string key = 1; }
 message PresentValue {
