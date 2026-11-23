@@ -130,8 +130,16 @@ public sealed class ProposerModePolicy
             ? ShouldSkipInitialPrepare(proposerId)
             : ballot.Proposer == proposerId && (StaticLeaderEnabled || IsAdaptive);
 
-    internal Ballot CreateProposalBallot(int proposerId, Ballot currentBallot)
+    internal Ballot CreateProposalBallot(int proposerId, Ballot currentBallot, long configuration = 1, bool allowInitialFast = true)
     {
+        if (configuration > 1 || !allowInitialFast)
+        {
+            var nextRound = currentBallot.IsZero || currentBallot.Configuration < configuration
+                ? 1
+                : checked(currentBallot.Round + 1);
+            return new Ballot(configuration, nextRound, proposerId);
+        }
+
         if (currentBallot.IsZero)
         {
             return PreferFastPath(proposerId) ? Ballot.InitialFast() : Ballot.InitialClassic(proposerId);

@@ -164,6 +164,11 @@ public sealed class RegisterRestartTests
                 ? ValueTask.FromException<AcceptorAcceptResult>(new IOException("Replica is partitioned."))
                 : inner.AcceptAsync(key, request, cancellationToken);
 
+        public ValueTask<Ballot> SetFloorAsync(Ballot targetFloor, CancellationToken cancellationToken = default) =>
+            IsPartitioned
+                ? ValueTask.FromException<Ballot>(new IOException("Replica is partitioned."))
+                : inner.SetFloorAsync(targetFloor, cancellationToken);
+
         public ValueTask<KeyPage> ListKeysAsync(string prefix = "", string? afterKey = null, int limit = 100, CancellationToken cancellationToken = default) =>
             IsPartitioned
                 ? ValueTask.FromException<KeyPage>(new IOException("Replica is partitioned."))
@@ -186,6 +191,8 @@ public sealed class RegisterRestartTests
             Accept = request;
             return inner.AcceptAsync(key, request, cancellationToken);
         }
+        public ValueTask<Ballot> SetFloorAsync(Ballot targetFloor, CancellationToken cancellationToken = default) =>
+            inner.SetFloorAsync(targetFloor, cancellationToken);
         public ValueTask<KeyPage> ListKeysAsync(string prefix = "", string? afterKey = null, int limit = 100, CancellationToken cancellationToken = default) =>
             inner.ListKeysAsync(prefix, afterKey, limit, cancellationToken);
     }

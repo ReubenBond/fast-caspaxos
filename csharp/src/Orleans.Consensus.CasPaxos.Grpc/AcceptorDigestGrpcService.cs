@@ -43,7 +43,7 @@ public sealed class AcceptorDigestGrpcService(
                         Different = new()
                         {
                             Key = WireConvert.Text(state.Key),
-                            PromisedBallot = WireConvert.ToWire(state.PromisedBallot),
+                            PromisedBallot = WireConvert.ToWire(state.PromisedBallot, allowFloor: true),
                             Accepted = WireConvert.Accepted(state.AcceptedBallot, state.AcceptedValue),
                         }
                     };

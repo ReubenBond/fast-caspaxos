@@ -48,14 +48,20 @@ public sealed class SqliteProposerBallotSource : IProposerBallotSource, IDisposa
                 CREATE TABLE IF NOT EXISTS proposer_round (
                     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
                     proposer INTEGER NOT NULL CHECK(proposer > 0),
+                    reserved_config INTEGER NOT NULL DEFAULT 1 CHECK(reserved_config >= 1),
                     reserved INTEGER NOT NULL CHECK(reserved >= 0)
                 );
-                INSERT OR IGNORE INTO proposer_round VALUES (1, $proposer, 0);
-                SELECT proposer FROM proposer_round WHERE singleton = 1;
+                INSERT OR IGNORE INTO proposer_round (singleton, proposer, reserved_config, reserved) VALUES (1, $proposer, 1, 0);
                 """;
             command.Parameters.AddWithValue("$proposer", proposerId);
             // journal_mode also returns a row, so read the identity in its own command.
             command.ExecuteNonQuery();
+            command.CommandText = "SELECT count(*) FROM pragma_table_info('proposer_round') WHERE name = 'reserved_config';";
+            if (Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture) == 0)
+            {
+                command.CommandText = "ALTER TABLE proposer_round ADD COLUMN reserved_config INTEGER NOT NULL DEFAULT 1 CHECK(reserved_config >= 1);";
+                command.ExecuteNonQuery();
+            }
             command.CommandText = "SELECT proposer FROM proposer_round WHERE singleton = 1;";
             if (Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture) != proposerId)
             {
@@ -74,12 +80,12 @@ public sealed class SqliteProposerBallotSource : IProposerBallotSource, IDisposa
     }
 
     /// <summary>
-    /// Reserves a round of at least <paramref name="minimumRound"/>, returning it once its reservation commits. A failed
-    /// reservation is reported to the fatal-error handler and retires the allocator: its outcome may be durable, and
-    /// only a fresh process recovering from the database allocates again.
+    /// Reserves a classic ballot in <paramref name="configuration"/> with round at least <paramref name="minimumRound"/>,
+    /// persisting <c>(configuration, round)</c> lexicographically monotonically before returning.
     /// </summary>
-    public Ballot Reserve(int minimumRound)
+    public Ballot Reserve(long configuration, int minimumRound)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(configuration);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(minimumRound);
         lock (_gate)
         {
@@ -90,14 +96,35 @@ public sealed class SqliteProposerBallotSource : IProposerBallotSource, IDisposa
                 using var transaction = _connection.BeginTransaction(deferred: false);
                 using var command = _connection.CreateCommand();
                 command.Transaction = transaction;
-                command.CommandText = "SELECT reserved FROM proposer_round WHERE singleton = 1;";
-                var previous = Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
-                var reserved = Math.Max(checked(previous + 1), minimumRound);
-                command.CommandText = "UPDATE proposer_round SET reserved = $round WHERE singleton = 1;";
+                command.CommandText = "SELECT reserved_config, reserved FROM proposer_round WHERE singleton = 1;";
+                long previousConfig;
+                int previousRound;
+                using (var reader = command.ExecuteReader())
+                {
+                    if (!reader.Read())
+                    {
+                        throw new InvalidDataException("The proposer allocator row is missing.");
+                    }
+
+                    previousConfig = reader.GetInt64(0);
+                    previousRound = reader.GetInt32(1);
+                }
+
+                if (configuration < previousConfig)
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot reserve ballot in stale configuration {configuration}; allocator has already reserved configuration {previousConfig}.");
+                }
+
+                var reserved = configuration == previousConfig
+                    ? Math.Max(checked(previousRound + 1), minimumRound)
+                    : minimumRound;
+                command.CommandText = "UPDATE proposer_round SET reserved_config = $config, reserved = $round WHERE singleton = 1;";
+                command.Parameters.AddWithValue("$config", configuration);
                 command.Parameters.AddWithValue("$round", reserved);
                 command.ExecuteNonQuery();
                 transaction.Commit();
-                return new Ballot(reserved, ProposerId);
+                return new Ballot(configuration, reserved, ProposerId);
             }
             catch (Exception exception) when (exception is SqliteException or IOException or InvalidCastException or FormatException)
             {
@@ -107,6 +134,8 @@ public sealed class SqliteProposerBallotSource : IProposerBallotSource, IDisposa
             }
         }
     }
+
+    public Ballot Reserve(int minimumRound) => Reserve(1, minimumRound);
 
     public void Dispose()
     {

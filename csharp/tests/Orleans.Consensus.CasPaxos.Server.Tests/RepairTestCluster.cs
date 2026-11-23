@@ -67,12 +67,13 @@ internal sealed class RecordingRepairBallots : IProposerBallotSource, IDisposabl
     private readonly TestBallots _inner = new(11);
     public int ProposerId => _inner.ProposerId;
     public ConcurrentQueue<Ballot> Reserved { get; } = new();
-    public Ballot Reserve(int minimumRound)
+    public Ballot Reserve(long configuration, int minimumRound)
     {
-        var ballot = _inner.Reserve(minimumRound);
+        var ballot = _inner.Reserve(configuration, minimumRound);
         Reserved.Enqueue(ballot);
         return ballot;
     }
+    public Ballot Reserve(int minimumRound) => Reserve(1, minimumRound);
 
     public void Dispose() => _inner.Dispose();
 }

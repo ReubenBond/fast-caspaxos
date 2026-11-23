@@ -39,7 +39,7 @@ public sealed class GrpcKeyedAcceptor(CallInvoker callInvoker, TimeSpan? callTim
                     WireConvert.Require(value is not null, "Different requires accepted bytes.");
                     WireConvert.Require(known is null || known != new AcceptedDigest(ballot, AcceptedDigest.Hash(value!.Value)),
                         "Different must differ from the supplied digest.");
-                    return new KeyedAcceptorState(key, WireConvert.Ballot(entry.PromisedBallot), ballot, value!.Value);
+                    return new KeyedAcceptorState(key, WireConvert.Ballot(entry.PromisedBallot, allowFloor: true), ballot, value!.Value);
                 default:
                     throw new ArgumentException("An explicit read outcome is required.");
             }
@@ -62,7 +62,7 @@ public sealed class GrpcKeyedAcceptor(CallInvoker callInvoker, TimeSpan? callTim
                     WireConvert.Require(ballot <= request.Ballot, "The accepted ballot exceeds the promised ballot.");
                     return AcceptorPrepareResult.Promised(ballot, value);
                 case Wire.PrepareResponse.OutcomeOneofCase.Rejected:
-                    var conflict = WireConvert.Ballot(response.Rejected);
+                    var conflict = WireConvert.Ballot(response.Rejected, allowFloor: true);
                     WireConvert.Require(conflict > request.Ballot && conflict >= ballot,
                         "A prepare rejection must report a higher conflicting ballot.");
                     return AcceptorPrepareResult.Rejected(ballot, value, conflict);
@@ -88,14 +88,27 @@ public sealed class GrpcKeyedAcceptor(CallInvoker callInvoker, TimeSpan? callTim
             switch (response.OutcomeCase)
             {
                 case Wire.AcceptResponse.OutcomeOneofCase.Accepted:
-                    return AcceptorAcceptResult.Accepted(WireConvert.Ballot(response.Accepted));
+                    return AcceptorAcceptResult.Accepted(WireConvert.Ballot(response.Accepted, allowFloor: true));
                 case Wire.AcceptResponse.OutcomeOneofCase.Rejected:
-                    var conflict = WireConvert.Ballot(response.Rejected);
+                    var conflict = WireConvert.Ballot(response.Rejected, allowFloor: true);
                     WireConvert.Require(conflict >= request.Ballot, "An accept rejection must report a conflicting ballot.");
                     return AcceptorAcceptResult.Rejected(conflict);
                 default:
                     throw new ArgumentException("An explicit accept outcome is required.");
             }
+        });
+    }
+
+    public async ValueTask<Ballot> SetFloorAsync(Ballot targetFloor, CancellationToken cancellationToken = default)
+    {
+        WireConvert.Require(targetFloor.IsFloorBallot, "A floor ballot requires a positive configuration, round 0, and proposer 0.");
+        var wire = new Wire.SetFloorRequest { Floor = WireConvert.ToWire(targetFloor, allowFloor: true) };
+        var response = await _calls.Invoke(o => _client.SetFloorAsync(wire, o), cancellationToken).ConfigureAwait(false);
+        return RpcErrors.Response(() =>
+        {
+            var floor = WireConvert.FloorBallot(response.Floor);
+            WireConvert.Require(floor >= targetFloor, "The returned floor ballot must be at least the requested floor.");
+            return floor;
         });
     }
 
@@ -111,7 +124,7 @@ public sealed class GrpcKeyedAcceptor(CallInvoker callInvoker, TimeSpan? callTim
                 var (ballot, value) = WireConvert.Accepted(entry.Accepted);
                 WireConvert.Require(value is not null, "Inventory entries must contain an accepted value.");
                 return new KeyedAcceptorState(WireConvert.Key(entry.Key, entry.HasKey),
-                    WireConvert.Ballot(entry.PromisedBallot), ballot, value!.Value);
+                    WireConvert.Ballot(entry.PromisedBallot, allowFloor: true), ballot, value!.Value);
             })];
             var cursor = response.HasContinuationKey ? response.ContinuationKey : null;
             WireConvert.ValidatePage(entries.Select(e => e.Key).ToArray(), cursor, request);

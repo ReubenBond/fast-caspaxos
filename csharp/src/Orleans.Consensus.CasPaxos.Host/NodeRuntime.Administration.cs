@@ -1,4 +1,5 @@
 using Orleans.Consensus.CasPaxos.Messages;
+using Orleans.Consensus.CasPaxos.Model;
 using Orleans.Consensus.CasPaxos.Protocol;
 using Orleans.Consensus.CasPaxos.Server;
 using Orleans.Consensus.CasPaxos.Server.Diagnostics;
@@ -207,6 +208,8 @@ public sealed partial class NodeRuntime
             Current.PrepareAsync(key, request, cancellationToken);
         public ValueTask<AcceptorAcceptResult> AcceptAsync(string key, AcceptRequest<ByteString> request, CancellationToken cancellationToken = default) =>
             Current.AcceptAsync(key, request, cancellationToken);
+        public ValueTask<Ballot> SetFloorAsync(Ballot targetFloor, CancellationToken cancellationToken = default) =>
+            Current.SetFloorAsync(targetFloor, cancellationToken);
         public ValueTask<KeyPage> ListKeysAsync(string prefix = "", string? afterKey = null, int limit = 100, CancellationToken cancellationToken = default) =>
             Current.ListKeysAsync(prefix, afterKey, limit, cancellationToken);
     }

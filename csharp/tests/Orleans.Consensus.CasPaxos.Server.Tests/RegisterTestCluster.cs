@@ -91,21 +91,40 @@ internal static class TestSupport
 internal sealed class TestBallots(int proposerId) : IProposerBallotSource, IDisposable
 {
     private readonly Lock _gate = new();
+    private long _configuration = 1;
     private int _round;
     public int ProposerId => proposerId;
     public bool Disposed { get; private set; }
     public ConcurrentQueue<Ballot> Reserved { get; } = new();
-    public Ballot Reserve(int minimumRound)
+    public Ballot Reserve(long configuration, int minimumRound)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(configuration);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(minimumRound);
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(Disposed, this);
-            _round = Math.Max(checked(_round + 1), minimumRound);
-            var ballot = new Ballot(_round, proposerId);
+            if (configuration < _configuration)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot reserve stale configuration {configuration}; already at {_configuration}.");
+            }
+
+            if (configuration > _configuration)
+            {
+                _configuration = configuration;
+                _round = minimumRound;
+            }
+            else
+            {
+                _round = Math.Max(checked(_round + 1), minimumRound);
+            }
+
+            var ballot = new Ballot(_configuration, _round, proposerId);
             Reserved.Enqueue(ballot);
             return ballot;
         }
     }
+    public Ballot Reserve(int minimumRound) => Reserve(1, minimumRound);
     public void Dispose() => Disposed = true;
 }
 
@@ -113,12 +132,31 @@ internal sealed class MemoryAcceptor : IKeyedAcceptor, ILocalAcceptorInspection
 {
     private readonly Lock _gate = new();
     private readonly Dictionary<string, AcceptorState<ByteString?>> _states = new(StringComparer.Ordinal);
+    private Ballot _floor = Ballot.Floor(1);
     public ConcurrentQueue<(string Key, LocalAcceptorState? State)> Inspections { get; } = new();
+
+    public MemoryAcceptor(long initialConfiguration = 1)
+    {
+        _floor = Ballot.Floor(initialConfiguration);
+    }
+
+    public ValueTask<Ballot> SetFloorAsync(Ballot targetFloor, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!targetFloor.IsFloorBallot)
+            throw new ArgumentOutOfRangeException(nameof(targetFloor));
+        lock (_gate)
+        {
+            if (targetFloor > _floor) _floor = targetFloor;
+            return ValueTask.FromResult(_floor);
+        }
+    }
 
     public async ValueTask<LocalAcceptorBallots?> InspectBallotsAsync(string key, CancellationToken cancellationToken = default)
     {
         var state = await InspectAsync(key, cancellationToken);
-        return state is null ? null : new(state.PromisedBallot, state.AcceptedBallot);
+        if (state is not null) return new(state.PromisedBallot, state.AcceptedBallot);
+        lock (_gate) return _floor.Configuration > 1 ? new(_floor, Ballot.Zero) : null;
     }
 
     public ValueTask<LocalAcceptorState?> InspectAsync(string key, CancellationToken cancellationToken = default)
@@ -127,7 +165,7 @@ internal sealed class MemoryAcceptor : IKeyedAcceptor, ILocalAcceptorInspection
         lock (_gate)
         {
             LocalAcceptorState? result = _states.TryGetValue(key, out var state)
-                ? new(key, state.PromisedBallot, state.AcceptedBallot, state.AcceptedValue) : null;
+                ? new(key, Ballot.Max(state.PromisedBallot, _floor), state.AcceptedBallot, state.AcceptedValue) : null;
             Inspections.Enqueue((key, result));
             return ValueTask.FromResult(result);
         }
@@ -143,7 +181,7 @@ internal sealed class MemoryAcceptor : IKeyedAcceptor, ILocalAcceptorInspection
                     && (afterKey is null || string.CompareOrdinal(pair.Key, afterKey) > 0))
                 .OrderBy(pair => pair.Key, StringComparer.Ordinal)
                 .Take(limit == int.MaxValue ? limit : limit + 1)
-                .Select(pair => new LocalAcceptorState(pair.Key, pair.Value.PromisedBallot,
+                .Select(pair => new LocalAcceptorState(pair.Key, Ballot.Max(pair.Value.PromisedBallot, _floor),
                     pair.Value.AcceptedBallot, pair.Value.AcceptedValue)).ToArray();
             return ValueTask.FromResult(new LocalAcceptorPage([.. entries.Take(limit)],
                 entries.Length > limit ? entries[limit - 1].Key : null));
@@ -199,7 +237,7 @@ internal sealed class MemoryAcceptor : IKeyedAcceptor, ILocalAcceptorInspection
                     && pair.Key.StartsWith(prefix, StringComparison.Ordinal)
                     && (afterKey is null || string.CompareOrdinal(pair.Key, afterKey) > 0))
                 .OrderBy(pair => pair.Key, StringComparer.Ordinal).Take(limit == int.MaxValue ? limit : limit + 1)
-                .Select(pair => new KeyedAcceptorState(pair.Key, pair.Value.PromisedBallot,
+                .Select(pair => new KeyedAcceptorState(pair.Key, Ballot.Max(pair.Value.PromisedBallot, _floor),
                     pair.Value.AcceptedBallot, pair.Value.AcceptedValue!.Value)).ToArray();
             return ValueTask.FromResult(new KeyPage([.. entries.Take(limit)],
                 entries.Length > limit ? entries[limit - 1].Key : null));
@@ -212,22 +250,32 @@ internal sealed class MemoryAcceptor : IKeyedAcceptor, ILocalAcceptorInspection
         {
             var state = Get(key);
             return state.AcceptedValue is null ? null :
-                new(key, state.PromisedBallot, state.AcceptedBallot, state.AcceptedValue.Value);
+                new(key, Ballot.Max(state.PromisedBallot, _floor), state.AcceptedBallot, state.AcceptedValue.Value);
         }
     }
-    private AcceptorState<ByteString?> Get(string key) => _states.TryGetValue(key, out var state)
-        ? state : AcceptorState.CreateInitial<ByteString?>(null);
+    private AcceptorState<ByteString?> Get(string key)
+    {
+        if (_states.TryGetValue(key, out var state))
+        {
+            state.FloorBallot = _floor;
+            return state;
+        }
+        return AcceptorState.CreateInitial<ByteString?>(null, _floor.Configuration);
+    }
 }
 
 internal sealed class ControlledPeer : IKeyedAcceptor, IAsyncDisposable
 {
-    public MemoryAcceptor Inner { get; } = new();
+    public MemoryAcceptor Inner { get; }
+    public ControlledPeer(long initialConfiguration = 1) => Inner = new(initialConfiguration);
     public ConcurrentQueue<(string Key, PrepareRequest Request)> Prepares { get; } = new();
     public ConcurrentQueue<(string Key, AcceptRequest<ByteString> Request)> Accepts { get; } = new();
     public ConcurrentQueue<(string Key, AcceptedDigest? Known)> Reads { get; } = new();
+    public ConcurrentQueue<Ballot> Floors { get; } = new();
     public Func<string, AcceptedDigest?, CancellationToken, ValueTask<AcceptorReadResult>>? Read { get; set; }
     public Func<string, PrepareRequest, CancellationToken, ValueTask<AcceptorPrepareResult<ByteString?>>>? Prepare { get; set; }
     public Func<string, AcceptRequest<ByteString>, CancellationToken, ValueTask<AcceptorAcceptResult>>? Accept { get; set; }
+    public Func<Ballot, CancellationToken, ValueTask<Ballot>>? SetFloor { get; set; }
     public Func<string, string?, int, CancellationToken, ValueTask<KeyPage>>? List { get; set; }
     public bool Disposed { get; private set; }
 
@@ -246,6 +294,11 @@ internal sealed class ControlledPeer : IKeyedAcceptor, IAsyncDisposable
         Accepts.Enqueue((key, request));
         return Accept is null ? Inner.AcceptAsync(key, request, cancellationToken) : Accept(key, request, cancellationToken);
     }
+    public ValueTask<Ballot> SetFloorAsync(Ballot targetFloor, CancellationToken cancellationToken = default)
+    {
+        Floors.Enqueue(targetFloor);
+        return SetFloor is null ? Inner.SetFloorAsync(targetFloor, cancellationToken) : SetFloor(targetFloor, cancellationToken);
+    }
     public ValueTask<KeyPage> ListKeysAsync(string prefix = "", string? afterKey = null, int limit = 100, CancellationToken cancellationToken = default) =>
         List is null ? Inner.ListKeysAsync(prefix, afterKey, limit, cancellationToken) : List(prefix, afterKey, limit, cancellationToken);
     public ValueTask DisposeAsync() { Disposed = true; return ValueTask.CompletedTask; }
@@ -254,6 +307,7 @@ internal sealed class ControlledPeer : IKeyedAcceptor, IAsyncDisposable
         Read = (_, _, _) => ValueTask.FromException<AcceptorReadResult>(new IOException("offline"));
         Prepare = (_, _, _) => ValueTask.FromException<AcceptorPrepareResult<ByteString?>>(new IOException("offline"));
         Accept = (_, _, _) => ValueTask.FromException<AcceptorAcceptResult>(new IOException("offline"));
+        SetFloor = (_, _) => ValueTask.FromException<Ballot>(new IOException("offline"));
         List = (_, _, _, _) => ValueTask.FromException<KeyPage>(new IOException("offline"));
     }
 }

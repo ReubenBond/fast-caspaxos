@@ -7,6 +7,7 @@ service Acceptor {
   rpc Prepare(PrepareRequest) returns (PrepareResponse);
   rpc Accept(AcceptRequest) returns (AcceptResponse);
   rpc ListKeys(ListKeysRequest) returns (AcceptorKeyPage);
+  rpc SetFloor(SetFloorRequest) returns (SetFloorResponse);
 }
 
 service Register {
@@ -75,6 +76,13 @@ message Empty {}
 message Ballot {
   int32 round = 1;
   int32 proposer_id = 2;
+  int64 configuration = 3;
+}
+message SetFloorRequest {
+  Ballot floor = 1;
+}
+message SetFloorResponse {
+  Ballot floor = 1;
 }
 message AcceptedState {
   Ballot ballot = 1;

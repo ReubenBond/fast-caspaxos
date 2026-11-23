@@ -80,6 +80,23 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         }
     }
 
+    public ValueTask<Ballot> SetFloorAsync(Ballot targetFloor, CancellationToken cancellationToken = default)
+    {
+        if (!targetFloor.IsFloorBallot)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(targetFloor),
+                targetFloor,
+                "A floor ballot requires a positive configuration, round 0, and proposer 0.");
+        }
+
+        return Enqueue((connection, transaction) =>
+        {
+            var floor = RaiseFloor(connection, transaction, targetFloor.Configuration);
+            return Ballot.Floor(floor);
+        }, cancellationToken);
+    }
+
     public ValueTask<AcceptorPrepareResult<ByteString?>> PrepareAsync(
         string key, PrepareRequest request, CancellationToken cancellationToken = default)
     {
@@ -106,6 +123,12 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         if (!request.NextBallotToPrepare.IsZero)
         {
             ValidateBallot(request.NextBallotToPrepare, nameof(request));
+            if (request.NextBallotToPrepare.Configuration != request.Ballot.Configuration)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(request),
+                    "A piggybacked next ballot must be in the same configuration as the accepted ballot.");
+            }
         }
 
         return Enqueue((connection, transaction) =>
@@ -129,12 +152,14 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
         return Enqueue((connection, transaction) =>
         {
+            var floor = LoadFloor(connection, transaction);
             var encodedPrefix = EncodeKey(prefix);
             var prefixEnd = GetPrefixEnd(encodedPrefix);
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
-                SELECT key, promised_round, promised_proposer, accepted_round, accepted_proposer, value, value_hash
+                SELECT key, promised_config, promised_round, promised_proposer,
+                       accepted_config, accepted_round, accepted_proposer, value, value_hash
                 FROM acceptor_state
                 WHERE accepted_round IS NOT NULL
                     AND key >= $prefix
@@ -161,11 +186,14 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
                     return new KeyPage(entries.ToImmutable(), entries[^1].Key);
                 }
 
+                var promised = Ballot.Max(
+                    new Ballot(reader.GetInt64(1), reader.GetInt32(2), reader.GetInt32(3)),
+                    floor);
                 entries.Add(new KeyedAcceptorState(
                     DecodeKey(reader.GetFieldValue<byte[]>(0)),
-                    new Ballot(reader.GetInt32(1), reader.GetInt32(2)),
-                    new Ballot(reader.GetInt32(3), reader.GetInt32(4)),
-                    ReadAcceptedValue(reader, 5)));
+                    promised,
+                    new Ballot(reader.GetInt64(4), reader.GetInt32(5), reader.GetInt32(6)),
+                    ReadAcceptedValue(reader, 7)));
             }
 
             return new KeyPage(entries.DrainToImmutable(), null);
@@ -184,7 +212,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
-                SELECT key, accepted_round, accepted_proposer, value_hash
+                SELECT key, accepted_config, accepted_round, accepted_proposer, value_hash
                 FROM acceptor_state WHERE accepted_round IS NOT NULL AND key >= $prefix
                 """ + (prefixEnd is null ? "" : " AND key < $end")
                 + (afterKey is null ? "" : " AND key > $after") + " ORDER BY key LIMIT $limit;";
@@ -198,7 +226,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
             {
                 if (entries.Count == limit) return new AcceptorDigestPage(entries.ToImmutable(), entries[^1].Key);
                 entries.Add(new(DecodeKey(reader.GetFieldValue<byte[]>(0)),
-                    new(new(reader.GetInt32(1), reader.GetInt32(2)), new(reader.GetFieldValue<byte[]>(3)))));
+                    new(new(reader.GetInt64(1), reader.GetInt32(2), reader.GetInt32(3)), new(reader.GetFieldValue<byte[]>(4)))));
             }
             return new AcceptorDigestPage(entries.DrainToImmutable(), null);
         }, cancellationToken);
@@ -217,18 +245,18 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
             {
                 command.Transaction = transaction;
                 command.CommandText = """
-                    SELECT accepted_round, accepted_proposer, value_hash FROM acceptor_state
+                    SELECT accepted_config, accepted_round, accepted_proposer, value_hash FROM acceptor_state
                     WHERE key = $key AND accepted_round IS NOT NULL;
                     """;
                 command.Parameters.AddWithValue("$key", encodedKey);
                 using var reader = command.ExecuteReader();
                 if (!reader.Read()) return new AcceptorMissing();
-                digest = new(new(reader.GetInt32(0), reader.GetInt32(1)), new(reader.GetFieldValue<byte[]>(2)));
+                digest = new(new(reader.GetInt64(0), reader.GetInt32(1), reader.GetInt32(2)), new(reader.GetFieldValue<byte[]>(3)));
                 if (digest == known) return new AcceptorUnchanged();
             }
             var state = Load(connection, transaction, encodedKey, out _);
             Debug.Assert(state.AcceptedValue is not null);
-            return new KeyedAcceptorState(key, state.PromisedBallot, state.AcceptedBallot, state.AcceptedValue.Value);
+            return new KeyedAcceptorState(key, state.EffectivePromisedBallot, state.AcceptedBallot, state.AcceptedValue.Value);
         }, cancellationToken);
     }
 
@@ -238,7 +266,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         return Enqueue((connection, transaction) =>
         {
             var state = Load(connection, transaction, EncodeKey(key), out var exists);
-            return exists ? new LocalAcceptorState(key, state.PromisedBallot, state.AcceptedBallot, state.AcceptedValue) : null;
+            return exists ? new LocalAcceptorState(key, state.EffectivePromisedBallot, state.AcceptedBallot, state.AcceptedValue) : null;
         }, cancellationToken);
     }
 
@@ -249,17 +277,25 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         {
             return await Enqueue<LocalAcceptorBallots?>((connection, transaction) =>
             {
+                var floor = LoadFloor(connection, transaction);
                 using var command = connection.CreateCommand();
                 command.Transaction = transaction;
                 command.CommandText = """
-                    SELECT promised_round, promised_proposer, accepted_round, accepted_proposer
+                    SELECT promised_config, promised_round, promised_proposer,
+                           accepted_config, accepted_round, accepted_proposer
                     FROM acceptor_state WHERE key = $key;
                     """;
                 command.Parameters.AddWithValue("$key", EncodeKey(key));
                 using var reader = command.ExecuteReader();
-                if (!reader.Read()) return null;
-                var result = new LocalAcceptorBallots(new(reader.GetInt32(0), reader.GetInt32(1)),
-                    reader.IsDBNull(2) ? Ballot.Zero : new(reader.GetInt32(2), reader.GetInt32(3)));
+                if (!reader.Read())
+                {
+                    return floor.Configuration > 1 ? new LocalAcceptorBallots(floor, Ballot.Zero) : null;
+                }
+                var promised = Ballot.Max(
+                    new Ballot(reader.GetInt64(0), reader.GetInt32(1), reader.GetInt32(2)),
+                    floor);
+                var result = new LocalAcceptorBallots(promised,
+                    reader.IsDBNull(4) ? Ballot.Zero : new(reader.GetInt64(3), reader.GetInt32(4), reader.GetInt32(5)));
                 result.Validate();
                 return result;
             }, cancellationToken).ConfigureAwait(false);
@@ -282,9 +318,14 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
             command.Transaction = transaction;
             command.CommandText = """
                 SELECT value, value_hash FROM acceptor_state
-                WHERE key = $key AND accepted_round = $round AND accepted_proposer = $proposer AND value_hash = $hash;
+                WHERE key = $key
+                  AND accepted_config = $config
+                  AND accepted_round = $round
+                  AND accepted_proposer = $proposer
+                  AND value_hash = $hash;
                 """;
             command.Parameters.AddWithValue("$key", EncodeKey(key));
+            command.Parameters.AddWithValue("$config", digest.AcceptedBallot.Configuration);
             command.Parameters.AddWithValue("$round", digest.AcceptedBallot.Round);
             command.Parameters.AddWithValue("$proposer", digest.AcceptedBallot.Proposer);
             command.Parameters.AddWithValue("$hash", digest.ValueHash.ToArray());
@@ -300,12 +341,14 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
         return Enqueue((connection, transaction) =>
         {
+            var floor = LoadFloor(connection, transaction);
             var encodedPrefix = EncodeKey(prefix);
             var prefixEnd = GetPrefixEnd(encodedPrefix);
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
-                SELECT key, promised_round, promised_proposer, accepted_round, accepted_proposer, value, value_hash
+                SELECT key, promised_config, promised_round, promised_proposer,
+                       accepted_config, accepted_round, accepted_proposer, value, value_hash
                 FROM acceptor_state WHERE key >= $prefix
                 """ + (prefixEnd is null ? "" : " AND key < $end")
                 + (afterKey is null ? "" : " AND key > $after") + " ORDER BY key LIMIT $limit;";
@@ -318,10 +361,13 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
             while (reader.Read())
             {
                 if (entries.Count == limit) return new LocalAcceptorPage(entries.ToImmutable(), entries[^1].Key);
+                var promised = Ballot.Max(
+                    new Ballot(reader.GetInt64(1), reader.GetInt32(2), reader.GetInt32(3)),
+                    floor);
                 entries.Add(new(DecodeKey(reader.GetFieldValue<byte[]>(0)),
-                    new Ballot(reader.GetInt32(1), reader.GetInt32(2)),
-                    reader.IsDBNull(3) ? Ballot.Zero : new Ballot(reader.GetInt32(3), reader.GetInt32(4)),
-                    reader.IsDBNull(5) ? null : ReadAcceptedValue(reader, 5)));
+                    promised,
+                    reader.IsDBNull(5) ? Ballot.Zero : new Ballot(reader.GetInt64(4), reader.GetInt32(5), reader.GetInt32(6)),
+                    reader.IsDBNull(7) ? null : ReadAcceptedValue(reader, 7)));
             }
             return new LocalAcceptorPage(entries.DrainToImmutable(), null);
         }, cancellationToken);
@@ -330,7 +376,7 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
     private void ObserveChange(string key, AcceptorState<ByteString?> state)
     {
         if (_diagnostics is not null)
-            _changes.Add(AcceptorStateObservation.From(new(key, state.PromisedBallot, state.AcceptedBallot, state.AcceptedValue)));
+            _changes.Add(AcceptorStateObservation.From(new(key, state.EffectivePromisedBallot, state.AcceptedBallot, state.AcceptedValue)));
     }
 
     /// <summary>Clears all accepted values and promises after the owner has fenced and drained protocol traffic.</summary>
@@ -514,13 +560,15 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         var applicationId = Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
         command.CommandText = "PRAGMA user_version;";
         var schemaVersion = Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
-        if (applicationId == ApplicationId && schemaVersion == 2)
+        if (applicationId == ApplicationId && schemaVersion == 3)
         {
             transaction.Commit();
             return;
         }
 
-        var migrate = applicationId == ApplicationId && schemaVersion == 1;
+        var migrateFromV1 = applicationId == ApplicationId && schemaVersion == 1;
+        var migrateFromV2 = applicationId == ApplicationId && schemaVersion == 2;
+        var migrate = migrateFromV1 || migrateFromV2;
         command.CommandText = "SELECT count(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%';";
         if (!migrate && (applicationId != 0 || schemaVersion != 0 || Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture) != 0))
         {
@@ -529,45 +577,94 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
 
         if (migrate)
         {
-            command.CommandText = "ALTER TABLE acceptor_state RENAME TO acceptor_state_v1;";
+            command.CommandText = "ALTER TABLE acceptor_state RENAME TO acceptor_state_old;";
             command.ExecuteNonQuery();
         }
         command.CommandText = """
+            CREATE TABLE IF NOT EXISTS acceptor_floor (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                configuration INTEGER NOT NULL CHECK (configuration >= 1)
+            ) STRICT;
+            INSERT OR IGNORE INTO acceptor_floor (singleton, configuration) VALUES (1, 1);
             CREATE TABLE acceptor_state (
                 key BLOB PRIMARY KEY CHECK (length(key) % 2 = 0),
-                promised_round INTEGER NOT NULL CHECK (promised_round BETWEEN 1 AND 2147483647),
+                promised_config INTEGER NOT NULL CHECK (promised_config >= 1),
+                promised_round INTEGER NOT NULL CHECK (promised_round BETWEEN 0 AND 2147483647),
                 promised_proposer INTEGER NOT NULL CHECK (promised_proposer BETWEEN 0 AND 2147483647),
+                accepted_config INTEGER CHECK (accepted_config >= 1),
                 accepted_round INTEGER CHECK (accepted_round BETWEEN 1 AND 2147483647),
                 accepted_proposer INTEGER CHECK (accepted_proposer BETWEEN 0 AND 2147483647),
                 value BLOB,
                 value_hash BLOB CHECK (value_hash IS NULL OR length(value_hash) = 32),
-                CHECK ((accepted_round IS NULL AND accepted_proposer IS NULL AND value IS NULL AND value_hash IS NULL)
-                    OR (accepted_round IS NOT NULL AND accepted_proposer IS NOT NULL AND value IS NOT NULL AND value_hash IS NOT NULL))
+                CHECK (promised_round >= 1 OR promised_proposer = 0),
+                CHECK ((accepted_config IS NULL AND accepted_round IS NULL AND accepted_proposer IS NULL AND value IS NULL AND value_hash IS NULL)
+                    OR (accepted_config IS NOT NULL AND accepted_round IS NOT NULL AND accepted_proposer IS NOT NULL AND value IS NOT NULL AND value_hash IS NOT NULL))
             ) STRICT, WITHOUT ROWID;
-            """ + $"PRAGMA application_id={ApplicationId}; PRAGMA user_version=2;";
+            """ + $"PRAGMA application_id={ApplicationId}; PRAGMA user_version=3;";
         command.ExecuteNonQuery();
-        if (migrate)
+        if (migrateFromV1)
         {
             connection.CreateFunction<byte[]?, byte[]?>("fastcaspaxos_sha256",
                 value => value is null ? null : SHA256.HashData(value), isDeterministic: true);
             command.CommandText = """
                 INSERT INTO acceptor_state
-                SELECT key, promised_round, promised_proposer, accepted_round, accepted_proposer, value,
-                    fastcaspaxos_sha256(value) FROM acceptor_state_v1;
-                DROP TABLE acceptor_state_v1;
+                SELECT key, 1, promised_round, promised_proposer,
+                       CASE WHEN accepted_round IS NULL THEN NULL ELSE 1 END,
+                       accepted_round, accepted_proposer, value,
+                       fastcaspaxos_sha256(value)
+                FROM acceptor_state_old;
+                DROP TABLE acceptor_state_old;
+                """;
+            command.ExecuteNonQuery();
+        }
+        else if (migrateFromV2)
+        {
+            command.CommandText = """
+                INSERT INTO acceptor_state
+                SELECT key, 1, promised_round, promised_proposer,
+                       CASE WHEN accepted_round IS NULL THEN NULL ELSE 1 END,
+                       accepted_round, accepted_proposer, value, value_hash
+                FROM acceptor_state_old;
+                DROP TABLE acceptor_state_old;
                 """;
             command.ExecuteNonQuery();
         }
         transaction.Commit();
     }
 
-    private static AcceptorState<ByteString?> Load(
-        SqliteConnection connection, SqliteTransaction transaction, byte[] key, out bool exists)
+    internal static long RaiseFloor(SqliteConnection connection, SqliteTransaction transaction, long targetConfiguration)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThan(targetConfiguration, 1);
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT promised_round, promised_proposer, accepted_round, accepted_proposer, value, value_hash
+            UPDATE acceptor_floor
+            SET configuration = CASE WHEN configuration < $cfg THEN $cfg ELSE configuration END
+            WHERE singleton = 1;
+            SELECT configuration FROM acceptor_floor WHERE singleton = 1;
+            """;
+        command.Parameters.AddWithValue("$cfg", targetConfiguration);
+        return Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+    }
+
+    private static Ballot LoadFloor(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT configuration FROM acceptor_floor WHERE singleton = 1;";
+        var cfg = Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+        return Ballot.Floor(cfg);
+    }
+
+    private static AcceptorState<ByteString?> Load(
+        SqliteConnection connection, SqliteTransaction transaction, byte[] key, out bool exists)
+    {
+        var floor = LoadFloor(connection, transaction);
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT promised_config, promised_round, promised_proposer,
+                   accepted_config, accepted_round, accepted_proposer, value, value_hash
             FROM acceptor_state WHERE key = $key;
             """;
         command.Parameters.AddWithValue("$key", key);
@@ -575,14 +672,15 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         exists = reader.Read();
         if (!exists)
         {
-            return AcceptorState.CreateInitial<ByteString?>(null);
+            return AcceptorState.CreateInitial<ByteString?>(null, floor.Configuration);
         }
 
         return new AcceptorState<ByteString?>
         {
-            PromisedBallot = new Ballot(reader.GetInt32(0), reader.GetInt32(1)),
-            AcceptedBallot = reader.IsDBNull(2) ? Ballot.Zero : new Ballot(reader.GetInt32(2), reader.GetInt32(3)),
-            AcceptedValue = reader.IsDBNull(4) ? null : ReadAcceptedValue(reader, 4)
+            FloorBallot = floor,
+            PromisedBallot = new Ballot(reader.GetInt64(0), reader.GetInt32(1), reader.GetInt32(2)),
+            AcceptedBallot = reader.IsDBNull(4) ? Ballot.Zero : new Ballot(reader.GetInt64(3), reader.GetInt32(4), reader.GetInt32(5)),
+            AcceptedValue = reader.IsDBNull(6) ? null : ReadAcceptedValue(reader, 6)
         };
     }
 
@@ -606,15 +704,23 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
             return false;
         }
 
+        if (!exists && original.PromisedBallot == state.PromisedBallot
+            && original.AcceptedBallot == state.AcceptedBallot
+            && original.AcceptedValue == state.AcceptedValue)
+        {
+            return false;
+        }
+
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         if (exists && original.AcceptedBallot == state.AcceptedBallot
             && original.AcceptedValue == state.AcceptedValue)
         {
             command.CommandText = """
-                UPDATE acceptor_state SET promised_round=$pr, promised_proposer=$pp WHERE key=$key;
+                UPDATE acceptor_state SET promised_config=$pc, promised_round=$pr, promised_proposer=$pp WHERE key=$key;
                 """;
             command.Parameters.AddWithValue("$key", key);
+            command.Parameters.AddWithValue("$pc", state.PromisedBallot.Configuration);
             command.Parameters.AddWithValue("$pr", state.PromisedBallot.Round);
             command.Parameters.AddWithValue("$pp", state.PromisedBallot.Proposer);
             command.ExecuteNonQuery();
@@ -622,16 +728,22 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
         }
         var value = state.AcceptedValue?.ToArray();
         command.CommandText = """
-            INSERT INTO acceptor_state (key, promised_round, promised_proposer, accepted_round, accepted_proposer, value, value_hash)
-            VALUES ($key, $pr, $pp, $ar, $ap, $value, $hash)
+            INSERT INTO acceptor_state (
+                key, promised_config, promised_round, promised_proposer,
+                accepted_config, accepted_round, accepted_proposer, value, value_hash)
+            VALUES ($key, $pc, $pr, $pp, $ac, $ar, $ap, $value, $hash)
             ON CONFLICT(key) DO UPDATE SET
+                promised_config = excluded.promised_config,
                 promised_round = excluded.promised_round, promised_proposer = excluded.promised_proposer,
+                accepted_config = excluded.accepted_config,
                 accepted_round = excluded.accepted_round, accepted_proposer = excluded.accepted_proposer,
                 value = excluded.value, value_hash = excluded.value_hash;
             """;
         command.Parameters.AddWithValue("$key", key);
+        command.Parameters.AddWithValue("$pc", state.PromisedBallot.Configuration);
         command.Parameters.AddWithValue("$pr", state.PromisedBallot.Round);
         command.Parameters.AddWithValue("$pp", state.PromisedBallot.Proposer);
+        command.Parameters.AddWithValue("$ac", state.AcceptedBallot.IsZero ? DBNull.Value : state.AcceptedBallot.Configuration);
         command.Parameters.AddWithValue("$ar", state.AcceptedBallot.IsZero ? DBNull.Value : state.AcceptedBallot.Round);
         command.Parameters.AddWithValue("$ap", state.AcceptedBallot.IsZero ? DBNull.Value : state.AcceptedBallot.Proposer);
         command.Parameters.AddWithValue("$value", value is null ? DBNull.Value : value);
@@ -642,9 +754,9 @@ public sealed class SqliteAcceptorServer : IKeyedAcceptor, ILocalAcceptorInspect
 
     private static void ValidateBallot(Ballot ballot, string parameterName)
     {
-        if (ballot.Round <= 0 || ballot.Proposer < 0)
+        if (ballot.Configuration <= 0 || ballot.Round <= 0 || ballot.Proposer < 0)
         {
-            throw new ArgumentOutOfRangeException(parameterName, "Ballots require a positive round and nonnegative proposer.");
+            throw new ArgumentOutOfRangeException(parameterName, "Ballots require a positive configuration, positive round, and nonnegative proposer.");
         }
     }
 

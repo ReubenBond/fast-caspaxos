@@ -88,6 +88,25 @@ public sealed class ObservedAcceptor(
         finally { DiagnosticContext.Current = previous; }
     }
 
+    public async ValueTask<Ballot> SetFloorAsync(Ballot targetFloor, CancellationToken cancellationToken = default)
+    {
+        var previous = DiagnosticContext.Current;
+        var context = Begin(previous);
+        try
+        {
+            Record("set-floor", RequestPhase, context, "", targetFloor, Ballot.Zero);
+            var floor = await inner.SetFloorAsync(targetFloor, cancellationToken).ConfigureAwait(false);
+            Record("set-floor", ResponsePhase, context, "", targetFloor, Ballot.Zero, "floor-set", promised: floor);
+            return floor;
+        }
+        catch (Exception error)
+        {
+            Record("set-floor", "fault-observed", context, "", targetFloor, Ballot.Zero, error: error.GetType().Name);
+            throw;
+        }
+        finally { DiagnosticContext.Current = previous; }
+    }
+
     public ValueTask<KeyPage> ListKeysAsync(string prefix = "", string? afterKey = null, int limit = 100,
         CancellationToken cancellationToken = default) => inner.ListKeysAsync(prefix, afterKey, limit, cancellationToken);
 

@@ -329,8 +329,8 @@ public sealed class SqliteDigestTests
         }
         using (var observer = database.Connect())
         {
-            Assert.Equal(2L, Scalar(observer, "PRAGMA user_version;"));
-            Assert.Equal(0L, Scalar(observer, "SELECT count(*) FROM sqlite_schema WHERE name='acceptor_state_v1';"));
+            Assert.Equal(3L, Scalar(observer, "PRAGMA user_version;"));
+            Assert.Equal(0L, Scalar(observer, "SELECT count(*) FROM sqlite_schema WHERE name='acceptor_state_old';"));
             Assert.Equal(1L, Scalar(observer, "SELECT count(*) FROM acceptor_state WHERE value_hash IS NULL AND accepted_round IS NULL;"));
         }
         await using var reopened = await database.OpenAsync();

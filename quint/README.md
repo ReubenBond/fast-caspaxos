@@ -1,36 +1,54 @@
 # Fast CASPaxos in Quint
 
 `FastCASPaxos.qnt` is an executable, finite-state model of the Fast CASPaxos
-register protocol. It checks fast and classic agreement, recovery, prepared-ballot
-reuse, and preservation of committed update histories under asynchronous delivery.
+register protocol with voter reconfiguration. It checks fast and classic
+agreement, recovery, prepared-ballot reuse, acceptor floor fencing, Vertical
+Paxos I hand-off across configurations, and preservation of committed update
+histories under asynchronous delivery.
 
 ## Protocol and abstraction
 
-Acceptors retain `(promised, accepted, value)` durably. Ballots are ordered
-lexicographically by `(round, owner)`; owner zero denotes a shared fast ballot.
-The initial fast ballot is implicitly prepared. Classic ballots have one immutable
-request, representing their owner's exclusive right to choose a value.
+Acceptors retain `(floor, promised, accepted, value)` durably. Ballots are
+ordered lexicographically by `(config, round, owner)`: `(0, 0, 0)` is the zero
+ballot, `(c, 0, 0)` is an acceptor floor ballot for configuration `c ≥ 1`,
+`(c, r ≥ 1, 0)` is a shared fast ballot, and `(c, r ≥ 1, o ≥ 1)` is a classic
+ballot owned by proposer `o`. Only `(1, 1, 0)` is implicitly prepared; keys in
+configurations `c > 1` always start with a classic ballot (which may piggyback
+`(c, r + 1, 0)` to enable 1-RTT fast writes).
+
+Raising an acceptor's floor to `(c + 1, 0, 0)` via `raiseFloor` raises its
+effective promise `max(promised, floor)` across all keys (present and absent).
+While configuration `c + 1` is incomplete (`not(complete.contains(c + 1))`),
+hand-off `issueRecovered` requires phase-1 promises from both a classic quorum
+of `V(c)` and a classic quorum of `V(c + 1)`, while `accept` writes only to
+`V(c + 1)`. A key completes in `c + 1` either via a chosen ballot in `c + 1`
+(`completeTransferred`) or vacuously when a fenced classic quorum of `V(c)`
+holds `accepted == zero` (`completeVacuous`).
 
 `prepare` captures one successful response per acceptor and classic ballot.
-`issueRecovered` selects a classic quorum of those snapshots, takes the highest
-accepted ballot, and recovers its value. For a fast ballot it counts values at that
-ballot and chooses a maximum-frequency value. Ties allow either maximum, matching
-the implementation's recovery of split, uncommitted fast rounds. Recovery derives
-its base entirely from these responses.
+`issueRecovered` selects a classic quorum (or Vertical Paxos I hand-off quorum),
+takes the highest accepted ballot, and recovers its value. For a fast ballot at
+`highest.config >= minRelevantCfg`, it counts votes strictly among voters of
+`V(highest.config)` and chooses a maximum-frequency value. Ties allow either
+maximum, matching the implementation's recovery of split, uncommitted fast
+rounds. Stale unchosen remnants from configurations below `minRelevantCfg` have
+zero viable fast winners.
 
-`issuePrepared` uses either the initial value or a certificate containing a
-committed source value and a target quorum of matching piggybacked promises.
-Fast ballots prepare the next shared ballot; classic ballots optionally prepare
-the next ballot belonging to the same owner. Certificates remain available to
-model delayed learning and stale proposer knowledge. Acceptor fencing decides
-whether subsequent requests can still succeed.
+`issuePrepared` uses either the initial value at `(1, 1, 0)` or a certificate
+containing a committed source value and a target quorum of matching piggybacked
+promises from voters of the same configuration. Fast ballots optionally prepare
+the next shared ballot; classic ballots optionally prepare the next shared fast
+ballot or the next ballot belonging to the same owner. Certificates remain
+available to model delayed learning and stale proposer knowledge. Acceptor
+fencing decides whether subsequent requests can still succeed.
 
-`accept` delivers a request to one acceptor. Successful acknowledgments enter
-history, preserving evidence of a choice after acceptors advance to newer ballots.
-Quorum counts use distinct acceptor identities. Exact duplicate accepts acknowledge
-the current durable value and echo the current promise, including a higher promise.
-New accepts compare against **both** promised and accepted ballots; an acceptor may
-receive an accept after missing prepare.
+`accept` delivers a request to one voter of `V(r.ballot.config)`. Successful
+acknowledgments enter history, preserving evidence of a choice after acceptors
+advance to newer ballots. Quorum counts use distinct voter identities of
+`V(b.config)`. Exact duplicate accepts acknowledge the current durable value
+and echo `effPromised`, including a higher promise or floor, without mutating
+durable state. New accepts compare against **both** `effPromised` and
+`accepted`; an acceptor may receive an accept after missing prepare.
 
 Values form a bounded binary tree: `0 -> {1, 2}`, `1 -> {3, 4}`, and so on.
 Each proposal either takes one child or preserves its base. These identity updates
@@ -67,6 +85,8 @@ remain separate verification obligations.
 | `acceptedExtendsChosen` | Every higher-ballot acceptance extends every lower-ballot chosen value. |
 | `durableHistory` | Current accepted ballots and promises preserve all prior acknowledgment and prepare evidence. |
 | `acknowledgmentProvenance` | Each acknowledgment corresponds to an issued request. |
+| `floorMonotoneAndEffective` | Acceptor floors are monotonic and fence every subsequent prepare and non-duplicate accept; duplicate replays echo `effPromised ≥ floor`. |
+| `noPreJoinAcceptance` | Newly introduced voters (`firstConfig(a) > 1`) initialize `floor = (firstConfig(a), 0, 0)` and never promise or accept ballots of earlier configurations. |
 
 The ancestry checks use historical votes, so they also cover a lower ballot
 reaching quorum after work has started at a higher ballot.

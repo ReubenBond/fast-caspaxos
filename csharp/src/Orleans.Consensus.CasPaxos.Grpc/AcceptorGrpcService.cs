@@ -22,7 +22,7 @@ public sealed class AcceptorGrpcService(IKeyedAcceptor acceptor, ILogger<Accepto
                     Accepted = WireConvert.Accepted(result.AcceptedBallot, result.AcceptedValue),
                 };
                 if (result.IsPromised) response.Promised = WireConvert.ToWire(ballot);
-                else response.Rejected = WireConvert.ToWire(result.ConflictingBallot);
+                else response.Rejected = WireConvert.ToWire(result.ConflictingBallot, allowFloor: true);
                 return response;
             });
         }, context, logger);
@@ -36,8 +36,21 @@ public sealed class AcceptorGrpcService(IKeyedAcceptor acceptor, ILogger<Accepto
             var next = request.NextBallot is null ? Ballot.Zero : WireConvert.Ballot(request.NextBallot, allowZero: true);
             var result = await acceptor.AcceptAsync(key, new AcceptRequest<ByteString>(ballot, value, next), context.CancellationToken);
             return RpcErrors.Response(() => result.IsAccepted
-                ? new Wire.AcceptResponse { Accepted = WireConvert.ToWire(result.PromisedBallot) }
-                : new Wire.AcceptResponse { Rejected = WireConvert.ToWire(result.ConflictingBallot) });
+                ? new Wire.AcceptResponse { Accepted = WireConvert.ToWire(result.PromisedBallot, allowFloor: true) }
+                : new Wire.AcceptResponse { Rejected = WireConvert.ToWire(result.ConflictingBallot, allowFloor: true) });
+        }, context, logger);
+
+    public override Task<Wire.SetFloorResponse> SetFloor(Wire.SetFloorRequest request, ServerCallContext context) =>
+        RpcErrors.Serve(async () =>
+        {
+            var targetFloor = WireConvert.FloorBallot(request.Floor);
+            var floor = await acceptor.SetFloorAsync(targetFloor, context.CancellationToken);
+            return RpcErrors.Response(() =>
+            {
+                WireConvert.Require(floor.IsFloorBallot && floor >= targetFloor,
+                    "The returned floor ballot must be a valid floor at least as large as the requested floor.");
+                return new Wire.SetFloorResponse { Floor = WireConvert.ToWire(floor, allowFloor: true) };
+            });
         }, context, logger);
 
     public override Task<Wire.AcceptorKeyPage> ListKeys(Wire.ListKeysRequest request, ServerCallContext context) =>
@@ -54,7 +67,7 @@ public sealed class AcceptorGrpcService(IKeyedAcceptor acceptor, ILogger<Accepto
                     response.Entries.Add(new Wire.AcceptorEntry
                     {
                         Key = WireConvert.Text(entry.Key),
-                        PromisedBallot = WireConvert.ToWire(entry.PromisedBallot),
+                        PromisedBallot = WireConvert.ToWire(entry.PromisedBallot, allowFloor: true),
                         Accepted = WireConvert.Accepted(entry.AcceptedBallot, entry.AcceptedValue),
                     });
                 if (page.ContinuationKey is not null) response.ContinuationKey = page.ContinuationKey;

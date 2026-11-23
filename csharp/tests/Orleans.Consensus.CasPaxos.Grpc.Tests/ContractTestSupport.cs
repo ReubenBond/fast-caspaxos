@@ -19,7 +19,8 @@ internal static class ContractTestSupport
     public static readonly RecordingFatalErrorHandler FatalErrors = new();
     public static readonly Bytes Payload = new([0, 10, 255]);
     public static readonly Bytes Version = new([0, 0, 0, 1, 0, 0, 0, 2]);
-    public static Wire.Ballot Ballot(int round = 3, int proposer = 1) => new() { Round = round, ProposerId = proposer };
+    public static Wire.Ballot Ballot(int round = 3, int proposer = 1, long configuration = 1) =>
+        new() { Configuration = configuration, Round = round, ProposerId = proposer };
     public static Wire.RegisterState Present(byte[]? value = null, byte[]? version = null) => new()
     {
         Present = new()
@@ -61,6 +62,7 @@ internal sealed class ContractCallInvoker(
         {
             Wire.PrepareRequest value => await acceptor!.Prepare(value, context),
             Wire.AcceptRequest value => await acceptor!.Accept(value, context),
+            Wire.SetFloorRequest value => await acceptor!.SetFloor(value, context),
             Wire.FetchIfDifferentRequest value => await digests!.FetchIfDifferent(value, context),
             Wire.ReadRequest value => await register!.Read(value, context),
             Wire.CompareExchangeRequest value => await register!.CompareExchange(value, context),
@@ -146,6 +148,8 @@ internal sealed class DelegateAcceptor : IKeyedAcceptor
         (_, _, _) => ValueTask.FromException<AcceptorPrepareResult<Bytes?>>(new InvalidOperationException("Unexpected prepare."));
     public Func<string, AcceptRequest<Bytes>, CancellationToken, ValueTask<AcceptorAcceptResult>> Accept { get; set; } =
         (_, _, _) => ValueTask.FromException<AcceptorAcceptResult>(new InvalidOperationException("Unexpected accept."));
+    public Func<Ballot, CancellationToken, ValueTask<Ballot>> SetFloor { get; set; } =
+        (_, _) => ValueTask.FromException<Ballot>(new InvalidOperationException("Unexpected set floor."));
     public Func<string, string?, int, CancellationToken, ValueTask<KeyPage>> List { get; set; } =
         (_, _, _, _) => ValueTask.FromException<KeyPage>(new InvalidOperationException("Unexpected list."));
     public int Calls;
@@ -163,6 +167,11 @@ internal sealed class DelegateAcceptor : IKeyedAcceptor
     {
         Interlocked.Increment(ref Calls);
         return Accept(key, request, cancellationToken);
+    }
+    public ValueTask<Ballot> SetFloorAsync(Ballot targetFloor, CancellationToken cancellationToken = default)
+    {
+        Interlocked.Increment(ref Calls);
+        return SetFloor(targetFloor, cancellationToken);
     }
     public ValueTask<KeyPage> ListKeysAsync(string prefix = "", string? afterKey = null, int limit = 100, CancellationToken cancellationToken = default)
     {

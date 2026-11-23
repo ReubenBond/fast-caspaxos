@@ -13,6 +13,10 @@ public abstract class ProposerEngine<TValue, TRoute>
     where TRoute : notnull
 {
     private readonly ImmutableArray<TRoute> _acceptors;
+    private readonly HashSet<TRoute> _acceptorSet;
+    private readonly ImmutableArray<TRoute> _previousAcceptors;
+    private readonly HashSet<TRoute>? _previousAcceptorSet;
+    private readonly ImmutableArray<TRoute> _prepareAcceptors;
     private readonly Dictionary<TRoute, PrepareResponse> _prepareResponses = [];
     private readonly Dictionary<TRoute, AcceptResponse> _acceptResponses = [];
     private readonly ProposerRuntime _runtime;
@@ -24,7 +28,9 @@ public abstract class ProposerEngine<TValue, TRoute>
         ProposerRuntime runtime,
         TValue initialValue,
         ImmutableArray<TRoute> acceptors,
-        ProposerModePolicy modePolicy)
+        ProposerModePolicy modePolicy,
+        long configuration = 1,
+        ImmutableArray<TRoute> previousAcceptors = default)
     {
         ArgumentNullException.ThrowIfNull(runtime);
         if (acceptors.IsDefault)
@@ -33,18 +39,56 @@ public abstract class ProposerEngine<TValue, TRoute>
         }
 
         ArgumentNullException.ThrowIfNull(modePolicy);
+        ArgumentOutOfRangeException.ThrowIfLessThan(configuration, 1);
         modePolicy.Validate();
 
         _runtime = runtime;
         ModePolicy = modePolicy.CreateRuntimeCopy();
         _initialValue = initialValue;
         CurrentValue = initialValue;
+        Configuration = configuration;
         _acceptors = acceptors;
+        _acceptorSet = [.. acceptors];
+
+        if (!previousAcceptors.IsDefaultOrEmpty)
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(configuration, 2);
+            _previousAcceptors = previousAcceptors;
+            _previousAcceptorSet = [.. previousAcceptors];
+            var union = ImmutableArray.CreateBuilder<TRoute>(acceptors.Length + previousAcceptors.Length);
+            HashSet<TRoute> seen = [];
+            foreach (var route in previousAcceptors)
+            {
+                if (seen.Add(route)) union.Add(route);
+            }
+
+            foreach (var route in acceptors)
+            {
+                if (seen.Add(route)) union.Add(route);
+            }
+
+            _prepareAcceptors = union.DrainToImmutable();
+        }
+        else
+        {
+            _previousAcceptors = [];
+            _prepareAcceptors = acceptors;
+        }
     }
 
     protected IOperation<TValue>? CurrentOperation { get; private set; }
 
     public abstract int ProposerId { get; }
+
+    public long Configuration { get; }
+
+    public bool IsHandOff => _previousAcceptorSet is not null;
+
+    public ImmutableArray<TRoute> Acceptors => _acceptors;
+
+    public ImmutableArray<TRoute> PrepareAcceptors => _prepareAcceptors;
+
+    public Ballot? ObservedHigherConfigurationBallot { get; private set; }
 
     public ProposerModePolicy ModePolicy { get; }
 
@@ -122,14 +166,26 @@ public abstract class ProposerEngine<TValue, TRoute>
         if (CurrentOperation is not null)
             throw new InvalidOperationException("A local observation can seed only an idle proposer.");
 
-        if (PreparedBallot is { } prepared && CanReusePreparedBallot(prepared)
+        var highestObserved = Ballot.Max(acceptedBallot, promisedBallot);
+        if (highestObserved.Configuration > Configuration)
+        {
+            RecordHigherConfigurationObserved(highestObserved);
+            return;
+        }
+
+        if (!IsHandOff && PreparedBallot is { } prepared && prepared.Configuration == Configuration
+            && CanReusePreparedBallot(prepared)
             && acceptedBallot < prepared && promisedBallot <= prepared)
         {
             StartProposal(operation);
             return;
         }
 
-        Ballot = Ballot.Max(Ballot, Ballot.Max(acceptedBallot, promisedBallot));
+        if (highestObserved.Configuration == Configuration)
+        {
+            Ballot = Ballot.Max(Ballot, highestObserved);
+        }
+
         StartProposal(operation);
     }
 
@@ -151,7 +207,9 @@ public abstract class ProposerEngine<TValue, TRoute>
         var floor = Ballot.Max(Ballot, PreparedBallot ?? Ballot.Zero);
         ClearAcceptState();
         PreparedBallot = null;
-        Ballot = ReserveBallot(floor.IsZero ? Ballot.InitialClassic(ProposerId) : floor.NextRound(ProposerId));
+        Ballot = ReserveBallot(floor.IsZero || floor.Configuration < Configuration
+            ? Ballot.InitialClassic(Configuration, ProposerId)
+            : floor.NextRound(ProposerId));
         SendPrepareForCurrentBallot();
     }
 
@@ -163,6 +221,12 @@ public abstract class ProposerEngine<TValue, TRoute>
                 nameof(acceptedBallot),
                 acceptedBallot,
                 "A learned committed value must include a non-zero accepted ballot.");
+        }
+
+        if (acceptedBallot.Configuration != Configuration
+            || (!preparedBallot.IsZero && preparedBallot.Configuration != Configuration))
+        {
+            return;
         }
 
         if (CurrentOperation is not null)
@@ -196,7 +260,18 @@ public abstract class ProposerEngine<TValue, TRoute>
         if (round != Ballot.Round || CurrentOperation is null)
         {
             // Late responses and responses from a completed request must not mutate cached state or affect the
-            // next request. Once the client has already been replied to, thr round is finished.
+            // next request. Once the client has already been replied to, the round is finished.
+            return;
+        }
+
+        if (!response.IsPromise && response.ConflictBallot.Configuration > Configuration)
+        {
+            AbortForHigherConfiguration(response.ConflictBallot);
+            return;
+        }
+
+        if (!_acceptorSet.Contains(acceptor) && (_previousAcceptorSet is null || !_previousAcceptorSet.Contains(acceptor)))
+        {
             return;
         }
 
@@ -208,18 +283,18 @@ public abstract class ProposerEngine<TValue, TRoute>
             return;
         }
 
-        var (successResponses, failureResponses, maxAccepted, maxConflictBallot) = AggregatePrepareResponses();
+        var aggregated = AggregatePrepareResponses();
 
         // Every prepare response already reports durable acceptor state, so we can refresh our
         // best-known local cache immediately even though quorum is still required before acting.
-        AdoptValue(maxAccepted.Value);
-        if (HasQuorum(Ballot, successResponses))
+        AdoptValue(aggregated.MaxAccepted.Value);
+        if (HasPrepareQuorum(aggregated))
         {
             // A successful prepare recovers the freshest durable value any acceptor reported and
             // then immediately re-applies the caller's operation on top of that recovered base.
             // AcceptedBallot/AcceptedValue report durable acceptor state regardless of whether this
             // prepare promised or rejected; only ConflictBallot is rejection-specific.
-            if (!TryResolvePreparedValue(maxAccepted, out var preparedValue, out var conflictBallot))
+            if (!TryResolvePreparedValue(aggregated.MaxAccepted, out var preparedValue, out var conflictBallot))
             {
                 _runtime.Diagnostics.OnPrepareFailed(this, ProposerId, Ballot, conflictBallot);
                 RetryPrepare(conflictBallot);
@@ -232,11 +307,11 @@ public abstract class ProposerEngine<TValue, TRoute>
             return;
         }
 
-        if (HasQuorum(Ballot, failureResponses) || !IsQuorumPossible(Ballot, successResponses, failureResponses))
+        if (IsPrepareQuorumLost(aggregated))
         {
             // Once this round is lost, abandon it and retry above the highest conflicting ballot.
-            _runtime.Diagnostics.OnPrepareFailed(this, ProposerId, Ballot, maxConflictBallot);
-            RetryPrepare(maxConflictBallot);
+            _runtime.Diagnostics.OnPrepareFailed(this, ProposerId, Ballot, aggregated.MaxConflictBallot);
+            RetryPrepare(aggregated.MaxConflictBallot);
         }
     }
 
@@ -286,14 +361,14 @@ public abstract class ProposerEngine<TValue, TRoute>
         else
         {
             // In prepare phase
-            var (successResponses, _, _, maxConflictBallot) = AggregatePrepareResponses();
-            if (HasQuorum(Ballot, successResponses))
+            var aggregated = AggregatePrepareResponses();
+            if (HasPrepareQuorum(aggregated))
             {
                 return false; // Already reached quorum
             }
 
-            _runtime.Diagnostics.OnPrepareFailed(this, ProposerId, Ballot, maxConflictBallot);
-            RetryPrepare(maxConflictBallot);
+            _runtime.Diagnostics.OnPrepareFailed(this, ProposerId, Ballot, aggregated.MaxConflictBallot);
+            RetryPrepare(aggregated.MaxConflictBallot);
             return true;
         }
     }
@@ -305,6 +380,25 @@ public abstract class ProposerEngine<TValue, TRoute>
             // Late responses and responses from a completed request must not mutate cached state or affect the
             // next request. Once the client has already been replied to, the round is finished.
             return;
+        }
+
+        if (!response.IsAccepted && response.Ballot.Configuration > Configuration)
+        {
+            AbortForHigherConfiguration(response.Ballot);
+            return;
+        }
+
+        // Votes for Accept count strictly from voters of V(Configuration).
+        if (!_acceptorSet.Contains(acceptor))
+        {
+            return;
+        }
+
+        if (response.IsAccepted && response.Ballot.Configuration > Configuration)
+        {
+            // An exact-duplicate replay below a raised floor still counts toward our ballot's quorum,
+            // while signaling the host that a newer configuration exists.
+            RecordHigherConfigurationObserved(response.Ballot);
         }
 
         _acceptResponses[acceptor] = response;
@@ -320,7 +414,9 @@ public abstract class ProposerEngine<TValue, TRoute>
             if (current.IsAccepted)
             {
                 ++successResponses;
-                if (!requestedNextBallot.IsZero && current.Ballot == requestedNextBallot)
+                if (!requestedNextBallot.IsZero
+                    && requestedNextBallot.Configuration == Configuration
+                    && current.Ballot == requestedNextBallot)
                 {
                     // Successful accepts may also confirm that the piggybacked next ballot was
                     // prepared, allowing a future request to skip an explicit prepare.
@@ -344,7 +440,9 @@ public abstract class ProposerEngine<TValue, TRoute>
 
             // Only a real quorum of echoed promises is reusable. Partial piggybacked prepares cannot
             // safely replace a standalone prepare on the next request.
-            if (!requestedNextBallot.IsZero && HasQuorum(requestedNextBallot, preparedMatches))
+            if (!requestedNextBallot.IsZero
+                && requestedNextBallot.Configuration == Configuration
+                && HasQuorum(requestedNextBallot, preparedMatches))
             {
                 PreparedBallot = requestedNextBallot;
             }
@@ -415,6 +513,12 @@ public abstract class ProposerEngine<TValue, TRoute>
     /// </summary>
     protected virtual void OnRetryPrepare(Ballot conflictBallot) { }
 
+    /// <summary>
+    /// Called when an acceptor reports a ballot or floor from a configuration strictly higher than
+    /// <see cref="Configuration"/>, indicating this engine's configuration has been superseded.
+    /// </summary>
+    protected virtual void OnHigherConfigurationObserved(Ballot observedBallot) { }
+
     public void RecordLeaderForwardFailure()
         => ModePolicy.RecordLeaderForwardFailure();
 
@@ -433,14 +537,16 @@ public abstract class ProposerEngine<TValue, TRoute>
             ClearAcceptState();
         }
 
-        // A cached prepared ballot is only useful while it is strictly ahead of the ballot we have
-        // already consumed. Once we catch up, the cache no longer lets us skip prepare.
-        if (PreparedBallot is { } preparedBallot && preparedBallot <= Ballot)
+        // A cached prepared ballot is only useful while it is in this configuration and strictly
+        // ahead of the ballot we have already consumed.
+        if (PreparedBallot is { } preparedBallot
+            && (preparedBallot.Configuration != Configuration || preparedBallot <= Ballot))
         {
             PreparedBallot = null;
         }
 
-        if (PreparedBallot is { } reusableBallot
+        if (!IsHandOff
+            && PreparedBallot is { } reusableBallot
             && CanReusePreparedBallot(reusableBallot))
         {
             // Reuse the piggybacked promise exactly once, jumping straight into operation execution
@@ -453,7 +559,9 @@ public abstract class ProposerEngine<TValue, TRoute>
 
         Ballot = CreateInitialBallot();
         PreparedBallot = null;
-        if (ModePolicy.ShouldSkipInitialPrepare(ProposerId)
+        if (Configuration == 1
+            && !IsHandOff
+            && ModePolicy.ShouldSkipInitialPrepare(ProposerId)
             && Ballot == Ballot.InitialFast()
             && TryStartInitialFastAccept())
         {
@@ -465,11 +573,15 @@ public abstract class ProposerEngine<TValue, TRoute>
 
     private Ballot CreateInitialBallot()
     {
-        // New work stays on the fast path when enabled; otherwise it starts in this proposer's
-        // classic ballot space. Retries are handled separately by RetryPrepare.
-        var candidate = ModePolicy.CreateProposalBallot(ProposerId, Ballot);
-        if (PreparedBallot is { } observedPromise && candidate <= observedPromise)
-            candidate = ModePolicy.CreateProposalBallot(ProposerId, observedPromise);
+        var allowInitialFast = Configuration == 1 && !IsHandOff;
+        var candidate = ModePolicy.CreateProposalBallot(ProposerId, Ballot, Configuration, allowInitialFast);
+        if (PreparedBallot is { } observedPromise
+            && observedPromise.Configuration == Configuration
+            && candidate <= observedPromise)
+        {
+            candidate = ModePolicy.CreateProposalBallot(ProposerId, observedPromise, Configuration, allowInitialFast);
+        }
+
         return ReserveBallot(candidate);
     }
 
@@ -482,25 +594,40 @@ public abstract class ProposerEngine<TValue, TRoute>
         OnSendPrepare(new PrepareRequest(Ballot));
     }
 
-    private (int SuccessResponses, int FailureResponses, (TValue Value, Ballot Ballot) MaxAccepted, Ballot MaxConflictBallot) AggregatePrepareResponses()
+    private readonly record struct PrepareAggregation(
+        int CurrentSuccess,
+        int CurrentFailure,
+        int PreviousSuccess,
+        int PreviousFailure,
+        (TValue Value, Ballot Ballot) MaxAccepted,
+        Ballot MaxConflictBallot);
+
+    private PrepareAggregation AggregatePrepareResponses()
     {
-        var successResponses = 0;
-        var failureResponses = 0;
+        var currentSuccess = 0;
+        var currentFailure = 0;
+        var previousSuccess = 0;
+        var previousFailure = 0;
         var maxAccepted = (Value: _initialValue, Ballot: Ballot.Zero);
         var maxConflictBallot = Ballot.Zero;
 
         // Every prepare response reports the acceptor's last accepted ballot/value, so both
         // promises and rejections participate in value recovery. Only rejections contribute the
         // conflict ballot that the next retry must jump above.
-        foreach (var response in _prepareResponses.Values)
+        foreach (var (acceptor, response) in _prepareResponses)
         {
+            var inCurrent = _acceptorSet.Contains(acceptor);
+            var inPrevious = _previousAcceptorSet is not null && _previousAcceptorSet.Contains(acceptor);
+
             if (response.IsPromise)
             {
-                ++successResponses;
+                if (inCurrent) ++currentSuccess;
+                if (inPrevious) ++previousSuccess;
             }
             else
             {
-                ++failureResponses;
+                if (inCurrent) ++currentFailure;
+                if (inPrevious) ++previousFailure;
                 if (response.ConflictBallot > maxConflictBallot)
                 {
                     maxConflictBallot = response.ConflictBallot;
@@ -513,7 +640,40 @@ public abstract class ProposerEngine<TValue, TRoute>
             }
         }
 
-        return (successResponses, failureResponses, maxAccepted, maxConflictBallot);
+        return new PrepareAggregation(
+            currentSuccess,
+            currentFailure,
+            previousSuccess,
+            previousFailure,
+            maxAccepted,
+            maxConflictBallot);
+    }
+
+    private bool HasPrepareQuorum(PrepareAggregation aggregated)
+    {
+        if (!HasQuorum(Ballot, aggregated.CurrentSuccess))
+        {
+            return false;
+        }
+
+        return !IsHandOff || 2 * aggregated.PreviousSuccess > _previousAcceptors.Length;
+    }
+
+    private bool IsPrepareQuorumLost(PrepareAggregation aggregated)
+    {
+        if (HasQuorum(Ballot, aggregated.CurrentFailure)
+            || !IsQuorumPossible(Ballot, aggregated.CurrentSuccess, aggregated.CurrentFailure))
+        {
+            return true;
+        }
+
+        if (!IsHandOff)
+        {
+            return false;
+        }
+
+        var prevRemaining = _previousAcceptors.Length - (aggregated.PreviousSuccess + aggregated.PreviousFailure);
+        return 2 * (aggregated.PreviousSuccess + prevRemaining) <= _previousAcceptors.Length;
     }
 
     private bool TryResolvePreparedValue(
@@ -529,19 +689,36 @@ public abstract class ProposerEngine<TValue, TRoute>
             return true;
         }
 
-        if (!maxAccepted.Ballot.IsFastRoundBallot)
+        var minRelevantCfg = IsHandOff ? Configuration - 1 : Configuration;
+        var hCfg = maxAccepted.Ballot.Configuration;
+        if (hCfg < minRelevantCfg)
         {
-            // Classic accepted values were already serialized by prepare, so the highest accepted
-            // classic ballot can be adopted directly.
+            // Because minRelevantCfg is complete and our prepare quorum intersects V(minRelevantCfg),
+            // any value chosen in < minRelevantCfg was already transferred into >= minRelevantCfg.
+            // A lower-config remnant is unchosen and has zero viable fast winners.
             return true;
         }
 
-        // A fast ballot may have accepted competing values concurrently. Recover by considering only
-        // values from that highest fast ballot. If one value could still have reached a fast quorum
-        // given the responses we have seen, we must preserve it. Otherwise the fast round cannot
-        // have committed any value, so the classic recovery ballot may safely pick a winner and
-        // move forward.
-        (value, var hasConflict) = ChooseValue(maxAccepted);
+        var (hVoterSet, hVoterCount) = GetVoterSetForConfiguration(hCfg);
+        if (!maxAccepted.Ballot.IsFastRoundBallot)
+        {
+            // Classic accepted values were already serialized by prepare; prefer a member of V(hCfg)
+            // when present.
+            foreach (var (acceptor, response) in _prepareResponses)
+            {
+                if (response.AcceptedBallot == maxAccepted.Ballot && hVoterSet.Contains(acceptor))
+                {
+                    value = response.AcceptedValue;
+                    return true;
+                }
+            }
+
+            return true;
+        }
+
+        // A fast ballot may have accepted competing values concurrently. Scope both frequency counts
+        // and viability strictly to V(hCfg).
+        (value, var hasConflict) = ChooseValue(maxAccepted, hVoterSet, hVoterCount);
         if (!hasConflict)
         {
             return true;
@@ -549,6 +726,21 @@ public abstract class ProposerEngine<TValue, TRoute>
 
         conflictBallot = maxAccepted.Ballot;
         return false;
+    }
+
+    private (HashSet<TRoute> Voters, int Count) GetVoterSetForConfiguration(long configuration)
+    {
+        if (configuration == Configuration)
+        {
+            return (_acceptorSet, _acceptors.Length);
+        }
+
+        if (IsHandOff && configuration == Configuration - 1)
+        {
+            return (_previousAcceptorSet!, _previousAcceptors.Length);
+        }
+
+        return (_acceptorSet, _acceptors.Length);
     }
 
     private void AdoptValue(TValue value)
@@ -568,13 +760,22 @@ public abstract class ProposerEngine<TValue, TRoute>
         }
     }
 
-    private (TValue Value, bool HasConflict) ChooseValue((TValue Value, Ballot Ballot) maxAccepted)
+    private (TValue Value, bool HasConflict) ChooseValue(
+        (TValue Value, Ballot Ballot) maxAccepted,
+        HashSet<TRoute> hVoterSet,
+        int hVoterCount)
     {
-        // Recovery only cares about values accepted at the single highest fast ballot we saw.
-        // Anything from lower ballots has already been superseded by `maxAccepted`.
+        // Recovery only cares about values accepted at the single highest fast ballot by voters of V(hCfg).
         List<(TValue Value, int Count)> values = [];
-        foreach (var response in _prepareResponses.Values)
+        var seenInHCfg = 0;
+        foreach (var (acceptor, response) in _prepareResponses)
         {
+            if (!hVoterSet.Contains(acceptor))
+            {
+                continue;
+            }
+
+            seenInHCfg++;
             if (response.AcceptedBallot != maxAccepted.Ballot)
             {
                 continue;
@@ -600,25 +801,24 @@ public abstract class ProposerEngine<TValue, TRoute>
             }
         }
 
-        // If the highest fast ballot is already single-valued, recovery is deterministic.
+        // If the highest fast ballot is already single-valued (or absent among V(hCfg)), recovery is deterministic.
         if (values.Count <= 1)
         {
-            return (maxAccepted.Value, HasConflict: false);
+            return (values.Count == 1 ? values[0].Value : maxAccepted.Value, HasConflict: false);
         }
 
         // Pick the value with the highest occurrence. If the fast round results in a tie, this is the
         // value we will carry forward into the classic recovery round.
         var (chosenValue, _) = values.MaxBy(static v => v.Count);
 
-        // A candidate is viable only if the prepare responses we have not seen yet could
-        // still lift it to a full fast quorum. If no value is viable, then the split fast ballot
-        // cannot possibly have committed anything and classic recovery may safely move forward.
-        var remainingResponses = _acceptors.Length - _prepareResponses.Count;
-        var fastQuorumSize = (3 * _acceptors.Length + 3) / 4;
+        // A candidate is viable only if the prepare responses we have not seen yet from V(hCfg)
+        // could still lift it to a full fast quorum of V(hCfg).
+        var remainingInHCfg = hVoterCount - seenInHCfg;
+        var fastQuorumSize = (3 * hVoterCount + 3) / 4;
         var viableChoices = 0;
         foreach (var (_, count) in values)
         {
-            if (count + remainingResponses >= fastQuorumSize)
+            if (count + remainingInHCfg >= fastQuorumSize)
             {
                 viableChoices++;
             }
@@ -690,6 +890,12 @@ public abstract class ProposerEngine<TValue, TRoute>
 
     private void RetryPrepare(Ballot maxConflict)
     {
+        if (maxConflict.Configuration > Configuration)
+        {
+            AbortForHigherConfiguration(maxConflict);
+            return;
+        }
+
         ClearAcceptState();
         PreparedBallot = null;
 
@@ -702,12 +908,12 @@ public abstract class ProposerEngine<TValue, TRoute>
 
         ModePolicy.RecordConflictObserved(Ballot, maxConflict, ProposerId);
 
-        // Retries always move into a proposer-owned classic ballot and then jump above any
-        // conflicting ballot we learned about, ensuring the retry does not immediately lose again.
-        var nextBallot = Ballot.IsZero
-            ? Ballot.InitialClassic(ProposerId)
+        // Retries always move into a proposer-owned classic ballot in this configuration and jump
+        // above any conflicting ballot in this configuration.
+        var nextBallot = Ballot.IsZero || Ballot.Configuration < Configuration
+            ? Ballot.InitialClassic(Configuration, ProposerId)
             : Ballot.NextRound(ProposerId);
-        if (nextBallot <= maxConflict)
+        if (maxConflict.Configuration == Configuration && nextBallot <= maxConflict)
         {
             nextBallot = maxConflict.NextRound(ProposerId);
         }
@@ -718,8 +924,29 @@ public abstract class ProposerEngine<TValue, TRoute>
         SendPrepareForCurrentBallot();
     }
 
+    private void RecordHigherConfigurationObserved(Ballot observedBallot)
+    {
+        ObservedHigherConfigurationBallot = ObservedHigherConfigurationBallot is { } existing
+            ? Ballot.Max(existing, observedBallot)
+            : observedBallot;
+        OnHigherConfigurationObserved(observedBallot);
+    }
+
+    private void AbortForHigherConfiguration(Ballot observedBallot)
+    {
+        CurrentOperation = null;
+        ClearAcceptState();
+        PreparedBallot = null;
+        RecordHigherConfigurationObserved(observedBallot);
+    }
+
     private Ballot ChooseNextBallotToPrepare()
     {
+        if (IsHandOff)
+        {
+            return Ballot.Zero;
+        }
+
         // Piggybacked prepare is purely a latency optimization. Fast mode keeps asking acceptors
         // to line up the next shared fast ballot; leader mode lines up this proposer's next
         // classic ballot so consecutive operations can remain leader-owned.

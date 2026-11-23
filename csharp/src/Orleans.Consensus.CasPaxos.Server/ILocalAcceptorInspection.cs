@@ -16,8 +16,11 @@ public sealed record LocalAcceptorBallots(Ballot PromisedBallot, Ballot Accepted
 {
     public void Validate()
     {
-        if (PromisedBallot.Round <= 0 || PromisedBallot.Proposer < 0
-            || (!AcceptedBallot.IsZero && (AcceptedBallot.Round <= 0 || AcceptedBallot.Proposer < 0)))
+        var promisedValid = PromisedBallot.IsFloorBallot
+            || (PromisedBallot.Configuration >= 1 && PromisedBallot.Round > 0 && PromisedBallot.Proposer >= 0);
+        var acceptedValid = AcceptedBallot.IsZero
+            || (AcceptedBallot.Configuration >= 1 && AcceptedBallot.Round > 0 && AcceptedBallot.Proposer >= 0);
+        if (!promisedValid || !acceptedValid)
             throw new InvalidDataException("A local ballot snapshot violates the acceptor invariants.");
     }
 }

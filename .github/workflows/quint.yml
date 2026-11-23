@@ -23,7 +23,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        model: [FastCASPaxosSmall, FastCASPaxosEven, FastCASPaxosMC]
+        model:
+          - FastCASPaxosSmall
+          - FastCASPaxosEven
+          - FastCASPaxosMC
+          - FastCASPaxosReconfigReplace
+          - FastCASPaxosReconfig4Voter
+          - FastCASPaxosReconfigDoubleReplace
+          - FastCASPaxosReconfigAddRemove
+          - FastCASPaxosReconfigDisjoint
     defaults:
       run:
         working-directory: quint
@@ -38,19 +46,24 @@ jobs:
         run: |
           quint typecheck FastCASPaxosMC.qnt
           quint typecheck FastCASPaxosTests.qnt
-      - name: Protocol scenarios and negative control
+      - name: Protocol scenarios and negative controls
         if: matrix.model == 'FastCASPaxosMC'
         run: |
           quint test FastCASPaxosTests.qnt --main FastCASPaxosTests --max-samples 1 --seed 1
           quint test FastCASPaxosTests.qnt --main FastCASPaxosNegativeTests --max-samples 1 --seed 1
           quint test FastCASPaxosTests.qnt --main FastCASPaxosBoundaryTests --max-samples 1 --seed 1
+          quint test FastCASPaxosTests.qnt --main FastCASPaxosReconfigTests --max-samples 1 --seed 1
+          quint test FastCASPaxosTests.qnt --main FastCASPaxosReconfig4VoterTests --max-samples 1 --seed 1
+      - name: Reconfiguration mutants
+        if: matrix.model == 'FastCASPaxosReconfigReplace'
+        run: bash ./check-mutants.sh
       - name: Seeded safety simulations
         run: |
           for seed in 17 20261023; do
             quint run FastCASPaxosMC.qnt --main "${{ matrix.model }}" \
               --invariant safety --max-samples 2500 --max-steps 60 \
               --n-threads 2 --seed "$seed" --verbosity 1 \
-              --witnesses fastCommit classicCommit chainedCommit fastCollision \
+              --witnesses fastCommit classicCommit chainedCommit fastCollision reconfigComplete \
               --out-itf "simulation-${seed}.itf.json"
           done
       - uses: actions/upload-artifact@v4
@@ -67,7 +80,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        model: [FastCASPaxosExhaustive, FastCASPaxosPipeline]
+        model: [FastCASPaxosExhaustive, FastCASPaxosPipeline, FastCASPaxosReconfigExhaustive]
     defaults:
       run:
         working-directory: quint

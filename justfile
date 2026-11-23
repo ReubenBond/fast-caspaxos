@@ -116,24 +116,28 @@ csharp-check: csharp-fmt csharp-build csharp-test
 tla-check:
     cd tla && pwsh -NoProfile -File Run-FastCASPaxos.ps1
 
-# Typecheck and run Quint protocol scenarios, including the negative control
+# Typecheck and run Quint protocol scenarios, including negative controls and reconfiguration
 [group('quint')]
 quint-test:
     cd quint && quint typecheck FastCASPaxosMC.qnt
+    cd quint && quint typecheck FastCASPaxosTests.qnt
     cd quint && quint test FastCASPaxosTests.qnt --main FastCASPaxosTests --max-samples 1 --seed 1
     cd quint && quint test FastCASPaxosTests.qnt --main FastCASPaxosNegativeTests --max-samples 1 --seed 1
     cd quint && quint test FastCASPaxosTests.qnt --main FastCASPaxosBoundaryTests --max-samples 1 --seed 1
+    cd quint && quint test FastCASPaxosTests.qnt --main FastCASPaxosReconfigTests --max-samples 1 --seed 1
+    cd quint && quint test FastCASPaxosTests.qnt --main FastCASPaxosReconfig4VoterTests --max-samples 1 --seed 1
 
 # Sample asynchronous schedules in the five-acceptor model
 [group('quint')]
 quint-simulate:
     cd quint && quint run FastCASPaxosMC.qnt --main FastCASPaxosMC --invariant safety --max-samples 2500 --max-steps 60 --n-threads 2 --seed 17
 
-# Enumerate both finite Quint safety configurations with TLC
+# Enumerate finite Quint safety configurations with TLC
 [group('quint')]
 quint-verify:
     cd quint && quint verify FastCASPaxosMC.qnt --main FastCASPaxosExhaustive --backend tlc --tlc-config tlc.json --invariant safety
     cd quint && quint verify FastCASPaxosMC.qnt --main FastCASPaxosPipeline --backend tlc --tlc-config tlc.json --invariant safety
+    cd quint && quint verify FastCASPaxosMC.qnt --main FastCASPaxosReconfigExhaustive --backend tlc --tlc-config tlc.json --invariant safety
 
 # ─── Paper ──────────────────────────────────────────────────────────
 

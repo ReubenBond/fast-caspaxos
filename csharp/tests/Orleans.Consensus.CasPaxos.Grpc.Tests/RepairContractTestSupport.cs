@@ -64,6 +64,9 @@ internal sealed class DelegateDigests : IAcceptorDigestSource, IKeyedAcceptor
     public ValueTask<Orleans.Consensus.CasPaxos.Protocol.AcceptorAcceptResult> AcceptAsync(
         string key, Orleans.Consensus.CasPaxos.Messages.AcceptRequest<ByteString> request, CancellationToken cancellationToken = default) =>
         throw new InvalidOperationException("Unexpected accept on digest fixture.");
+    public ValueTask<Orleans.Consensus.CasPaxos.Model.Ballot> SetFloorAsync(
+        Orleans.Consensus.CasPaxos.Model.Ballot targetFloor, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("Unexpected set floor on digest fixture.");
     public ValueTask<KeyPage> ListKeysAsync(string prefix = "", string? afterKey = null,
         int limit = 100, CancellationToken cancellationToken = default) =>
         throw new InvalidOperationException("Unexpected inventory on digest fixture.");

@@ -29,23 +29,34 @@ internal static class WireConvert
         if (!condition) throw new ArgumentException(message);
     }
 
-    public static Ballot Ballot(Wire.Ballot? value, bool allowZero = false)
+    public static Ballot Ballot(Wire.Ballot? value, bool allowZero = false, bool allowFloor = false)
     {
         Require(value is not null, "A ballot is required.");
-        return Validate(new Ballot(value!.Round, value.ProposerId), allowZero);
+        return Validate(new Ballot(value!.Configuration, value.Round, value.ProposerId), allowZero, allowFloor);
     }
 
-    public static Ballot Validate(Ballot value, bool allowZero = false)
+    public static Ballot FloorBallot(Wire.Ballot? value)
     {
-        Require((allowZero && value.IsZero) || (value.Round > 0 && value.Proposer >= 0),
-            "Ballots require a positive round and nonnegative proposer id.");
+        Require(value is not null, "A floor ballot is required.");
+        var ballot = new Ballot(value!.Configuration, value.Round, value.ProposerId);
+        Require(ballot.IsFloorBallot, "A floor ballot requires a positive configuration, round 0, and proposer 0.");
+        return ballot;
+    }
+
+    public static Ballot Validate(Ballot value, bool allowZero = false, bool allowFloor = false)
+    {
+        Require(
+            (allowZero && value.IsZero)
+            || (allowFloor && value.IsFloorBallot)
+            || (value.Configuration >= 1 && value.Round > 0 && value.Proposer >= 0),
+            "Ballots require a positive configuration, positive round, and nonnegative proposer id.");
         return value;
     }
 
-    public static Wire.Ballot ToWire(Ballot value, bool allowZero = false)
+    public static Wire.Ballot ToWire(Ballot value, bool allowZero = false, bool allowFloor = false)
     {
-        Validate(value, allowZero);
-        return new() { Round = value.Round, ProposerId = value.Proposer };
+        Validate(value, allowZero, allowFloor);
+        return new() { Configuration = value.Configuration, Round = value.Round, ProposerId = value.Proposer };
     }
 
     public static ProtoBytes ToWire(ByteString value)

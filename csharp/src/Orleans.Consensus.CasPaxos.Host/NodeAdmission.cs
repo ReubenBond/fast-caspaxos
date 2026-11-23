@@ -1,4 +1,5 @@
 using Orleans.Consensus.CasPaxos.Messages;
+using Orleans.Consensus.CasPaxos.Model;
 using Orleans.Consensus.CasPaxos.Protocol;
 using Orleans.Consensus.CasPaxos.Server;
 
@@ -63,6 +64,12 @@ internal sealed class EpochAcceptor(string epoch, IKeyedAcceptor inner, IAccepto
     {
         using var lease = Admission.Enter();
         return await inner.AcceptAsync(key, request, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async ValueTask<Ballot> SetFloorAsync(Ballot targetFloor, CancellationToken cancellationToken = default)
+    {
+        using var lease = Admission.Enter();
+        return await inner.SetFloorAsync(targetFloor, cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask<KeyPage> ListKeysAsync(string prefix = "", string? afterKey = null, int limit = 100, CancellationToken cancellationToken = default)

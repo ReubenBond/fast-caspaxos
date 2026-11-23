@@ -13,9 +13,6 @@ namespace Orleans.Consensus.CasPaxos.Server;
 /// </summary>
 public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearner, IAsyncDisposable
 {
-    private readonly ImmutableArray<AcceptorPeer> _peers;
-    private readonly ImmutableArray<string> _peerIds;
-    private readonly SemaphoreSlim[] _peerSlots;
     private readonly IProposerBallotSource _ballots;
     private readonly RegisterServiceOptions _options;
     private readonly ILocalAcceptorInspection? _localAcceptor;
@@ -26,6 +23,8 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
     private readonly LinkedList<string> _idleKeys = new();
     private readonly CancellationTokenSource _stopping = new();
     private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private ConfigurationSnapshot _config;
+    private Ballot? _lastObservedHigherConfiguration;
     private bool _disposed;
     private int _active;
     private Ballot _requestIncarnation;
@@ -38,6 +37,9 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
 
     public RegisterNotificationFailure? LastNotificationFailure => Volatile.Read(ref _lastNotificationFailure);
     public Exception? LastInspectionFailure => Volatile.Read(ref _lastInspectionFailure);
+    public long ActiveConfiguration { get { lock (_gate) return _config.Configuration; } }
+    public ImmutableArray<AcceptorPeer> ActivePeers { get { lock (_gate) return _config.Peers; } }
+    internal Ballot? LastObservedHigherConfiguration { get { lock (_gate) return _lastObservedHigherConfiguration; } }
 
     public ReplicatedRegisterService(
         ImmutableArray<AcceptorPeer> peers, IProposerBallotSource ballots, RegisterServiceOptions? options = null,
@@ -47,18 +49,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         if (peers.IsDefault) throw new ArgumentNullException(nameof(peers));
         ArgumentNullException.ThrowIfNull(ballots);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(ballots.ProposerId);
-        _peers = peers;
-        if (_peers.Length == 0) throw new ArgumentException("Membership must contain acceptors.", nameof(peers));
-        var ids = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var peer in _peers)
-        {
-            ArgumentNullException.ThrowIfNull(peer);
-            ArgumentException.ThrowIfNullOrEmpty(peer.Id);
-            ArgumentNullException.ThrowIfNull(peer.Acceptor);
-            if (!ids.Add(peer.Id)) throw new ArgumentException("Acceptor identities must be unique.", nameof(peers));
-        }
-
-        _peerIds = [.. _peers.Select(peer => peer.Id)];
+        ValidatePeers(peers);
 
         _ballots = ballots;
         _options = options ?? new RegisterServiceOptions();
@@ -68,6 +59,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         ArgumentNullException.ThrowIfNull(_options.TimeProvider);
         _options.Mode.Validate();
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.Capacity);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.InitialConfiguration);
         _localReads = localReads ?? new(_options.Capacity);
         ValidateTimeout(_options.OperationTimeout, nameof(options));
         ValidateTimeout(_options.AttemptTimeout, nameof(options));
@@ -75,15 +67,33 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         {
             throw new ArgumentOutOfRangeException(nameof(options), "RetryBackoff must be positive and support timer delays.");
         }
-        _peerSlots = _peers.Select(_ => new SemaphoreSlim(_options.Capacity)).ToArray();
+
+        _config = CreateSnapshot(_options.InitialConfiguration, peers, _options.Capacity);
     }
+
+    private static void ValidatePeers(ImmutableArray<AcceptorPeer> peers)
+    {
+        if (peers.Length == 0) throw new ArgumentException("Membership must contain acceptors.", nameof(peers));
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var peer in peers)
+        {
+            ArgumentNullException.ThrowIfNull(peer);
+            ArgumentException.ThrowIfNullOrEmpty(peer.Id);
+            ArgumentNullException.ThrowIfNull(peer.Acceptor);
+            if (!ids.Add(peer.Id)) throw new ArgumentException("Acceptor identities must be unique.", nameof(peers));
+        }
+    }
+
+    private static ConfigurationSnapshot CreateSnapshot(long configuration, ImmutableArray<AcceptorPeer> peers, int capacity) =>
+        new(configuration, peers, [.. peers.Select(peer => peer.Id)], peers.Select(_ => new SemaphoreSlim(capacity)).ToArray());
 
     public void Learn(RegisterCommit commit)
     {
         ArgumentNullException.ThrowIfNull(commit);
         ArgumentNullException.ThrowIfNull(commit.Key);
-        if (commit.AcceptedBallot.Round <= 0 || commit.AcceptedBallot.Proposer < 0
+        if (commit.AcceptedBallot.Configuration <= 0 || commit.AcceptedBallot.Round <= 0 || commit.AcceptedBallot.Proposer < 0
             || (!commit.PreparedBallot.IsZero && (commit.PreparedBallot <= commit.AcceptedBallot
+                || commit.PreparedBallot.Configuration != commit.AcceptedBallot.Configuration
                 || commit.PreparedBallot.Proposer < 0)))
             throw new ArgumentException("A commit requires an accepted ballot and an optional higher prepared ballot.", nameof(commit));
         RegisterEncoding.Decode(commit.Value);
@@ -91,9 +101,10 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            if (commit.AcceptedBallot.Configuration != _config.Configuration) return;
             if (!_keys.TryGetValue(commit.Key, out var state))
             {
-                state = new KeyState(NewEngine());
+                state = new KeyState(NewEngine(_config));
                 _keys.Add(commit.Key, state);
             }
             if (state.Learned is { } pending)
@@ -197,11 +208,13 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
     private async ValueTask<RegisterValue> ExecuteAsync(string key, RegisterOperation operation, Call call)
     {
         KeyState state;
+        ConfigurationSnapshot config;
         lock (_gate)
         {
+            config = _config;
             if (!_keys.TryGetValue(key, out state!))
             {
-                state = new KeyState(NewEngine());
+                state = new KeyState(NewEngine(config));
                 _keys.Add(key, state);
             }
             else if (state.Idle is { } idle)
@@ -219,68 +232,102 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         {
             await state.Gate.WaitAsync(call.Token).ConfigureAwait(false);
             acquired = true;
-            call.Token.ThrowIfCancellationRequested();
-            RegisterCommit? learned;
-            lock (_gate)
-            {
-                learned = state.Learned;
-                state.Learned = null;
-            }
-            if (learned is not null)
-                state.Engine.LearnCommittedValue(learned.AcceptedBallot, learned.Value, learned.PreparedBallot);
-            if (operation.Payload is null
-                && await TryReadQuorumAsync(key, state.Engine, call).ConfigureAwait(false) is { } observed)
-            {
-                return observed;
-            }
-            var engine = state.Engine;
-            LocalAcceptorBallots? local = null;
-            var recover = false;
-            if (_localAcceptor is not null)
-            {
-                try
-                {
-                    local = await _localReads.RunAsync(token => _localAcceptor.InspectBallotsAsync(key, token),
-                        _options.AttemptTimeout, _options.TimeProvider, call.Token).ConfigureAwait(false);
-                    local?.Validate();
-                }
-                catch (Exception error) when (IsInspectionUnavailable(error))
-                {
-                    call.Token.ThrowIfCancellationRequested();
-                    Volatile.Write(ref _lastInspectionFailure, error);
-                    _diagnostics?.Publish("inspection", new InspectionObservation(
-                        "ballots", KeyPreview.From(key), DiagnosticContext.Current?.OperationId, error.GetType().Name));
-                    recover = true;
-                }
-            }
-            engine.Start(operation, local, recover);
-            var retries = 0;
-            while (engine.Result is null)
+            var configRetries = 0;
+            while (true)
             {
                 call.Token.ThrowIfCancellationRequested();
-                var request = engine.Outgoing ?? throw new InvalidOperationException("The proposer has no pending request.");
-                await DrivePhaseAsync(key, engine, request, operation, call).ConfigureAwait(false);
-                if (engine.Result is null && engine.Outgoing?.Prepare is not null)
+                RegisterCommit? learned;
+                lock (_gate)
                 {
-                    await BackoffAsync(retries++, call.Token).ConfigureAwait(false);
+                    config = _config;
+                    if (state.Engine.Configuration != config.Configuration)
+                    {
+                        state.Engine = NewEngine(config);
+                        state.Learned = null;
+                    }
+                    learned = state.Learned;
+                    state.Learned = null;
                 }
+                if (learned is not null && learned.AcceptedBallot.Configuration == config.Configuration)
+                    state.Engine.LearnCommittedValue(learned.AcceptedBallot, learned.Value, learned.PreparedBallot);
+
+                if (operation.Payload is null)
+                {
+                    var readOutcome = await TryReadQuorumAsync(key, config, state.Engine, call).ConfigureAwait(false);
+                    if (readOutcome.HigherConfiguration is { } readHigher)
+                    {
+                        await HandleHigherConfigurationAsync(config, readHigher, state, configRetries++, call).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    if (readOutcome.Value is { } observed)
+                    {
+                        return observed;
+                    }
+                }
+
+                var engine = state.Engine;
+                LocalAcceptorBallots? local = null;
+                var recover = false;
+                if (_localAcceptor is not null)
+                {
+                    try
+                    {
+                        local = await _localReads.RunAsync(token => _localAcceptor.InspectBallotsAsync(key, token),
+                            _options.AttemptTimeout, _options.TimeProvider, call.Token).ConfigureAwait(false);
+                        local?.Validate();
+                    }
+                    catch (Exception error) when (IsInspectionUnavailable(error))
+                    {
+                        call.Token.ThrowIfCancellationRequested();
+                        Volatile.Write(ref _lastInspectionFailure, error);
+                        _diagnostics?.Publish("inspection", new InspectionObservation(
+                            "ballots", KeyPreview.From(key), DiagnosticContext.Current?.OperationId, error.GetType().Name));
+                        recover = true;
+                    }
+                }
+
+                engine.Start(operation, local, recover);
+                var retries = 0;
+                while (engine.Result is null && engine.ObservedHigherConfigurationBallot is null)
+                {
+                    call.Token.ThrowIfCancellationRequested();
+                    var request = engine.Outgoing ?? throw new InvalidOperationException("The proposer has no pending request.");
+                    await DrivePhaseAsync(key, config, engine, request, operation, call).ConfigureAwait(false);
+                    if (engine.Result is null && engine.ObservedHigherConfigurationBallot is null && engine.Outgoing?.Prepare is not null)
+                    {
+                        await BackoffAsync(retries++, call.Token).ConfigureAwait(false);
+                    }
+                }
+
+                if (engine.ObservedHigherConfigurationBallot is { } observedHigher && engine.Result is null)
+                {
+                    await HandleHigherConfigurationAsync(config, observedHigher, state, configRetries++, call).ConfigureAwait(false);
+                    continue;
+                }
+
+                current = RegisterEncoding.Decode(engine.Result!.Value);
+                operation.Complete(engine.Result.Value, current.Version);
+                notification = new(key, engine.Ballot, engine.Result.Value, engine.PreparedBallot ?? Ballot.Zero)
+                {
+                    AcknowledgedPeers = engine.AcknowledgedPeers.ToImmutable(),
+                };
+                if (engine.ObservedHigherConfigurationBallot is { } duplicateHigher)
+                {
+                    RecordHigherConfiguration(duplicateHigher);
+                }
+                break;
             }
-            current = RegisterEncoding.Decode(engine.Result.Value);
-            operation.Complete(engine.Result.Value, current.Version);
-            notification = new(key, engine.Ballot, engine.Result.Value, engine.PreparedBallot ?? Ballot.Zero)
-            {
-                AcknowledgedPeers = engine.AcknowledgedPeers.ToImmutable(),
-            };
         }
         catch (OperationCanceledException) when (call.Token.IsCancellationRequested)
         {
-            if (acquired) state.Engine = NewEngine();
+            if (acquired) state.Engine = NewEngine(CurrentSnapshot());
             call.ThrowCancellation();
             throw;
         }
         catch
         {
-            if (acquired) state.Engine = NewEngine();
+            if (acquired) state.Engine = NewEngine(CurrentSnapshot());
             throw;
         }
         finally
@@ -305,6 +352,72 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         }
         PublishCommitted(notification);
         return current;
+    }
+
+    private ConfigurationSnapshot CurrentSnapshot()
+    {
+        lock (_gate) return _config;
+    }
+
+    private void RecordHigherConfiguration(Ballot higher)
+    {
+        lock (_gate)
+        {
+            _lastObservedHigherConfiguration = _lastObservedHigherConfiguration is { } existing
+                ? Ballot.Max(existing, higher)
+                : higher;
+        }
+    }
+
+    private async Task HandleHigherConfigurationAsync(
+        ConfigurationSnapshot staleConfig,
+        Ballot higherBallot,
+        KeyState currentKeyState,
+        int attempt,
+        Call call)
+    {
+        RecordHigherConfiguration(higherBallot);
+        currentKeyState.Engine = NewEngine(staleConfig);
+
+        if (_options.PeerResolver is null)
+        {
+            throw new RegisterUnavailableException(new InvalidOperationException(
+                $"Configuration {staleConfig.Configuration} was fenced by {higherBallot}."));
+        }
+
+        // §4.6 Stale-configuration recovery: discover candidate successors via ballot-free Read(K_cfg),
+        // follow the chain, and adopt only after confirming Active on a quorum of V(c_cur).
+        try
+        {
+            var chain = await VoterReconfigurationDriver.DiscoverConfigurationChainAsync(
+                staleConfig.Configuration,
+                staleConfig.Peers,
+                _options.PeerResolver,
+                _options,
+                call.Token).ConfigureAwait(false);
+
+            if (chain.Latest.Number > staleConfig.Configuration
+                && chain.Latest.State == VoterConfigurationState.Active)
+            {
+                var nextPeers = VoterReconfigurationDriver.ResolvePeers(chain.Latest.CanonicalVoters, _options.PeerResolver);
+                lock (_gate)
+                {
+                    if (_config.Configuration < chain.Latest.Number)
+                    {
+                        _config = CreateSnapshot(chain.Latest.Number, nextPeers, _options.Capacity);
+                    }
+                }
+
+                currentKeyState.Engine = NewEngine(CurrentSnapshot());
+                return;
+            }
+        }
+        catch (RegisterUnavailableException)
+        {
+            // Transient unavailability while reconfiguration is in progress; back off and retry within deadline.
+        }
+
+        await BackoffAsync(attempt, call.Token).ConfigureAwait(false);
     }
 
     private void PublishCommitted(RegisterCommit commit)
@@ -336,12 +449,12 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         evicted!.Dispose();
     }
 
-    private async Task<RegisterValue?> TryReadQuorumAsync(string key, Engine engine, Call call)
+    private async Task<ReadQuorumOutcome> TryReadQuorumAsync(string key, ConfigurationSnapshot config, Engine engine, Call call)
     {
         using var phase = CancellationTokenSource.CreateLinkedTokenSource(call.Token);
         var timeout = Task.Delay(_options.AttemptTimeout, _options.TimeProvider, phase.Token);
-        var pending = Enumerable.Range(0, _peers.Length).Select(index =>
-            InvokePeerAsync(index, (peer, token) => peer.ReadAsync(key, cancellationToken: token), phase.Token)).ToList();
+        var pending = Enumerable.Range(0, config.Peers.Length).Select(index =>
+            InvokePeerAsync(config, index, (peer, token) => peer.ReadAsync(key, cancellationToken: token), phase.Token)).ToList();
         var matching = new Dictionary<(Ballot Ballot, ByteString Value), int>();
         var promises = new Dictionary<(Ballot Ballot, ByteString Value, Ballot Promised), int>();
         var missing = 0;
@@ -357,22 +470,32 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
                 var reply = await task.ConfigureAwait(false);
                 if (reply.Error is { } error)
                 {
-                    call.Errors[reply.Peer] = error;
+                    call.RecordError(reply.Peer, error);
                     continue;
                 }
 
                 switch (reply.Value)
                 {
                     case AcceptorMissing:
-                        if (++missing > _peers.Length / 2) return new RegisterValue(null, null);
+                        if (++missing > config.Peers.Length / 2) return new ReadQuorumOutcome(new RegisterValue(null, null), null);
                         break;
                     case KeyedAcceptorState accepted:
-                        if (accepted.Key != key || accepted.AcceptedBallot.Round <= 0
+                        if (accepted.Key != key || accepted.AcceptedBallot.Configuration <= 0
+                            || accepted.AcceptedBallot.Round <= 0
                             || accepted.AcceptedBallot.Proposer < 0 || accepted.AcceptedValue.IsDefault)
                         {
                             throw new InvalidDataException("An accepted observation must identify the requested key, ballot, and bytes.");
                         }
+                        var highestObserved = Ballot.Max(accepted.PromisedBallot, accepted.AcceptedBallot);
+                        if (highestObserved.Configuration > config.Configuration)
+                        {
+                            return new ReadQuorumOutcome(null, highestObserved);
+                        }
                         var value = RegisterEncoding.Decode(accepted.AcceptedValue);
+                        if (accepted.AcceptedBallot.Configuration != config.Configuration)
+                        {
+                            break;
+                        }
                         var candidate = (accepted.AcceptedBallot, accepted.AcceptedValue);
                         matching.TryGetValue(candidate, out var count);
                         matching[candidate] = ++count;
@@ -383,10 +506,11 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
                         if (engine.HasQuorum(accepted.AcceptedBallot, count))
                         {
                             var prepared = accepted.PromisedBallot > accepted.AcceptedBallot
+                                && accepted.PromisedBallot.Configuration == config.Configuration
                                 && engine.HasQuorum(accepted.PromisedBallot, promised)
                                     ? accepted.PromisedBallot : Ballot.Zero;
                             engine.LearnCommittedValue(accepted.AcceptedBallot, accepted.AcceptedValue, prepared);
-                            return value;
+                            return new ReadQuorumOutcome(value, null);
                         }
                         break;
                     case AcceptorUnchanged:
@@ -395,7 +519,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
                         throw new InvalidDataException("An acceptor read must return an explicit outcome.");
                 }
             }
-            return null;
+            return default;
         }
         finally
         {
@@ -404,16 +528,16 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         }
     }
 
-    private async Task DrivePhaseAsync(string key, Engine engine, Outbound request, RegisterOperation operation, Call call)
+    private async Task DrivePhaseAsync(string key, ConfigurationSnapshot config, Engine engine, Outbound request, RegisterOperation operation, Call call)
     {
         using var phase = CancellationTokenSource.CreateLinkedTokenSource(call.Token);
         var timeout = Task.Delay(_options.AttemptTimeout, _options.TimeProvider, phase.Token);
-        var pending = new List<Task<PeerResult<ProtocolReply>>>(_peers.Length);
+        var pending = new List<Task<PeerResult<ProtocolReply>>>(config.Peers.Length);
         try
         {
-            for (var index = 0; index < _peers.Length; index++)
+            for (var index = 0; index < config.Peers.Length; index++)
             {
-                pending.Add(InvokePeerAsync(index, async (peer, token) =>
+                pending.Add(InvokePeerAsync(config, index, async (peer, token) =>
                 {
                     token.ThrowIfCancellationRequested();
                     if (request.Prepare is { } prepare)
@@ -430,7 +554,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
                 }, phase.Token));
             }
 
-            while (pending.Count > 0 && engine.Result is null && ReferenceEquals(engine.Outgoing, request))
+            while (pending.Count > 0 && engine.Result is null && engine.ObservedHigherConfigurationBallot is null && ReferenceEquals(engine.Outgoing, request))
             {
                 var finished = await Task.WhenAny(pending.Cast<Task>().Append(timeout)).ConfigureAwait(false);
                 call.Token.ThrowIfCancellationRequested();
@@ -440,11 +564,11 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
                 var reply = await task.ConfigureAwait(false);
                 if (reply.Error is { } error)
                 {
-                    call.Errors[reply.Peer] = error;
+                    call.RecordError(reply.Peer, error);
                     continue;
                 }
 
-                var route = _peers[reply.Peer].Id;
+                var route = config.Peers[reply.Peer].Id;
                 if (reply.Value!.Prepare is { } result)
                 {
                     var value = result.AcceptedBallot.IsZero ? RegisterEncoding.Absent
@@ -469,7 +593,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
                 }
             }
 
-            if (engine.Result is null && ReferenceEquals(engine.Outgoing, request))
+            if (engine.Result is null && engine.ObservedHigherConfigurationBallot is null && ReferenceEquals(engine.Outgoing, request))
             {
                 engine.HandleResponseTimeout(request.Round);
             }
@@ -489,10 +613,11 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
             try
             {
                 call.Token.ThrowIfCancellationRequested();
+                var config = CurrentSnapshot();
                 using var phase = CancellationTokenSource.CreateLinkedTokenSource(call.Token);
                 var timeout = Task.Delay(_options.AttemptTimeout, _options.TimeProvider, phase.Token);
-                var pending = Enumerable.Range(0, _peers.Length).Select(index =>
-                    InvokePeerAsync(index, (peer, token) => peer.ListKeysAsync(prefix, cursor, limit, token), phase.Token)).ToList();
+                var pending = Enumerable.Range(0, config.Peers.Length).Select(index =>
+                    InvokePeerAsync(config, index, (peer, token) => peer.ListKeysAsync(prefix, cursor, limit, token), phase.Token)).ToList();
                 var pages = new List<KeyPage>();
                 try
                 {
@@ -504,9 +629,9 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
                         var task = (Task<PeerResult<KeyPage>>)finished;
                         pending.Remove(task);
                         var reply = await task.ConfigureAwait(false);
-                        if (reply.Error is { } error) call.Errors[reply.Peer] = error;
+                        if (reply.Error is { } error) call.RecordError(reply.Peer, error);
                         else pages.Add(reply.Value!);
-                        if (pages.Count > _peers.Length / 2) return pages;
+                        if (pages.Count > config.Peers.Length / 2) return pages;
                     }
                 }
                 finally { phase.Cancel(); }
@@ -520,22 +645,23 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         }
     }
 
-    private async Task<PeerResult<T>> InvokePeerAsync<T>(
+    private static async Task<PeerResult<T>> InvokePeerAsync<T>(
+        ConfigurationSnapshot config,
         int index, Func<IKeyedAcceptor, CancellationToken, ValueTask<T>> operation, CancellationToken token)
     {
         // Even a transport which ignores cancellation can hold only a bounded number of slots.
-        if (!_peerSlots[index].Wait(0, CancellationToken.None))
+        if (!config.PeerSlots[index].Wait(0, CancellationToken.None))
             return new PeerResult<T>(index, default, new RegisterBusyException());
         try
         {
             token.ThrowIfCancellationRequested();
-            return new PeerResult<T>(index, await operation(_peers[index].Acceptor, token).ConfigureAwait(false), null);
+            return new PeerResult<T>(index, await operation(config.Peers[index].Acceptor, token).ConfigureAwait(false), null);
         }
         catch (Exception exception)
         {
             return new PeerResult<T>(index, default, exception);
         }
-        finally { _peerSlots[index].Release(); }
+        finally { config.PeerSlots[index].Release(); }
     }
 
     private Task BackoffAsync(int attempt, CancellationToken token)
@@ -544,7 +670,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         return Task.Delay(TimeSpan.FromTicks(_options.RetryBackoff.Ticks * factor), _options.TimeProvider, token);
     }
 
-    private Engine NewEngine() => new(_ballots, _peerIds, _options.Mode);
+    private Engine NewEngine(ConfigurationSnapshot config) => new(_ballots, config.Configuration, config.PeerIds, _options.Mode);
 
     private ByteString NewRequestIdentity()
     {
@@ -552,7 +678,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         {
             // One durable incarnation separates service lifetimes sharing a proposer.
             // Individual requests consume only an in-memory sequence, independent of revisions.
-            if (_requestIncarnation.IsZero) _requestIncarnation = _ballots.Reserve(1);
+            if (_requestIncarnation.IsZero) _requestIncarnation = _ballots.Reserve(_config.Configuration, 1);
             var sequence = checked(++_requestSequence);
             Span<byte> bytes = stackalloc byte[16];
             BinaryPrimitives.WriteInt32BigEndian(bytes, _requestIncarnation.Proposer);
@@ -613,23 +739,24 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         private readonly CancellationToken _caller;
         private readonly CancellationTokenSource _deadline;
         private readonly CancellationTokenSource _linked;
+        private readonly Dictionary<int, Exception> _errors = [];
         public CancellationToken Token => _linked.Token;
-        public Exception?[] Errors { get; }
 
         public Call(ReplicatedRegisterService owner, CancellationToken caller)
         {
             _owner = owner;
             _caller = caller;
-            Errors = new Exception?[owner._peers.Length];
             _deadline = new CancellationTokenSource(owner._options.OperationTimeout, owner._options.TimeProvider);
             _linked = CancellationTokenSource.CreateLinkedTokenSource(caller, owner._stopping.Token, _deadline.Token);
         }
+
+        public void RecordError(int peerIndex, Exception error) => _errors[peerIndex] = error;
 
         public void ThrowCancellation()
         {
             _caller.ThrowIfCancellationRequested();
             _owner._stopping.Token.ThrowIfCancellationRequested();
-            throw new RegisterUnavailableException(new AggregateException(Errors.OfType<Exception>()));
+            throw new RegisterUnavailableException(new AggregateException(_errors.Values));
         }
 
         public void Dispose()
@@ -639,6 +766,14 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
             _owner.Exit();
         }
     }
+
+    private sealed record ConfigurationSnapshot(
+        long Configuration,
+        ImmutableArray<AcceptorPeer> Peers,
+        ImmutableArray<string> PeerIds,
+        SemaphoreSlim[] PeerSlots);
+
+    private readonly record struct ReadQuorumOutcome(RegisterValue? Value, Ballot? HigherConfiguration);
 
     private sealed class KeyState(Engine engine) : IDisposable
     {
@@ -701,7 +836,8 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
         }
     }
 
-    private sealed class Engine(IProposerBallotSource source, ImmutableArray<string> peers, ProposerModePolicy mode) : ProposerEngine<ByteString, string>(new ProposerRuntime(), RegisterEncoding.Absent, peers, mode)
+    private sealed class Engine(IProposerBallotSource source, long configuration, ImmutableArray<string> peers, ProposerModePolicy mode)
+        : ProposerEngine<ByteString, string>(new ProposerRuntime(), RegisterEncoding.Absent, peers, mode, configuration)
     {
         private readonly IProposerBallotSource _source = source;
         private Ballot _reservedBallot;
@@ -717,7 +853,7 @@ public sealed class ReplicatedRegisterService : IRegisterService, IRegisterLearn
             else StartProposal(operation, local.AcceptedBallot, local.PromisedBallot);
         }
         protected override Ballot ReserveBallot(Ballot candidate) =>
-            candidate.IsFastRoundBallot ? candidate : _reservedBallot = _source.Reserve(candidate.Round);
+            candidate.IsFastRoundBallot ? candidate : _reservedBallot = _source.Reserve(candidate.Configuration, candidate.Round);
         protected override bool CanReusePreparedBallot(Ballot ballot) =>
             base.CanReusePreparedBallot(ballot) && (ballot.IsFastRoundBallot || ballot == _reservedBallot);
         protected override void OnSendPrepare(PrepareRequest request) => Outgoing = new Outbound(request, null);

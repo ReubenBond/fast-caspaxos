@@ -43,14 +43,16 @@ public sealed record CompareExchangeResult(
 public sealed record RegisterKeyPage(ImmutableArray<string> Keys, string? ContinuationKey);
 
 /// <summary>
-/// Allocates strictly increasing positive rounds for a configured proposer. Reservations are durable
-/// before returning, including across instances and restarts. Retain the allocator with its proposer
-/// identity; all users of that identity share the same allocator state.
+/// Allocates strictly increasing classic ballots <c>(configuration, round, proposer)</c> for a
+/// configured proposer. Reservations are durable and lexicographically monotonic before returning,
+/// including across instances and restarts. Retain the allocator with its proposer identity; all
+/// users of that identity share the same allocator state.
 /// </summary>
 public interface IProposerBallotSource
 {
     int ProposerId { get; }
-    Ballot Reserve(int minimumRound);
+    Ballot Reserve(long configuration, int minimumRound);
+    Ballot Reserve(int minimumRound) => Reserve(1, minimumRound);
 }
 
 public sealed record AcceptorPeer(string Id, IKeyedAcceptor Acceptor);
@@ -63,6 +65,15 @@ public sealed class RegisterServiceOptions
     public TimeSpan AttemptTimeout { get; init; } = TimeSpan.FromSeconds(1);
     public TimeSpan RetryBackoff { get; init; } = TimeSpan.FromMilliseconds(10);
     public int Capacity { get; init; } = 256;
+
+    /// <summary>The 1-based configuration number of the initial peer set (defaults to bootstrap configuration 1).</summary>
+    public long InitialConfiguration { get; init; } = 1;
+
+    /// <summary>
+    /// Optional resolver for creating <see cref="IKeyedAcceptor"/> clients to newly discovered voters
+    /// when a floor refusal triggers stale-configuration recovery.
+    /// </summary>
+    public Func<VoterDescriptor, IKeyedAcceptor>? PeerResolver { get; init; }
 }
 
 /// <summary>Admission is bounded; retry this operation after existing calls finish.</summary>

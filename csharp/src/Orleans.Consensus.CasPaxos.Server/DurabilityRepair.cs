@@ -183,6 +183,11 @@ public sealed class DurabilityRepair : IDisposable
                         retryDelay = _options.AttemptTimeout;
                     var conflict = responses.Where(r => r.Error is null && !r.Value.IsPromised)
                         .Select(r => r.Value.ConflictingBallot).DefaultIfEmpty(Ballot.Zero).Max();
+                    if (conflict.Configuration > engine.Configuration)
+                    {
+                        throw new RegisterUnavailableException(new InvalidOperationException(
+                            $"Repair for configuration {engine.Configuration} was fenced by {conflict}."));
+                    }
                     if (!conflict.IsZero)
                     {
                         engine = new Engine(_ballots, _peerIds, seed, checked(conflict.Round + 1));
@@ -223,6 +228,11 @@ public sealed class DurabilityRepair : IDisposable
                     }
                     var conflict = responses.Where(r => r.Error is null && !r.Value.IsAccepted)
                         .Select(r => r.Value.ConflictingBallot).DefaultIfEmpty(Ballot.Zero).Max();
+                    if (conflict.Configuration > engine.Configuration)
+                    {
+                        throw new RegisterUnavailableException(new InvalidOperationException(
+                            $"Repair for configuration {engine.Configuration} was fenced by {conflict}."));
+                    }
                     if (accepted > _peers.Length / 2 && eligible >= TargetReplicas && (departing || conflict.IsZero)) return;
                     if (responses.Any(r => r.Error is not null)) retryDelay = _options.AttemptTimeout;
                     // The same classic proposal is safe to retry after a lost reply. A fresh recovery
@@ -296,7 +306,8 @@ public sealed class DurabilityRepair : IDisposable
         public override int ProposerId => source.ProposerId;
         public Outbound? Outgoing { get; private set; }
         public bool Completed { get; private set; }
-        protected override Ballot ReserveBallot(Ballot candidate) => source.Reserve(Math.Max(candidate.Round, minimumRound));
+        protected override Ballot ReserveBallot(Ballot candidate) =>
+            source.Reserve(candidate.Configuration, Math.Max(candidate.Round, minimumRound));
         protected override void OnSendPrepare(PrepareRequest request) => Outgoing = new(request, null);
         protected override void OnSendAccept(AcceptRequest<ByteString> request) => Outgoing = new(null, request);
         protected override void OnProposalCompleted(ProposeResponse<ByteString> response) => Completed = true;

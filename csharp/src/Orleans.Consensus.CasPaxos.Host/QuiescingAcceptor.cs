@@ -1,4 +1,5 @@
 using Orleans.Consensus.CasPaxos.Messages;
+using Orleans.Consensus.CasPaxos.Model;
 using Orleans.Consensus.CasPaxos.Protocol;
 using Orleans.Consensus.CasPaxos.Server;
 
@@ -39,6 +40,13 @@ internal sealed class QuiescingAcceptor(IKeyedAcceptor inner) : IKeyedAcceptor
     {
         Enter();
         try { return await inner.AcceptAsync(key, request, cancellationToken).ConfigureAwait(false); }
+        finally { Exit(); }
+    }
+
+    public async ValueTask<Ballot> SetFloorAsync(Ballot targetFloor, CancellationToken cancellationToken = default)
+    {
+        Enter();
+        try { return await inner.SetFloorAsync(targetFloor, cancellationToken).ConfigureAwait(false); }
         finally { Exit(); }
     }
 

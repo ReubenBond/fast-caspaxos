@@ -49,11 +49,31 @@ public readonly record struct AcceptorAcceptResult
 
 public static class AcceptorEngine
 {
+    public static Ballot SetFloor<TValue>(
+        ref AcceptorState<TValue> state,
+        Ballot targetFloor)
+    {
+        if (!targetFloor.IsFloorBallot)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(targetFloor),
+                targetFloor,
+                "A floor ballot must have a positive configuration, round 0, and proposer 0.");
+        }
+
+        if (targetFloor > state.FloorBallot)
+        {
+            state.FloorBallot = targetFloor;
+        }
+
+        return state.FloorBallot;
+    }
+
     public static AcceptorPrepareResult<TValue> Prepare<TValue>(
         ref AcceptorState<TValue> state,
         PrepareRequest request)
     {
-        var maxBallot = Ballot.Max(state.PromisedBallot, state.AcceptedBallot);
+        var maxBallot = Ballot.Max(state.EffectivePromisedBallot, state.AcceptedBallot);
         if (request.Ballot < maxBallot)
         {
             return AcceptorPrepareResult.Rejected(
@@ -73,15 +93,16 @@ public static class AcceptorEngine
         AcceptRequest<TValue> request)
     {
         // Retries of the exact accepted ballot/value pair carry no new information, so they
-        // succeed read-only and cannot perturb the state that later ballots reason about.
+        // succeed read-only and echo EffectivePromisedBallot (>= floor) without mutating state.
         if (request.Ballot == state.AcceptedBallot
             && EqualityComparer<TValue>.Default.Equals(request.Value, state.AcceptedValue))
         {
-            return AcceptorAcceptResult.Accepted(state.PromisedBallot);
+            return AcceptorAcceptResult.Accepted(state.EffectivePromisedBallot);
         }
 
-        // Accept can reach a node that missed prepare, so both ballots constrain later requests.
-        var maxBallot = Ballot.Max(state.PromisedBallot, state.AcceptedBallot);
+        // Accept can reach a node that missed prepare, so both effective promise and accepted
+        // ballots constrain later requests.
+        var maxBallot = Ballot.Max(state.EffectivePromisedBallot, state.AcceptedBallot);
         if (request.Ballot < maxBallot)
         {
             return AcceptorAcceptResult.Rejected(maxBallot);
@@ -108,7 +129,7 @@ public static class AcceptorEngine
             state.PromisedBallot = request.NextBallotToPrepare;
         }
 
-        return AcceptorAcceptResult.Accepted(state.PromisedBallot);
+        return AcceptorAcceptResult.Accepted(state.EffectivePromisedBallot);
     }
 
     public static AcceptorAcceptResult Learn<TValue>(
@@ -125,9 +146,9 @@ public static class AcceptorEngine
                 state.PromisedBallot = request.NextBallotToPrepare;
             }
 
-            return AcceptorAcceptResult.Accepted(state.PromisedBallot);
+            return AcceptorAcceptResult.Accepted(state.EffectivePromisedBallot);
         }
 
-        return AcceptorAcceptResult.Rejected(state.PromisedBallot);
+        return AcceptorAcceptResult.Rejected(state.EffectivePromisedBallot);
     }
 }

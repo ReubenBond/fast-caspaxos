@@ -30,6 +30,12 @@ public interface IKeyedAcceptor
         string key, AcceptRequest<ByteString> request, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Atomically raises the acceptor-wide floor ballot to at least <paramref name="targetFloor"/>
+    /// and returns the resulting durable floor ballot. Monotonic, idempotent, and uniform across all keys.
+    /// </summary>
+    ValueTask<Ballot> SetFloorAsync(Ballot targetFloor, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Lists local accepted records in case-sensitive StringComparer.Ordinal key order.
     /// Prefix matching is ordinal, afterKey is exclusive, and limit must be positive.
     /// Each page is a consistent local snapshot. Continuation resumes after the final returned key.
