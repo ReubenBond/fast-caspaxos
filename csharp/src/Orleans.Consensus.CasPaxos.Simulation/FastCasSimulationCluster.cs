@@ -132,10 +132,12 @@ public sealed class FastCasSimulationCluster<TValue> : IAsyncDisposable
 
     public FastCasSimulationNode<TValue> AddAcceptor(
         int ordinal,
-        IFastCasAcceptorStateStore<TValue>? stateStore = null)
+        IFastCasAcceptorStateStore<TValue>? stateStore = null,
+        long initialConfiguration = 1)
     {
         var nodeId = new FastCasNodeId(FastCasParticipantRole.Acceptor, ordinal);
-        var host = new FastCasAcceptorHost<TValue>(nodeId, Transport, InitialValue, stateStore, OnAcceptorStateUpdated, Options);
+        var host = new FastCasAcceptorHost<TValue>(
+            nodeId, Transport, InitialValue, stateStore, OnAcceptorStateUpdated, Options, initialConfiguration);
         var node = AttachNode(host);
 
         AcceptorNodes = AcceptorNodes.Add(node);
@@ -612,7 +614,7 @@ public sealed class FastCasSimulationCluster<TValue> : IAsyncDisposable
                     break;
                 case IFastCasAcceptorNodeHost<TValue> acceptor:
                     var state = acceptor.State;
-                    builder.Append(CultureInfo.InvariantCulture, $", promised={state.PromisedBallot}, accepted={state.AcceptedBallot}, value={state.AcceptedValue}");
+                    builder.Append(CultureInfo.InvariantCulture, $", floor={state.FloorBallot}, promised={state.PromisedBallot}, accepted={state.AcceptedBallot}, value={state.AcceptedValue}");
                     break;
             }
 
@@ -701,7 +703,8 @@ public sealed class FastCasSimulationCluster<TValue> : IAsyncDisposable
                     IsSuspended: node.IsSuspended,
                     PromisedBallot: state.PromisedBallot,
                     AcceptedBallot: state.AcceptedBallot,
-                    AcceptedValue: state.AcceptedValue);
+                    AcceptedValue: state.AcceptedValue,
+                    FloorBallot: state.FloorBallot);
             })];
 
     public void CreatePartition(FastCasAddress source, FastCasAddress target)

@@ -24,5 +24,7 @@ public interface IFastCasAcceptorNodeHost<TValue> : IFastCasNodeHost<TValue>
 {
     AcceptorState<TValue> State { get; }
 
+    Ballot SetFloor(Ballot targetFloor);
+
     void ReinitializeAsFreshRegister();
 }

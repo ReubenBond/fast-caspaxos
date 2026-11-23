@@ -116,9 +116,9 @@ csharp-check: csharp-fmt csharp-build csharp-test
 tla-check:
     cd tla && pwsh -NoProfile -File Run-FastCASPaxos.ps1
 
-# Typecheck and run Quint protocol scenarios, including negative controls and reconfiguration
+# Typecheck and run Quint protocol scenarios, including negative controls, reconfiguration, and trace validation
 [group('quint')]
-quint-test:
+quint-test: quint-trace-validate
     cd quint && quint typecheck FastCASPaxosMC.qnt
     cd quint && quint typecheck FastCASPaxosReconfigMC.qnt
     cd quint && quint typecheck FastCASPaxosTests.qnt
@@ -126,6 +126,20 @@ quint-test:
     cd quint && quint test FastCASPaxosTests.qnt --main FastCASPaxosReconfigTests --max-samples 1 --seed 1
     cd quint && quint test FastCASPaxosTests.qnt --main FastCASPaxosNegativeTests --max-samples 1 --seed 1
     cd quint && quint test FastCASPaxosTests.qnt --main FastCASPaxosBoundaryTests --max-samples 1 --seed 1
+
+# Replay exported C# reconfiguration simulation traces and negative-control mutants against FastCASPaxos.qnt (spec §11.5)
+[group('quint')]
+quint-trace-validate:
+    cd quint && quint typecheck FastCASPaxosTraceReplay.qnt
+    cd quint && quint test FastCASPaxosTraceReplay.qnt --main TraceReplaceLostVoter --max-samples 1 --seed 1
+    cd quint && quint test FastCASPaxosTraceReplay.qnt --main TracePostReconfigFastCommit --max-samples 1 --seed 1
+    cd quint && quint test FastCASPaxosTraceReplay.qnt --main TraceChainedDoubleReplace --max-samples 1 --seed 1
+    cd quint && quint test FastCASPaxosTraceReplay.qnt --main TraceAddRemove --max-samples 1 --seed 1
+    cd quint && quint test FastCASPaxosTraceReplay.qnt --main TraceStaleFastFenced --max-samples 1 --seed 1
+    cd quint && quint test FastCASPaxosTraceReplay.qnt --main TraceNegativeSkipFloorVacuous --max-samples 1 --seed 1
+    cd quint && quint test FastCASPaxosTraceReplay.qnt --main TraceNegativeIllegalHandoffQuorum --max-samples 1 --seed 1
+    cd quint && quint test FastCASPaxosTraceReplay.qnt --main TraceNegativePreJoinPrepare --max-samples 1 --seed 1
+    cd quint && quint test FastCASPaxosTraceReplay.qnt --main TraceNegativeImplicitFastInNewConfig --max-samples 1 --seed 1
 
 # Sample asynchronous schedules in the five-acceptor model
 [group('quint')]

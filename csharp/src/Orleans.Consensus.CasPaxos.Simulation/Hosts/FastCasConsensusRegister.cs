@@ -125,6 +125,8 @@ public sealed class FastCasConsensusRegister<TValue>
 
         public AcceptorState<TValue> State => register.AcceptorHost.State;
 
+        public Ballot SetFloor(Ballot targetFloor) => register.AcceptorHost.SetFloor(targetFloor);
+
         public void Deliver(IFastCasTransportMessage<TValue> message) => register.AcceptorHost.Deliver(message);
 
         public void Crash() => register.AcceptorHost.Crash();

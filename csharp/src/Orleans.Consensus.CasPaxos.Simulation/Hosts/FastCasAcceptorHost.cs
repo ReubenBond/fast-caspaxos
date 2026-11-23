@@ -14,6 +14,7 @@ public sealed class FastCasAcceptorHost<TValue> : IFastCasAcceptorNodeHost<TValu
 {
     private readonly FastCasSimulationTransport<TValue> _transport;
     private readonly TValue _initialValue;
+    private readonly long _initialConfiguration;
     private readonly IFastCasAcceptorStateStore<TValue> _stateStore;
     private readonly FastCasSimulationOptions _options;
     private readonly Action<FastCasAddress>? _onStateSaved;
@@ -25,15 +26,19 @@ public sealed class FastCasAcceptorHost<TValue> : IFastCasAcceptorNodeHost<TValu
         TValue initialValue,
         IFastCasAcceptorStateStore<TValue>? stateStore = null,
         Action<FastCasAddress>? onStateSaved = null,
-        FastCasSimulationOptions? options = null)
+        FastCasSimulationOptions? options = null,
+        long initialConfiguration = 1)
     {
         if (nodeId.Role != FastCasParticipantRole.Acceptor)
         {
             throw new ArgumentException("FastCasAcceptorHost requires an acceptor node id.", nameof(nodeId));
         }
 
+        ArgumentOutOfRangeException.ThrowIfLessThan(initialConfiguration, 1);
+
         _transport = transport ?? throw new ArgumentNullException(nameof(transport));
         _initialValue = initialValue;
+        _initialConfiguration = initialConfiguration;
         _stateStore = stateStore ?? new InMemoryFastCasAcceptorStateStore<TValue>();
         _options = options ?? new FastCasSimulationOptions();
         _onStateSaved = onStateSaved;
@@ -104,6 +109,18 @@ public sealed class FastCasAcceptorHost<TValue> : IFastCasAcceptorNodeHost<TValu
         IsRunning = true;
     }
 
+    public Ballot SetFloor(Ballot targetFloor)
+    {
+        if (!IsRunning)
+        {
+            throw new InvalidOperationException($"Acceptor host '{Address}' is not running.");
+        }
+
+        var result = AcceptorEngine.SetFloor(ref _state, targetFloor);
+        SaveState();
+        return result;
+    }
+
     /// <summary>
     /// Resets the acceptor to pristine state as if it were a brand-new node that has never
     /// participated in any protocol round. The durable state store is cleared so that a
@@ -112,7 +129,7 @@ public sealed class FastCasAcceptorHost<TValue> : IFastCasAcceptorNodeHost<TValu
     public void ReinitializeAsFreshRegister()
     {
         _stateStore.Clear(NodeId);
-        _state = AcceptorState.CreateInitial<TValue>(_initialValue);
+        _state = AcceptorState.CreateInitial<TValue>(_initialValue, _initialConfiguration);
         IsRunning = true;
     }
 
@@ -122,13 +139,16 @@ public sealed class FastCasAcceptorHost<TValue> : IFastCasAcceptorNodeHost<TValu
         {
             return new AcceptorState<TValue>
             {
+                FloorBallot = durableState.FloorBallot.IsZero
+                    ? Ballot.Floor(_initialConfiguration)
+                    : durableState.FloorBallot,
                 PromisedBallot = durableState.PromisedBallot,
                 AcceptedBallot = durableState.AcceptedBallot,
                 AcceptedValue = durableState.AcceptedValue,
             };
         }
 
-        return AcceptorState.CreateInitial<TValue>(_initialValue);
+        return AcceptorState.CreateInitial<TValue>(_initialValue, _initialConfiguration);
     }
 
     private void SaveState()
@@ -137,6 +157,7 @@ public sealed class FastCasAcceptorHost<TValue> : IFastCasAcceptorNodeHost<TValu
             NodeId,
             new FastCasAcceptorDurableState<TValue>
             {
+                FloorBallot = _state.FloorBallot,
                 PromisedBallot = _state.PromisedBallot,
                 AcceptedBallot = _state.AcceptedBallot,
                 AcceptedValue = _state.AcceptedValue,

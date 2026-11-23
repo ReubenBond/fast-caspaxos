@@ -134,7 +134,20 @@ The simulator defaults to the Rust backend. On Windows, `--backend typescript`
 provides a portable alternative for `test` and small `run` checks. GitHub Actions
 runs the larger checks on Linux and retains simulation traces and failure
 diagnostics as artifacts. Repository-level recipes are `just quint-test`,
-`just quint-simulate`, and `just quint-verify`.
+`just quint-trace-validate`, `just quint-simulate`, and `just quint-verify`.
+
+## Trace validation (`FastCASPaxosTraceReplay.qnt`)
+
+`FastCASPaxosTraceReplay.qnt` is a `fast-caspaxos`-local trace-replay module
+importing `./FastCASPaxos` (keeping the five shared Quint files above
+byte-identical with `ReubenBond/roux`). It replays per-key protocol traces
+exported directly from Clockwork deterministic C# reconfiguration simulations
+(`VoterReconfigurationTraceValidationTests`, covering replace-1, post-reconfig
+1-RTT fast commits, chained `1 → 2 → 3` double-replace, add/remove, and stale
+fast-ballot fencing) along with four negative-control trace mutants verifying
+that protocol violations fail replay. Run `just quint-trace-validate` or
+`UPDATE_QUINT_TRACES=1 dotnet test ... --filter VoterReconfigurationTraceValidationTests`
+to regenerate and verify traces.
 
 Automatic Quint/TLC checks run for changes under `quint/**` or to
 `.github/workflows/quint.yml`, on pushes to `main` and on pull requests.

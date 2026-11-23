@@ -55,13 +55,23 @@ jobs:
           quint typecheck FastCASPaxosMC.qnt
           quint typecheck FastCASPaxosReconfigMC.qnt
           quint typecheck FastCASPaxosTests.qnt
-      - name: Protocol scenarios and negative controls
+          quint typecheck FastCASPaxosTraceReplay.qnt
+      - name: Protocol scenarios, trace validation, and negative controls
         if: matrix.model == 'FastCASPaxosMC'
         run: |
           quint test FastCASPaxosTests.qnt --main FastCASPaxosTests --max-samples 1 --seed 1
           quint test FastCASPaxosTests.qnt --main FastCASPaxosReconfigTests --max-samples 1 --seed 1
           quint test FastCASPaxosTests.qnt --main FastCASPaxosNegativeTests --max-samples 1 --seed 1
           quint test FastCASPaxosTests.qnt --main FastCASPaxosBoundaryTests --max-samples 1 --seed 1
+          quint test FastCASPaxosTraceReplay.qnt --main TraceReplaceLostVoter --max-samples 1 --seed 1
+          quint test FastCASPaxosTraceReplay.qnt --main TracePostReconfigFastCommit --max-samples 1 --seed 1
+          quint test FastCASPaxosTraceReplay.qnt --main TraceChainedDoubleReplace --max-samples 1 --seed 1
+          quint test FastCASPaxosTraceReplay.qnt --main TraceAddRemove --max-samples 1 --seed 1
+          quint test FastCASPaxosTraceReplay.qnt --main TraceStaleFastFenced --max-samples 1 --seed 1
+          quint test FastCASPaxosTraceReplay.qnt --main TraceNegativeSkipFloorVacuous --max-samples 1 --seed 1
+          quint test FastCASPaxosTraceReplay.qnt --main TraceNegativeIllegalHandoffQuorum --max-samples 1 --seed 1
+          quint test FastCASPaxosTraceReplay.qnt --main TraceNegativePreJoinPrepare --max-samples 1 --seed 1
+          quint test FastCASPaxosTraceReplay.qnt --main TraceNegativeImplicitFastInNewConfig --max-samples 1 --seed 1
       - name: Reconfiguration mutants
         if: matrix.model == 'FastCASPaxosReconfigReplace'
         run: |

@@ -6,6 +6,9 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Orleans.Consensus.CasPaxos.Testing" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\Orleans.Consensus.CasPaxos\Orleans.Consensus.CasPaxos.csproj" />
   </ItemGroup>
 </Project>

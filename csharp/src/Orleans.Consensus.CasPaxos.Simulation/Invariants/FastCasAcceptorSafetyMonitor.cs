@@ -12,7 +12,8 @@ public readonly record struct FastCasAcceptorStateSnapshot<TValue>(
     bool IsSuspended,
     Ballot PromisedBallot,
     Ballot AcceptedBallot,
-    TValue AcceptedValue)
+    TValue AcceptedValue,
+    Ballot FloorBallot = default)
     where TValue : IVersionedValue<TValue>;
 
 public sealed record AcceptorSafetyMonitorArtifact(
@@ -48,6 +49,10 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
 
     private readonly Dictionary<FastCasAddress, string> _formattedAddressCache = [];
     private readonly List<ObservedCommit> _commitHistory = [];
+    private readonly SortedDictionary<long, HashSet<FastCasAddress>> _configurations = [];
+    private readonly Dictionary<FastCasAddress, long> _firstConfigByAcceptor = [];
+    private readonly Dictionary<FastCasAddress, Ballot> _maxFloorByAcceptor = [];
+    private readonly Dictionary<FastCasAddress, (Ballot Ballot, TValue Value)> _lastAcceptedByAcceptor = [];
     private readonly SnapshotComparer _snapshotComparer;
     private FastCasAcceptorStateSnapshot<TValue>[] _lastSnapshot =
         Array.Empty<FastCasAcceptorStateSnapshot<TValue>>();
@@ -61,12 +66,70 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
     public int UpdateCount { get; private set; }
 
     /// <summary>
+    /// Registers the authoritative voter set <c>V(configuration)</c> for configuration-aware
+    /// quorum counting, pre-join refusal checks (VR-I11), and permanent retirement validation (VR-I12).
+    /// </summary>
+    public void RegisterConfiguration(long configuration, IReadOnlyCollection<FastCasAddress> voters)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(configuration, 1);
+        ArgumentNullException.ThrowIfNull(voters);
+        if (voters.Count == 0)
+        {
+            throw new ArgumentException("A voter configuration must contain at least one acceptor.", nameof(voters));
+        }
+
+        var voterSet = new HashSet<FastCasAddress>(voters);
+        if (_configurations.TryGetValue(configuration, out var existing))
+        {
+            if (!existing.SetEquals(voterSet))
+            {
+                throw new InvalidOperationException(
+                    $"Configuration {configuration} already registered with a different voter set.");
+            }
+
+            return;
+        }
+
+        // Enforce permanent retirement (VR-I12): no retired voter may re-enter a later configuration.
+        foreach (var (c1, v1) in _configurations)
+        {
+            foreach (var (c2, v2) in _configurations)
+            {
+                if (c1 < c2 && c2 < configuration)
+                {
+                    foreach (var voter in voterSet)
+                    {
+                        if (v1.Contains(voter) && !v2.Contains(voter))
+                        {
+                            throw new InvalidOperationException(
+                                $"Permanent retirement (VR-I12) violated: voter {voter} belonged to configuration {c1}, was absent in {c2}, and re-entered {configuration}.");
+                        }
+                    }
+                }
+            }
+        }
+
+        _configurations.Add(configuration, voterSet);
+        foreach (var voter in voterSet)
+        {
+            if (!_firstConfigByAcceptor.TryGetValue(voter, out var first) || configuration < first)
+            {
+                _firstConfigByAcceptor[voter] = configuration;
+            }
+        }
+    }
+
+    /// <summary>
     /// Clears all accumulated state so that subsequent observations start from a clean baseline.
     /// Used when the simulation reinitializes all nodes to model a fresh register.
     /// </summary>
     public void Reset()
     {
         _commitHistory.Clear();
+        _configurations.Clear();
+        _firstConfigByAcceptor.Clear();
+        _maxFloorByAcceptor.Clear();
+        _lastAcceptedByAcceptor.Clear();
         _lastSnapshot = [];
         _lastObservedAt = null;
         _lastUpdatedAcceptor = null;
@@ -93,18 +156,45 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
         _lastSnapshot = orderedSnapshots;
         _artifactDirty = true;
 
+        ValidateFloorAndPreJoinInvariants(timestamp, updatedAcceptor, _lastSnapshot);
         ValidateAcceptedBallotConsistency(timestamp, updatedAcceptor, _lastSnapshot);
 
-        if (!TryResolveCommittedValue(timestamp, updatedAcceptor, _lastSnapshot, out var committed))
+        var resolvedCommits = ResolveCommittedValues(timestamp, updatedAcceptor, _lastSnapshot);
+        if (resolvedCommits.Length == 0)
         {
             return;
         }
 
+        foreach (var committed in resolvedCommits)
+        {
+            RecordResolvedCommit(timestamp, updatedAcceptor, committed);
+        }
+    }
+
+    private void RecordResolvedCommit(
+        DateTimeOffset timestamp,
+        FastCasAddress updatedAcceptor,
+        ResolvedCommit committed)
+    {
         if (_commitHistory.Count > 0)
         {
             var previous = _commitHistory[^1];
             if (EqualityComparer<TValue>.Default.Equals(previous.Value, committed.Value))
             {
+                return;
+            }
+
+            // Across configurations, an older configuration's quorum may remain visible in snapshots
+            // after a newer configuration has already committed a successor value. Verify ancestry
+            // (VR-I4) rather than treating the retained older quorum as a regression.
+            if (committed.Ballot < previous.Ballot)
+            {
+                if (!previous.Value.IsValidSuccessorTo(committed.Value))
+                {
+                    throw new InvalidOperationException(
+                        $"{CreateContextPrefix(timestamp, updatedAcceptor)} Earlier committed value {committed.Value} at {committed.Ballot} diverges from later committed value {previous.Value} at {previous.Ballot}.");
+                }
+
                 return;
             }
 
@@ -128,6 +218,80 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
                 committed.Ballot,
                 committed.Value,
                 committed.Witnesses));
+    }
+
+    private void ValidateFloorAndPreJoinInvariants(
+        DateTimeOffset timestamp,
+        FastCasAddress updatedAcceptor,
+        FastCasAcceptorStateSnapshot<TValue>[] snapshots)
+    {
+        foreach (var snapshot in snapshots)
+        {
+            if (!snapshot.FloorBallot.IsZero && !snapshot.FloorBallot.IsFloorBallot)
+            {
+                throw new InvalidOperationException(
+                    $"{CreateContextPrefix(timestamp, updatedAcceptor)} Acceptor {snapshot.Acceptor} reported invalid floor ballot {snapshot.FloorBallot}.");
+            }
+
+            if (_maxFloorByAcceptor.TryGetValue(snapshot.Acceptor, out var previousFloor))
+            {
+                if (!snapshot.FloorBallot.IsZero && snapshot.FloorBallot < previousFloor)
+                {
+                    throw new InvalidOperationException(
+                        $"{CreateContextPrefix(timestamp, updatedAcceptor)} Floor monotonicity (VR-I7) violated on {snapshot.Acceptor}: floor regressed from {previousFloor} to {snapshot.FloorBallot}.");
+                }
+
+                var effectivePromised = Ballot.Max(snapshot.PromisedBallot, snapshot.FloorBallot);
+                if (!effectivePromised.IsZero && effectivePromised < previousFloor)
+                {
+                    throw new InvalidOperationException(
+                        $"{CreateContextPrefix(timestamp, updatedAcceptor)} Effective promise {effectivePromised} on {snapshot.Acceptor} fell below durable floor {previousFloor}.");
+                }
+
+                // If the acceptor recorded a new accepted ballot after a higher floor was durable,
+                // that new acceptance must be >= previousFloor (VR-I7).
+                if (!snapshot.AcceptedBallot.IsZero)
+                {
+                    var changed = !_lastAcceptedByAcceptor.TryGetValue(snapshot.Acceptor, out var prevAccepted)
+                        || prevAccepted.Ballot != snapshot.AcceptedBallot
+                        || !EqualityComparer<TValue>.Default.Equals(prevAccepted.Value, snapshot.AcceptedValue);
+                    if (changed && snapshot.AcceptedBallot < previousFloor)
+                    {
+                        throw new InvalidOperationException(
+                            $"{CreateContextPrefix(timestamp, updatedAcceptor)} Acceptor {snapshot.Acceptor} accepted ballot {snapshot.AcceptedBallot} below durable floor {previousFloor} (VR-I7).");
+                    }
+                }
+            }
+
+            if (!snapshot.FloorBallot.IsZero)
+            {
+                var updatedFloor = _maxFloorByAcceptor.TryGetValue(snapshot.Acceptor, out var existingFloor)
+                    ? Ballot.Max(existingFloor, snapshot.FloorBallot)
+                    : snapshot.FloorBallot;
+                _maxFloorByAcceptor[snapshot.Acceptor] = updatedFloor;
+            }
+
+            if (!snapshot.AcceptedBallot.IsZero)
+            {
+                _lastAcceptedByAcceptor[snapshot.Acceptor] = (snapshot.AcceptedBallot, snapshot.AcceptedValue);
+            }
+
+            // No pre-join promise or acceptance (VR-I11) for voters introduced in configuration > 1.
+            if (_firstConfigByAcceptor.TryGetValue(snapshot.Acceptor, out var firstConfig) && firstConfig > 1)
+            {
+                if (!snapshot.AcceptedBallot.IsZero && snapshot.AcceptedBallot.Configuration < firstConfig)
+                {
+                    throw new InvalidOperationException(
+                        $"{CreateContextPrefix(timestamp, updatedAcceptor)} Pre-join acceptance (VR-I11) violated on {snapshot.Acceptor} (first config {firstConfig}): accepted {snapshot.AcceptedBallot}.");
+                }
+
+                if (!snapshot.PromisedBallot.IsZero && snapshot.PromisedBallot.Configuration < firstConfig)
+                {
+                    throw new InvalidOperationException(
+                        $"{CreateContextPrefix(timestamp, updatedAcceptor)} Pre-join promise (VR-I11) violated on {snapshot.Acceptor} (first config {firstConfig}): promised {snapshot.PromisedBallot}.");
+                }
+            }
+        }
     }
 
     public AcceptorSafetyMonitorArtifact CreateArtifact()
@@ -182,46 +346,86 @@ public sealed class FastCasAcceptorSafetyMonitor<TValue>
         }
     }
 
-    private static bool TryResolveCommittedValue(
+    private ResolvedCommit[] ResolveCommittedValues(
         DateTimeOffset timestamp,
         FastCasAddress updatedAcceptor,
-        FastCasAcceptorStateSnapshot<TValue>[] snapshots,
-        out ResolvedCommit committed)
+        FastCasAcceptorStateSnapshot<TValue>[] snapshots)
     {
-        var acceptorCount = snapshots.Length;
         var candidates = snapshots
             .Where(snapshot => !snapshot.AcceptedBallot.IsZero)
             .GroupBy(snapshot => snapshot.AcceptedBallot)
-            .SelectMany(group => ResolveCommittedCandidates(timestamp, updatedAcceptor, group, acceptorCount))
+            .SelectMany(group => ResolveCommittedCandidates(timestamp, updatedAcceptor, group, snapshots.Length))
             .OrderBy(candidate => candidate.Ballot)
             .ToArray();
 
-        if (candidates.Length == 0)
+        if (candidates.Length <= 1)
         {
-            committed = default;
-            return false;
+            return candidates;
         }
 
-        if (candidates.Length > 1)
+        // Within a single configuration, quorums intersect so at most one ballot can hold a quorum
+        // simultaneously. Across distinct configurations (e.g. during hand-off or disjoint migration),
+        // an earlier configuration's quorum can coexist with a newer configuration's quorum, provided
+        // every higher ballot's committed value extends every lower ballot's committed value (VR-I4).
+        foreach (var byConfig in candidates.GroupBy(candidate => candidate.Ballot.Configuration))
         {
-            var detail = string.Join(
-                ", ",
-                candidates.Select(candidate => $"{candidate.Ballot}=>{candidate.Value}"));
-            throw new InvalidOperationException(
-                $"{CreateContextPrefix(timestamp, updatedAcceptor)} Multiple committed ballots were inferred from the acceptor snapshot: [{detail}].");
+            var configCandidates = byConfig.ToArray();
+            if (configCandidates.Length > 1)
+            {
+                var detail = string.Join(
+                    ", ",
+                    configCandidates.Select(candidate => $"{candidate.Ballot}=>{candidate.Value}"));
+                throw new InvalidOperationException(
+                    $"{CreateContextPrefix(timestamp, updatedAcceptor)} Multiple committed ballots were inferred from the acceptor snapshot: [{detail}].");
+            }
         }
 
-        committed = candidates[0];
-        return true;
+        for (var i = 1; i < candidates.Length; i++)
+        {
+            var earlier = candidates[i - 1];
+            var later = candidates[i];
+            if (!EqualityComparer<TValue>.Default.Equals(earlier.Value, later.Value)
+                && !later.Value.IsValidSuccessorTo(earlier.Value))
+            {
+                throw new InvalidOperationException(
+                    $"{CreateContextPrefix(timestamp, updatedAcceptor)} Cross-configuration committed values diverged: {earlier.Ballot}=>{earlier.Value} vs {later.Ballot}=>{later.Value}.");
+            }
+        }
+
+        return candidates;
     }
 
-    private static ResolvedCommit[] ResolveCommittedCandidates(
+    private ResolvedCommit[] ResolveCommittedCandidates(
         DateTimeOffset timestamp,
         FastCasAddress updatedAcceptor,
         IGrouping<Ballot, FastCasAcceptorStateSnapshot<TValue>> ballotGroup,
-        int acceptorCount)
+        int defaultAcceptorCount)
     {
-        var ballotWitnesses = ballotGroup.ToArray();
+        int acceptorCount;
+        FastCasAcceptorStateSnapshot<TValue>[] ballotWitnesses;
+        if (_configurations.Count > 0)
+        {
+            if (!_configurations.TryGetValue(ballotGroup.Key.Configuration, out var voters))
+            {
+                throw new InvalidOperationException(
+                    $"{CreateContextPrefix(timestamp, updatedAcceptor)} Observed accepted ballot {ballotGroup.Key} for unregistered configuration {ballotGroup.Key.Configuration}.");
+            }
+
+            acceptorCount = voters.Count;
+            // Votes for ballot b count strictly from voters of V(b.Configuration) (VR-I3).
+            ballotWitnesses = [.. ballotGroup.Where(snapshot => voters.Contains(snapshot.Acceptor))];
+        }
+        else
+        {
+            acceptorCount = defaultAcceptorCount;
+            ballotWitnesses = [.. ballotGroup];
+        }
+
+        if (ballotWitnesses.Length == 0)
+        {
+            return Array.Empty<ResolvedCommit>();
+        }
+
         if (ballotGroup.Key.IsClassicRoundBallot)
         {
             if (!HasQuorum(ballotGroup.Key, ballotWitnesses.Length, acceptorCount))
