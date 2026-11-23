@@ -104,14 +104,31 @@ From this directory:
 
 ```powershell
 quint typecheck .\FastCASPaxosMC.qnt
+quint typecheck .\FastCASPaxosReconfigMC.qnt
 quint typecheck .\FastCASPaxosTests.qnt
 quint test .\FastCASPaxosTests.qnt --main FastCASPaxosTests --max-samples 1 --seed 1
+quint test .\FastCASPaxosTests.qnt --main FastCASPaxosReconfigTests --max-samples 1 --seed 1
 quint test .\FastCASPaxosTests.qnt --main FastCASPaxosNegativeTests --max-samples 1 --seed 1
 quint test .\FastCASPaxosTests.qnt --main FastCASPaxosBoundaryTests --max-samples 1 --seed 1
 quint run .\FastCASPaxosMC.qnt --main FastCASPaxosMC --invariant safety --max-samples 2500 --max-steps 60 --n-threads 2 --seed 17
+quint run .\FastCASPaxosReconfigMC.qnt --main FastCASPaxosReconfigReplace --invariant safety --max-samples 2500 --max-steps 60 --n-threads 2 --seed 17
 quint verify .\FastCASPaxosMC.qnt --main FastCASPaxosExhaustive --backend tlc --tlc-config .\tlc.json --invariant safety
 quint verify .\FastCASPaxosMC.qnt --main FastCASPaxosPipeline --backend tlc --tlc-config .\tlc.json --invariant safety
+quint verify .\FastCASPaxosMC.qnt --main FastCASPaxosReconfigExhaustive --backend tlc --tlc-config .\tlc.json --invariant safety
 ```
+
+## Cross-repository sync (`ReubenBond/roux`)
+
+The five Quint files below are kept byte-identical with `ReubenBond/roux`
+(`specs/fast-caspaxos/`, synced at `7c65a97d52b3d10deaa1a9f3f559f17eff9a863f`):
+
+| File | SHA-256 |
+| --- | --- |
+| `FastCASPaxos.qnt` | `7b1894d0a96724a2237b7bce9343496d7bcb7be1daaef97e1c1fb760d69c760e` |
+| `FastCASPaxosMC.qnt` | `aae2ec62e5a3b597020577383f8b57c5692c83112dd39bf92972b1f6a7bd3f40` |
+| `FastCASPaxosReconfigMC.qnt` | `c4caa55dea20e9ed8b24d71e464f0cce766a0729c304ae5cfede18258f959a05` |
+| `FastCASPaxosTests.qnt` | `a5e4391f560bc6ae4a9b839da9089bb32475a3dbca59f21fb93e28fd2683fe23` |
+| `tlc.json` | `e6fed10edb7ff52a5338266ec15193de1d24e07813b69c51de83d5ec49a8891c` |
 
 The simulator defaults to the Rust backend. On Windows, `--backend typescript`
 provides a portable alternative for `test` and small `run` checks. GitHub Actions

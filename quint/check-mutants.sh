@@ -1,41 +1,61 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# Runs every `action mutant*` in a Quint spec and requires each to violate an invariant.
+#
+# Usage: check-mutants.sh <spec.qnt> <main-module> <default-invariant> [extra quint run args...]
+#
+# A mutant may name the invariant it must break with a comment on the line directly above it:
+#   // breaks: durability
+#   action mutantFoo = { ... }
+# Otherwise it must break <default-invariant>.
+#
+# A mutant counts as caught only when quint reports `[violation]` and `Invariant violated`.
+# Any other failure (unknown step, parse or type error, crash) fails the check, so a typo
+# or a broken spec can never pass as a caught mutant.
+set -uo pipefail
 
-cd "$(dirname "$0")"
+spec=$1 main=$2 default_inv=$3
+shift 3
 
-expect_violation() {
-  local name="$1"
-  local model="$2"
-  local init_action="$3"
-  local step_action="$4"
-  local invariant="$5"
-  local max_samples="${6:-3000}"
-  local max_steps="${7:-60}"
+# Scope mutant discovery to `module $main { ... }` when it defines `action mutant*`
+# directly (supporting multi-module MC files); otherwise scan the whole spec file.
+module_block=$(awk -v m="$main" '
+  $0 ~ "^[[:space:]]*module[[:space:]]+" m "([[:space:]]|\\{|$)" { in_mod = 1 }
+  in_mod {
+    print
+    n_open = gsub(/\{/, "{")
+    n_close = gsub(/\}/, "}")
+    depth += n_open - n_close
+    if (seen_open && depth <= 0) { in_mod = 0 }
+    if (n_open > 0) { seen_open = 1 }
+  }
+' "$spec")
 
-  echo "=== Checking mutant: ${name} (model=${model}, invariant=${invariant}) ==="
-  if quint run FastCASPaxosMC.qnt \
-    --main "${model}" \
-    --init "${init_action}" \
-    --step "${step_action}" \
-    --invariant "${invariant}" \
-    --max-samples "${max_samples}" \
-    --max-steps "${max_steps}" \
-    --n-threads 2 \
-    --seed 17 \
-    --verbosity 1; then
-    echo "ERROR: mutant ${name} failed to violate ${invariant}" >&2
-    exit 1
+mapfile -t mutants < <(grep -oP '^\s*action\s+\Kmutant\w+' <<<"$module_block")
+source_text=$module_block
+if [ ${#mutants[@]} -eq 0 ]; then
+  mapfile -t mutants < <(grep -oP '^\s*action\s+\Kmutant\w+' "$spec")
+  source_text=$(cat "$spec")
+fi
+if [ ${#mutants[@]} -eq 0 ]; then
+  echo "::error::no mutants found in $spec"
+  exit 1
+fi
+
+failed=0
+for m in "${mutants[@]}"; do
+  inv=$(grep -B1 -P "^\s*action\s+$m\b" <<<"$source_text" | grep -oP '//\s*breaks:\s*\K\w+' || true)
+  inv=${inv:-$default_inv}
+  out=$(quint run "$spec" --main="$main" --step="$m" --invariant="$inv" "$@" 2>&1)
+  code=$?
+  if [ $code -ne 0 ] && grep -q '\[violation\]' <<<"$out" && grep -q 'Invariant violated' <<<"$out"; then
+    echo "$m: violates $inv, as expected"
+  elif [ $code -eq 0 ]; then
+    echo "::error::$m was not caught by $inv"
+    failed=1
+  else
+    echo "::error::$m failed without an invariant violation (exit $code):"
+    echo "$out" | tail -n 20
+    failed=1
   fi
-  echo "OK: mutant ${name} violated ${invariant} as expected."
-}
-
-expect_violation "mutantFloorOnlyHeldKeys" "FastCASPaxosReconfigReplace" "init" "mutantFloorOnlyHeldKeys" "chosenChain" 3000 60
-expect_violation "mutantPhase1InNewConfigBeforeComplete" "FastCASPaxosReconfigDisjoint" "init" "mutantPhase1InNewConfigBeforeComplete" "chosenChain" 3000 60
-expect_violation "mutantHandoffSkipsNewConfigQuorum" "FastCASPaxosReconfigReplace" "init" "mutantHandoffSkipsNewConfigQuorum" "chosenChain" 3000 60
-expect_violation "mutantImplicitFastInNewConfig" "FastCASPaxosReconfigReplace" "init" "mutantImplicitFastInNewConfig" "acceptedExtendsChosen" 3000 60
-expect_violation "mutantNewVoterBeforeFloor" "FastCASPaxosReconfigReplace" "initMutantNewVoterBeforeFloor" "step" "noPreJoinAcceptance" 500 20
-expect_violation "mutantSkipSingleChoice" "FastCASPaxosReconfigReplace" "init" "mutantSkipSingleChoice" "splitChosenChain" 3000 60
-
-echo "=== Checking mutant: mutantUnscopedFastTally (directed 4-voter counterexample) ==="
-quint test FastCASPaxosTests.qnt --main FastCASPaxosReconfig4VoterTests --max-samples 1 --seed 1
-echo "All 7 reconfiguration mutants killed as expected."
+done
+exit $failed

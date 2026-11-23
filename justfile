@@ -120,12 +120,12 @@ tla-check:
 [group('quint')]
 quint-test:
     cd quint && quint typecheck FastCASPaxosMC.qnt
+    cd quint && quint typecheck FastCASPaxosReconfigMC.qnt
     cd quint && quint typecheck FastCASPaxosTests.qnt
     cd quint && quint test FastCASPaxosTests.qnt --main FastCASPaxosTests --max-samples 1 --seed 1
+    cd quint && quint test FastCASPaxosTests.qnt --main FastCASPaxosReconfigTests --max-samples 1 --seed 1
     cd quint && quint test FastCASPaxosTests.qnt --main FastCASPaxosNegativeTests --max-samples 1 --seed 1
     cd quint && quint test FastCASPaxosTests.qnt --main FastCASPaxosBoundaryTests --max-samples 1 --seed 1
-    cd quint && quint test FastCASPaxosTests.qnt --main FastCASPaxosReconfigTests --max-samples 1 --seed 1
-    cd quint && quint test FastCASPaxosTests.qnt --main FastCASPaxosReconfig4VoterTests --max-samples 1 --seed 1
 
 # Sample asynchronous schedules in the five-acceptor model
 [group('quint')]
